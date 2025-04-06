@@ -37,9 +37,9 @@ deep_learning/
 ├── datasets/                     # 数据管理
 │   ├── raw/                      # 原始数据（.gitignore）
 │   ├── processed/                # 预处理后数据
+│   ├── README.md                # 数据的来源、格式和处理方式
 ├── docs/                     # 项目文档
-│   ├── api_reference/
-│   └── deployment_guide.md
+│   └── quick_start.md        # 快速上手指南
 ├── models/                   # 模型仓库
 │   ├── trained/              # 训练产出
 │   │   └── 20230701_resnet/
@@ -130,8 +130,6 @@ deep_learning/
 |       ├── CMakeLists.txt
 |       ├── README.md
 ├── tests/                    # 跨平台测试
-│   ├── train/               # Python单元测试
-│   ├── deploy/                  # C++测试用例 
 │   └── integration/          # 集成测试
 ├── metrics/
 |    ├── training/                 # 训练指标
@@ -139,10 +137,7 @@ deep_learning/
 |    └── inference/                # 部署性能
 |    ├── latency_orin.csv
 |    └── throughput_x86.log
-├── Dockerfile                # 训练环境容器
 ├── Makefile                  # 统一入口命令
-├── requirements.txt          # Python依赖
-└── CMakeLists.txt            # C++构建配置
 ```
 ## 安装与使用
 
