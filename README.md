@@ -32,7 +32,118 @@ The Deep Learning Project aims to facilitate the training and deployment of dive
 - **功能二**：&#8203;:contentReference[oaicite:8]{index=8}&#8203;:contentReference[oaicite:9]{index=9}
 - **功能三**：&#8203;:contentReference[oaicite:10]{index=10}&#8203;:contentReference[oaicite:11]{index=11}
 ## 项目目录
-
+```
+deep_learning/
+├── datasets/                     # 数据管理
+│   ├── raw/                      # 原始数据（.gitignore）
+│   ├── processed/                # 预处理后数据
+├── docs/                     # 项目文档
+│   ├── api_reference/
+│   └── deployment_guide.md
+├── models/                   # 模型仓库
+│   ├── trained/              # 训练产出
+│   │   └── 20230701_resnet/
+│   │       ├── model.onnx
+│   │       └── preprocessor.pkl
+│   └── deployed/             # 部署优化版本
+│       └── resnet_trt.engine
+├── scripts/                  # 工具脚本
+│   ├── export_to_onnx.py
+│   └── benchmark_deploy.sh
+├── src/
+│   ├── train/               # 训练侧代码
+│   │   ├── src/             # 核心算法
+│   │   │   ├── datasets/    # 数据集处理
+|   |   |   ├── losses/      # 损失函数 
+|   |   |   ├── metrics/     # 评价指标
+|   |   |   ├── models/      # 模型结构
+|   |   |   ├── modules/     # 集成模块：训练，预测，导出，剪枝等等
+|   |   |   └── utils/       # 通用工具  
+│   │   |   ├── main.py          # 主程序入口 
+│   │   ├── tests/           # 测试代码
+│   │   ├── configs/         # 配置文件
+│   │   ├── logs/            # 日志，运行结果等等
+│   │   ├── notebooks/       # 实验文件，ipynb
+│   │   ├── scripts/         # 脚本，训练，转数据集等等
+│   │   ├── datasets_example/# 数据集示例 
+│   │   ├── Dockerfile       # docker配置文件
+│   │   ├── requiremnets.txt # python环境
+│   │   └── README.md         
+│   └── deploy/                  # 部署侧代码
+│       ├── configs/
+|       |   ├── models/  
+|       |   |   ├── yolo/  
+|       |   |   ├── global/  
+|       ├── src/
+|       |   ├── app/                # 流程控制
+|       |   |   ├── main.cpp
+|       |   |   ├── grpc_main.cpp  # gRPC服务入口
+|       |   |   ├──rest_main.cpp   # REST API入口
+|       |   |   ├── cli/            # 命令行接口
+|       |   |   ├── webui/            # 可视化界面
+|       |   ├── core/               # 核心部件 
+|       |   |   ├── preprocess/               # 核心部件 
+|       |   |   |   ├── image
+|       |   |   |   |   ├── cuda
+|       |   |   |   |   ├── cpu
+|       |   |   ├── inference/  
+|       |   |   |   ├── engine/
+|       |   |   |   ├── backends/
+|       |   |   |   |   ├── tensorrt/
+|       |   |   |   |   ├── onnxruntime/
+|       |   |   |   |   ├── rknn/
+|       |   |   ├── postprocess/  
+|       |   |   |   ├── nms/
+|       |   |   |   ├── tracker/
+|       |   ├── middleware/               # 中间件
+|       |   |   ├── ros2/              
+|       |   ├── platforms/               # 平台
+|       |   |   ├── orin
+|       |   |   |   ├── cuda    # Orin专用CUDA优化
+|       |   |   |   ├── power    # 功耗管理
+|       |   |   |   ├── io    # Orin GPIO控制
+|       |   |   ├── rk3588        # Rockchip RK3588
+|       |   |   ├── common        # 跨平台基础
+|       |   |   |   ├── memory    # 统一内存管理
+|       |   |   |   ├── profiling #性能分析工具
+|       |   ├── services/           # 
+|       |   |   ├── monitoring/ #系统监控
+|       |   |   ├── ota/        #远程升级
+|       |   ├── models/             # 模型 
+|       ├── thirdparty/
+|       ├── scripts/
+|       ├── resources/ #静态资源
+|       |   ├── models/             # 模型 
+|       |   |   ├── onnx/        #
+|       |   |   ├── trt/        #
+|       |   |   ├── rknn/        #
+|       |   ├── calibration/             # 校准数据
+|       ├── docs/
+|       |   ├── quick_start.md  # 快速上手指南
+|       |   ├── platform_guides/             # 单元测试
+|       |   ├── api/             # 单元测试
+|       ├── tests/
+|       |   ├── unit/              # 平台适配指南
+|       |   ├── intergration/             # 接口文档
+|       |   ├── benchmarks/             # 性能测试
+|       |   ├── cross_platform/             # 跨平台一致性
+|       ├── CMakeLists.txt
+|       ├── README.md
+├── tests/                    # 跨平台测试
+│   ├── train/               # Python单元测试
+│   ├── deploy/                  # C++测试用例 
+│   └── integration/          # 集成测试
+├── metrics/
+|    ├── training/                 # 训练指标
+|    │   └── 20230701_resnet.json
+|    └── inference/                # 部署性能
+|    ├── latency_orin.csv
+|    └── throughput_x86.log
+├── Dockerfile                # 训练环境容器
+├── Makefile                  # 统一入口命令
+├── requirements.txt          # Python依赖
+└── CMakeLists.txt            # C++构建配置
+```
 ## 安装与使用
 
 ### 先决条件
