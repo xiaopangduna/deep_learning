@@ -53,12 +53,14 @@ deep_learning/
 ├── src/
 │   ├── train/               # 训练侧代码
 │   │   ├── src/             # 核心算法
-│   │   │   ├── datasets/    # 数据集处理
-|   |   |   ├── losses/      # 损失函数 
-|   |   |   ├── metrics/     # 评价指标
-|   |   |   ├── models/      # 模型结构
-|   |   |   ├── modules/     # 集成模块：训练，预测，导出，剪枝等等
-|   |   |   └── utils/       # 通用工具  
+│   │   │         ├── datasets/    # 数据集处理
+│   │   │         ├── losses/      # 损失函数 
+│   │   │         ├── metrics/     # 评价指标
+│   │   │         ├── models/      # 模型结构
+│   │   │         ├── modules/     # 集成模块：训练，预测，导出，剪枝等等
+│   │   │         ├── utils/       # 通用工具  
+│   │   │         ├── datasets/    # 数据集处理
+│   │                ├── 
 │   │   |   ├── main.py          # 主程序入口 
 │   │   ├── tests/           # 测试代码
 │   │   ├── configs/         # 配置文件
