@@ -1,1 +1,3 @@
-module: yolov5
+parent:
+  child:
+    grandchild: some_value

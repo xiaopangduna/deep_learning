@@ -6,9 +6,11 @@ ARG DEBIAN_FRONTEND=noninteractive
 # ENV https_proxy=http://172.19.134.153:7890
 # ENV no_proxy=localhost,127.0.0.1,host.docker.internal
 # 安装
-# RUN apt-get update
-# RUN apt-get install cmake -y
-# apt-get install libyaml-cpp-dev -y
-# apt-get clean
-# rm -rf /var/lib/apt/lists/*
-# apt-get install build-essential gdb -y
+RUN apt-get update
+RUN apt-get install cmake -y
+RUN apt-get install libyaml-cpp-dev -y
+# RUN apt-get install build-essential gdb -y
+RUN apt install libgtest-dev -y
+RUN cd /usr/src/gtest && cmake . && make && cp cp lib/*.a /usr/lib
+# RUN apt-get clean
+# RUN rm -rf /var/lib/apt/lists/*

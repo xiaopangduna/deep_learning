@@ -20,9 +20,10 @@ int main()
     {
         std::cerr << "Failed to save configuration." << std::endl;
     }
-
+    std::string value = yaml_config.getNode()["parent"]["child"]["grandchild"].as<std::string>();
+    std::cout << "Value: " << value << std::endl;
     // 打印当前配置
-    yaml_config.print(2);
-
+    std::string configStr = yaml_config.printToString();
+    std::cout << "Configuration content:\n" << configStr;
     return 0;
 }

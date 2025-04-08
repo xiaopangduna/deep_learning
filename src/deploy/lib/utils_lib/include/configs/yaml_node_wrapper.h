@@ -5,6 +5,7 @@
 #include <iostream>
 #include <fstream>
 #include <stdexcept>
+#include <sstream>
 
 namespace LovelyUtils {
     /**
@@ -89,8 +90,18 @@ namespace LovelyUtils {
         }
 
         // 打印节点内容
-        void print(int indent = 0) const {
-            printNode(node_, indent);
+        // void print(int indent = 0) const {
+        //     // printNode(node_, indent);
+        // }
+
+        /**
+         * @brief 将 YAML 节点内容以字符串形式返回
+         * @return 包含 YAML 节点内容的字符串
+         */
+        std::string printToString() const {
+            std::ostringstream oss;
+            printNode(node_, 0, oss);
+            return oss.str();
         }
 
     private:
@@ -114,18 +125,39 @@ namespace LovelyUtils {
             }
         }
 
-        // 递归打印节点内容
-        static void printNode(const YAML::Node& node, int indent) {
+        // // 递归打印节点内容
+        // static void printNode(const YAML::Node& node, int indent) {
+        //     if (node.IsScalar()) {
+        //         std::cout << std::string(indent, ' ') << node.as<std::string>() << std::endl;
+        //     } else if (node.IsSequence()) {
+        //         for (const auto& item : node) {
+        //             printNode(item, indent);
+        //         }
+        //     } else if (node.IsMap()) {
+        //         for (const auto& pair : node) {
+        //             std::cout << std::string(indent, ' ') << pair.first.as<std::string>() << ": ";
+        //             printNode(pair.second, indent + 2);
+        //         }
+        //     }
+        // }
+
+        /**
+         * @brief 递归打印节点内容到输出流
+         * @param node 要打印的节点
+         * @param indent 当前缩进级别
+         * @param oss 输出流
+         */
+        static void printNode(const YAML::Node& node, int indent, std::ostringstream& oss) {
             if (node.IsScalar()) {
-                std::cout << std::string(indent, ' ') << node.as<std::string>() << std::endl;
+                oss << std::string(indent, ' ') << node.as<std::string>() << '\n';
             } else if (node.IsSequence()) {
                 for (const auto& item : node) {
-                    printNode(item, indent);
+                    printNode(item, indent, oss);
                 }
             } else if (node.IsMap()) {
                 for (const auto& pair : node) {
-                    std::cout << std::string(indent, ' ') << pair.first.as<std::string>() << ": ";
-                    printNode(pair.second, indent + 2);
+                    oss << std::string(indent, ' ') << pair.first.as<std::string>() << ": ";
+                    printNode(pair.second, indent + 2, oss);
                 }
             }
         }
