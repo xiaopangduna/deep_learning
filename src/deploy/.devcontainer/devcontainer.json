@@ -1,26 +1,47 @@
-// For format details, see https://aka.ms/devcontainer.json. For config options, see the
-// README at: https://github.com/devcontainers/templates/tree/main/src/docker-existing-dockerfile
 {
-	"name": "Existing Dockerfile",
-	"build": {
-		// Sets the run context to one level up instead of the .devcontainer folder.
-		"context": "..",
-		// Update the 'dockerFile' property if you aren't using the standard 'Dockerfile' filename.
-		"dockerfile": "../Dockerfile"
-	}
-
-	// Features to add to the dev container. More info: https://containers.dev/features.
-	// "features": {},
-
-	// Use 'forwardPorts' to make a list of ports inside the container available locally.
-	// "forwardPorts": [],
-
-	// Uncomment the next line to run commands after the container is created.
-	// "postCreateCommand": "cat /etc/os-release",
-
-	// Configure tool-specific properties.
-	// "customizations": {},
-
-	// Uncomment to connect as an existing user other than the container default. More info: https://aka.ms/dev-containers-non-root.
-	// "remoteUser": "devcontainer"
+    //A name for the dev container displayed in the UI.
+    "name": "ubuntu_20.04",
+    "image": "my_ubuntu_20.04:latest",
+    // "build": {
+    //     "dockerfile": "../Dockerfile"
+    // },
+    "runArgs": [
+        "--env",
+        "DEBIAN_FRONTEND=noninteractive"
+    ],
+    // "mounts": [
+    //     {
+    //         //将服务器上的插件挂载至容器
+    //         "source": "/home/xiaopangdun/.vscode-server",
+    //         "target": "/root/.vscode-server",
+    //         //bind:绑定挂载将宿主机上的文件或目录直接挂载到容器内。 
+    //         //volume:卷挂载是一种更持久化的数据存储方式，卷由 Docker 管理，独立于容器的生命周期。当容器删除时，卷可以保留数据。
+    //         //tmpfs:临时文件系统挂载,将临时文件系统挂载到容器内。这种挂载类型的特点是数据存储在内存中，容器停止或删除后，数据会丢失。它适用于存储临时数据，如缓存文件。
+    //         "type": "bind"
+    //     }
+    // ],
+    // 设置工作空间 ,consistency=cached
+    "workspaceMount": "source=${localWorkspaceFolder}/..,target=/workspace,type=bind",
+    // 设置容器启动时默认打开的文件目录
+    "workspaceFolder": "/workspace/deploy",
+    "containerEnv": {
+        "http_proxy": "http://172.19.134.153:7890",
+        "https_proxy": "http://172.19.134.153:7890",
+        "no_proxy": "localhost,127.0.0.1,host.docker.internal"
+    },
+    // "customizations": {
+    //     // Configure properties specific to VS Code.
+    //     // "vscode": {
+    //     //     // Set *default* container specific settings.json values on container create.
+    //     //     // "settings": {
+    //     //     //     "extensions.extensionPath": "/vscode/vscode-server/extensions"
+    //     // },
+    //     // [弃用]建议直接在容器中下载插件即可构建容器时自动下载
+    //     // "extensions": [
+    //     //     "ms-vscode.cpptools-themes",
+    //     //     "ms-vscode.cpptools",
+    //     //     "twxs.cmake",
+    //     //     "ms-vscode.cmake-tools",
+    //     // ]
+    // }
 }

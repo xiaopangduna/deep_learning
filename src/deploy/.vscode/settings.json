@@ -1,0 +1,7 @@
+{
+    "C_Cpp.errorSquiggles": "enabled",
+    "marscode.chatLanguage": "cn",
+    "files.associations": {
+        "iostream": "cpp"
+    }
+}
