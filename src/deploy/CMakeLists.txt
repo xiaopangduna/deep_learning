@@ -8,32 +8,37 @@ project(DeepLearningDeploy)
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# 包含头文件目录，方便项目中各个源文件找到头文件
-include_directories(
-    ${PROJECT_SOURCE_DIR}/lib/utils_lib/include/configs
-    # 如果有其他头文件目录，可继续添加
+# 定义源文件列表
+set(SOURCES
+    src/app/main.cpp
+    src/perception_model/PerceptionModelFactory.cpp
+    src/perception_model/Yolov5SegmentationModel.cpp
 )
 
+# 添加可执行文件
+add_executable(DeepLearningDeployApp ${SOURCES})
 
-# 添加库
-# 由于是头文件库，无需指定源文件
+# 设置编译选项
+if(NOT CMAKE_CXX_FLAGS)
+    set(CMAKE_CXX_FLAGS "-Wall -Wextra")
+endif()
+
+# 设置头文件库
 add_library(utils_lib INTERFACE)
-
-# 设置头文件库的包含目录
 target_include_directories(utils_lib INTERFACE
     ${PROJECT_SOURCE_DIR}/lib/utils_lib/include
 )
 
-# 添加可执行文件
-
 # 查找 YAML 库
 find_package(yaml-cpp REQUIRED)
 
-# 添加可执行文件
-add_executable(DeepLearningDeployApp src/app/main.cpp)
+# 设置可执行文件的包含目录
+target_include_directories(DeepLearningDeployApp PRIVATE
+    ${PROJECT_SOURCE_DIR}/lib/utils_lib/include
+    ${PROJECT_SOURCE_DIR}/include
+)
 
-
-# 将 utils_lib 库链接到可执行文件
+# 链接库到可执行文件
 target_link_libraries(DeepLearningDeployApp PRIVATE utils_lib yaml-cpp)
 
 # 添加测试子目录，让 CMake 处理测试目录下的构建配置
@@ -42,4 +47,6 @@ add_subdirectory(tests/utils_lib)
 # 如果后续要测试 perception_lib，也可以添加对应的子目录
 # add_subdirectory(tests/perception_lib)
 
+# 设置构建类型为 Debug
 set(CMAKE_BUILD_TYPE Debug)
+

@@ -1,29 +1,24 @@
 #include <iostream>
 #include "configs/yaml_node_wrapper.h"
-
+#include "perception_model/PerceptionModelFactory.hpp"
+// #include "perception_model/PerceptionConfig.hpp"
+// #include "perception_model/PerceptionModel.hpp"
+// 
 int main()
 {
-    // 使用命名空间限定符访问 YamlConfig 类
-    std::string path_config = "/workspace/deploy/configs/yolov5_seg_fall_detection.yaml";
-    LovelyUtils::YamlNodeWrapper yaml_config(path_config);
+    std::cout << "Configuration content:\n" <<std::endl;
+    Yolov5SegmentationModelConfig config;  // 创建派生类对象
+    // 初始化 config
 
-    // 设置新的值
-    yaml_config.setValue("name", "Alice");
-    yaml_config.setValue("age", 30);
+    PerceptionModelFactory::PerceptionModelType modelType = PerceptionModelFactory::PerceptionModelType::YOLOV5SEGMENTATION;
+    // 直接传递指针
+    PerceptionModel* model = PerceptionModelFactory::createPerceptionModel(modelType, &config);
 
-    // 保存到文件
-    if (yaml_config.saveToFile("config.yaml"))
-    {
-        std::cout << "Configuration saved successfully." << std::endl;
+    if (model) {
+        model->run(); // 假设 PerceptionModel 有一个 run 方法
+        delete model; // 释放模型资源
+    } else {
+        std::cerr << "Failed to create the perception model." << std::endl;
     }
-    else
-    {
-        std::cerr << "Failed to save configuration." << std::endl;
-    }
-    std::string value = yaml_config.getNode()["parent"]["child"]["grandchild"].as<std::string>();
-    std::cout << "Value: " << value << std::endl;
-    // 打印当前配置
-    std::string configStr = yaml_config.printToString();
-    std::cout << "Configuration content:\n" << configStr;
     return 0;
 }

@@ -25,12 +25,12 @@
     // 设置容器启动时默认打开的文件目录
     "workspaceFolder": "/workspace/deploy",
     "containerEnv": {
-        // "http_proxy": "http://172.19.134.153:7890",
-        // "https_proxy": "http://172.19.134.153:7890",
-        // "no_proxy": "localhost,127.0.0.1,host.docker.internal"
-        "http_proxy": "http://127.0.0.1:7890",
-        "https_proxy": "http://127.0.0.1:7890",
+        "http_proxy": "http://172.19.134.27:7890",
+        "https_proxy": "http://172.19.134.27:7890",
         "no_proxy": "localhost,127.0.0.1,host.docker.internal"
+        // "http_proxy": "http://127.0.0.1:7890",
+        // "https_proxy": "http://127.0.0.1:7890",
+        // "no_proxy": "localhost,127.0.0.1,host.docker.internal"
     },
     // "customizations": {
     //     // Configure properties specific to VS Code.
