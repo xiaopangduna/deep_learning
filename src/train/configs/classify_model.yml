@@ -1,0 +1,201 @@
+train:
+  # trainer
+  trainer_cfgs: &trainer_cfgs
+    devices: 1
+    accelerator: auto
+    check_val_every_n_epoch: 1
+    precision: 16-mixed
+    log_every_n_steps: 16
+    accumulate_grad_batches: 1
+    limit_train_batches: 0.1
+    limit_val_batches: 0.1
+    limit_test_batches: 0.1
+  trainer: 
+    max_epochs: 4
+    min_epochs: 1
+    <<: *trainer_cfgs
+  # dataset
+  dataset_class: &dataset_class ClassifyDataset
+  dataset_cfgs: &dataset_cfgs
+    class_to_index: {city: 0, highway: 1}
+  datasets: &datasets
+    train: 
+      path_txt: database_sample/train.txt
+      transfroms: train
+      cfgs: 
+        <<: *dataset_cfgs  
+    val:
+      path_txt: database_sample/val.txt
+      transfroms: val
+      cfgs: 
+        <<: *dataset_cfgs
+  # dataloader
+  dataloader_class: &dataloader_class DataLoader
+  dataloader_cfgs: &dataloader_cfgs
+    batch_size: 32
+    pin_memory: False
+    num_workers: 4
+  dataloaders: &dataloaders
+    train: 
+      shuffle: True
+      <<: *dataloader_cfgs
+    val:
+      shuffle: False
+      <<: *dataloader_cfgs
+  module_class: &module_class ClassifyModule
+  module_cfgs: &module_cfgs
+    model_name: &model_name mobilenet_v3_small
+    model_hparams: {num_classes: 2, input_size: [1, 3, 224, 224]}
+    optimizer_name: Adam
+    optimizer_hparams: {lr: 1.0e-3, weight_decay: 1.0e-4}
+  # logger for trainer
+  loggers: &loggers [TensorBoardLogger]
+  TensorBoardLogger: &TensorBoardLogger
+    save_dir: ./logs
+    name: *model_name
+    version: null
+    log_graph: True
+  # callback for trainer
+  callbacks: &callbacks [ModelCheckpoint,LearningRateMonitor,ModelSummary]
+  ModelCheckpoint: &ModelCheckpoint
+    filename: "{epoch}-{val_acc:.2f}"
+    mode: max
+    monitor: val_acc
+    save_last: True
+  LearningRateMonitor: &LearningRateMonitor
+    logging_interval: epoch
+  ModelSummary: &ModelSummary
+    max_depth: 1
+  # profiler for trainer
+  profiler: &profiler SimpleProfiler
+  SimpleProfiler: &SimpleProfiler
+    dirpath: null
+    filename: *model_name
+    extended: true
+ 
+train_resume:
+  path_ckpt: logs/mobilenet_v3_small_pruning_0.5_multiple/version_1/checkpoints/last.ckpt
+  trainer: 
+    max_epochs: 6
+    min_epochs: 1
+    <<: *trainer_cfgs
+  module_class: *module_class
+  dataset_class: *dataset_class
+  datasets: *datasets
+  dataloader_class: *dataloader_class
+  dataloaders: *dataloaders
+  # logger for trainer
+  loggers: *loggers 
+  TensorBoardLogger: 
+    save_dir: ./logs
+    log_graph: True
+  # callback for trainer
+  callbacks: *callbacks
+  ModelCheckpoint: *ModelCheckpoint
+  LearningRateMonitor: *LearningRateMonitor
+  ModelSummary: *ModelSummary
+  # profiler for trainer
+  profiler: *profiler
+  SimpleProfiler: *SimpleProfiler
+  
+train_pruning:
+  path_ckpt: logs/mobilenet_v3_small/version_0/checkpoints/last.ckpt
+  pruning_train_epochs: [2,2] # 每轮剪枝训练的轮次
+  pruning_cfgs:
+    pruning_ratio: 0.5
+  trainer: 
+    <<: *trainer_cfgs
+  module_class: *module_class
+  dataset_class: *dataset_class
+  datasets: *datasets
+  dataloader_class: *dataloader_class
+  dataloaders: *dataloaders
+  # logger for trainer
+  loggers: *loggers 
+  TensorBoardLogger: 
+    save_dir: ./logs 
+    log_graph: True
+  # callback for trainer
+  callbacks: [ModelCheckpoint,LearningRateMonitor,ModelSummary]
+  ModelCheckpoint: *ModelCheckpoint
+  LearningRateMonitor: *LearningRateMonitor
+  ModelSummary: *ModelSummary
+  # profiler for trainer
+  profiler: *profiler
+  SimpleProfiler: *SimpleProfiler
+
+train_quantization:
+  path_ckpt: logs/mobilenet_v3_small/version_1/checkpoints/last.ckpt
+  dataset_class: *dataset_class
+  datasets: *datasets
+  dataloader_class: *dataloader_class
+  dataloaders: *dataloaders
+  module_class: *module_class   
+  callbacks: [ModelCheckpoint,LearningRateMonitor,ModelSummary]
+  ModelCheckpoint: *ModelCheckpoint
+  LearningRateMonitor: *LearningRateMonitor
+  ModelSummary: *ModelSummary
+  profiler: *profiler
+  SimpleProfiler: *SimpleProfiler
+  # logger for trainer
+  loggers: *loggers 
+  TensorBoardLogger: 
+    save_dir: ./logs 
+    log_graph: True
+  trainer: 
+    max_epochs: 10
+    min_epochs: 1
+    <<: *trainer_cfgs
+
+export_onnx:
+  path_model: logs/mobilenet_v3_small/version_1/checkpoints/last.pth
+  module_class: *module_class
+  export_onnx_cfgs:
+    mode: onnx
+    input_size: [1, 3, 224, 224]
+    is_quantization: false
+    path_save: null
+
+test:
+  path_ckpt: logs/mobilenet_v3_small/version_1/checkpoints/last.ckpt
+  module_class: *module_class
+  module_cfgs: *module_cfgs
+  dataset_class: *dataset_class
+  datasets: 
+    test: 
+      path_txt: database_sample/test.txt
+      transfroms: test
+      cfgs: 
+        <<: *dataset_cfgs  
+  dataloader_class: *dataloader_class
+  dataloaders: 
+    test:
+      shuffle: False
+      <<: *dataloader_cfgs
+  trainer: 
+    <<: *trainer_cfgs
+
+predict:
+  path_ckpt: logs/mobilenet_v3_small/version_1/checkpoints/last.ckpt
+  module_class: *module_class
+  module_cfgs: *module_cfgs
+  dataset_class: *dataset_class
+  datasets: 
+    predict: 
+      path_txt: database_sample/test.txt
+      transfroms: test
+      cfgs: 
+        <<: *dataset_cfgs  
+  dataloader_class: *dataloader_class
+  dataloaders: 
+    predict:
+      shuffle: False
+      batch_size: 4
+      <<: *dataloader_cfgs
+  trainer: 
+    <<: *trainer_cfgs
+
+# inference_on_image:
+# inference_on_video:
+# inference_on_image_with_label:
+

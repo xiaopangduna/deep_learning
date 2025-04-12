@@ -25,28 +25,35 @@ endif()
 
 # 设置头文件库
 add_library(utils_lib INTERFACE)
-target_include_directories(utils_lib INTERFACE
-    ${PROJECT_SOURCE_DIR}/lib/utils_lib/include
-)
+# target_include_directories(utils_lib INTERFACE
+#     ${PROJECT_SOURCE_DIR}/lib/utils_lib/include
+# )
 
 # 查找 YAML 库
 find_package(yaml-cpp REQUIRED)
+find_package(OpenCV REQUIRED)
 
 # 设置可执行文件的包含目录
 target_include_directories(DeepLearningDeployApp PRIVATE
     ${PROJECT_SOURCE_DIR}/lib/utils_lib/include
     ${PROJECT_SOURCE_DIR}/include
+    ${OpenCV_INCLUDE_DIRS}
 )
 
+
 # 链接库到可执行文件
-target_link_libraries(DeepLearningDeployApp PRIVATE utils_lib yaml-cpp)
+target_link_libraries(DeepLearningDeployApp PRIVATE utils_lib yaml-cpp ${OpenCV_LIBS})
 
 # 添加测试子目录，让 CMake 处理测试目录下的构建配置
 add_subdirectory(tests/utils_lib)
+
 
 # 如果后续要测试 perception_lib，也可以添加对应的子目录
 # add_subdirectory(tests/perception_lib)
 
 # 设置构建类型为 Debug
 set(CMAKE_BUILD_TYPE Debug)
+
+
+
 

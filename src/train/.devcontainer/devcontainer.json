@@ -1,0 +1,43 @@
+{
+    //A name for the dev container displayed in the UI.
+    "name": "pytorch_2.4.1_python_3.11",
+    "image": "my_pytorch_2.4.1:latest",
+    // "build": {
+    //     "dockerfile": "../Dockerfile"
+    // },
+    "runArgs": [
+        "--gpus",
+        "all",
+        "--shm-size=3G"
+
+    ],
+    "mounts": [
+        {
+            //将服务器上的插件挂载至容器
+            "source": "/home/xiaopangdun/.vscode-server",
+            "target": "/root/.vscode-server",
+            //bind:绑定挂载将宿主机上的文件或目录直接挂载到容器内。 
+            //volume:卷挂载是一种更持久化的数据存储方式，卷由 Docker 管理，独立于容器的生命周期。当容器删除时，卷可以保留数据。
+            //tmpfs:临时文件系统挂载,将临时文件系统挂载到容器内。这种挂载类型的特点是数据存储在内存中，容器停止或删除后，数据会丢失。它适用于存储临时数据，如缓存文件。
+            "type": "bind"
+        }
+    ],
+    // 设置工作空间 ,consistency=cached
+    "workspaceMount": "source=${localWorkspaceFolder}/..,target=/workspace,type=bind",
+    // 设置容器启动时默认打开的文件目录
+    "workspaceFolder": "/workspace/deep_learning",
+    "customizations": {
+        // Configure properties specific to VS Code.
+        "vscode": {
+            // Set *default* container specific settings.json values on container create.
+            // "settings": {
+            //     "extensions.extensionPath": "/vscode/vscode-server/extensions"
+        },
+        // 构建容器时自动下载
+        "extensions": [
+            // "ms-python.python",
+            // "ms-python.vscode-pylance",
+            // "ms-python.debugpy"
+        ]
+    }
+}

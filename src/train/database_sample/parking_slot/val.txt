@@ -1,0 +1,2 @@
+database_sample/parking_slot/image/0004.jpg database_sample/parking_slot/label/0004.json
+database_sample/parking_slot/image/0010.jpg database_sample/parking_slot/label/0010.json

@@ -18,7 +18,7 @@ private:
     const PerceptionConfig* config;
 public:
     PerceptionModelFactory(const PerceptionConfig* config) : config(config) {}
-    static PerceptionModel* createPerceptionModel(PerceptionModelType modelType, const PerceptionConfig* config);
+    static PerceptionModel* createPerceptionModel(PerceptionModelType modelType, const PerceptionConfig& config);
 };
 
 #endif // PERCEPTION_MODEL_FACTORY_HPP

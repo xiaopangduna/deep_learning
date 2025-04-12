@@ -1,3 +1,11 @@
-parent:
-  child:
-    grandchild: some_value
+fall_detection:
+  yolov5Segmentation:
+    preprocessing: 
+      device: cpu
+      image_size: 640
+      batch_size: 1
+    inference: 
+      device: tensorrt
+      path_to_model: /path/to/your/model.engine
+    postprocessing:
+      conf_threshold: 0.5
