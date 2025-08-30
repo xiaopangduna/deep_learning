@@ -49,3 +49,6 @@ test：测试源码
 cmd.txt:所有训练指令
 使用lightning cli
 # 一个config文件包括训练，重训练，剪枝，量化，
+
+yolo-detection
+下载coco8数据集-

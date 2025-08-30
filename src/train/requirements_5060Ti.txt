@@ -1,0 +1,8 @@
+# pip3 install torch torchvision ,cuda12.8
+torch==2.8.0
+torchvision==0.23.0
+lightning==2.5.4
+ultralytics==8.3.189
+
+# dev
+pytest==8.4.1

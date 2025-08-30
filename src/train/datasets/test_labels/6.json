@@ -1,0 +1,11 @@
+{
+    "version": "5.5.0",
+    "flags": {
+        "cat": true
+    },
+    "shapes": [],
+    "imagePath": "..\\image\\6.jpg",
+    "imageData": null,
+    "imageHeight": 375,
+    "imageWidth": 499
+}
