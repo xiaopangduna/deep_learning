@@ -19,5 +19,5 @@ dev = [
     "pytest>=7.0",
 ]
 
-# [project.scripts]
-# lovely_utils = "lovely_utils.cli:main"
+[project.scripts]
+lovely_utils = "lovely_deep_learning.cli:main"
