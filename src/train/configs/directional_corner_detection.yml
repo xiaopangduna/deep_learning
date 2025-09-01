@@ -94,7 +94,7 @@ train:
 train_resume:
   path_ckpt: logs/DirectionalCornerDetectionModel/version_0/checkpoints/last.ckpt
   trainer: 
-    max_epochs: 600
+    max_epochs: 500
     min_epochs: 1
     <<: *trainer_cfgs
   module_class: *module_class
