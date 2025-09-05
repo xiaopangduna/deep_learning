@@ -1,0 +1,7 @@
+
+layers:
+  - {name: conv1, type: Conv2d, from: [-1], args: {in_channels: 3, out_channels: 16, kernel_size: 3, stride: 1, padding: 1}}
+  - {name: relu1, type: ReLU, from: [conv1], args: {}}
+  - {name: conv2, type: Conv2d, from: [relu1], args: {in_channels: 16, out_channels: 32, kernel_size: 3, stride: 1, padding: 1}}
+  - {name: concat1, type: Concat, from: [conv1, conv2], args: {dim: 1}}
+  - {name: linear1, type: Linear, from: [concat1], args: {in_features: 32768, out_features: 10}}

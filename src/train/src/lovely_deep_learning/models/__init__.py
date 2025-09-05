@@ -1,3 +1,4 @@
-from .object_detection import DirectionalCornerDetectionModel
+# from .object_detection import DirectionalCornerDetectionModel
+from .DAGNet import DAGNet
 
-__all__ = ["DirectionalCornerDetectionModel"]
+__all__ = ["DAGNet"]
