@@ -15,7 +15,7 @@ def test_DAGNet_demo_model_two_inputs_one_outputs():
         "layers": [
             {"name": "conv1", "module": "torch.nn.Conv2d", "args": {"in_channels":3, "out_channels":16, "kernel_size":3, "padding":1}, "from":["img1"]},
             {"name": "conv2", "module": "torch.nn.Conv2d", "args": {"in_channels":3, "out_channels":16, "kernel_size":3, "padding":1}, "from":["img2"]},
-            {"name": "concat", "module": "torch.concat", "args": {"dim":1}, "from":["conv1","conv2"]},
+            {"name": "concat", "module": "lovely_deep_learning.nn.Concat", "args": {"dim":1}, "from":["conv1","conv2"]},
             {"name": "conv3", "module": "torch.nn.Conv2d", "args": {"in_channels":32, "out_channels":32, "kernel_size":3, "padding":1}, "from":["concat"]},
             {"name": "flatten", "module": "torch.nn.Flatten", "args": {}, "from":["conv3"]},
             {"name": "fc", "module": "torch.nn.Linear", "args": {"in_features":32*32*32, "out_features":10}, "from":["flatten"]}
