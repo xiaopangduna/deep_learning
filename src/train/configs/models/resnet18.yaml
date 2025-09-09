@@ -63,4 +63,6 @@ structure:
 weight:
   path: pretrained_models/resnet18-f37072fd.pth
   url: https://download.pytorch.org/models/resnet18-f37072fd.pth
+  map_location: cpu
+  strict: false
   

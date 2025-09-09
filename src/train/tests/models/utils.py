@@ -1,5 +1,6 @@
 import yaml
 
+
 def load_yaml_config(file_path):
     try:
         # 用with语句自动管理文件关闭
@@ -148,5 +149,71 @@ resnet18_config = {
     "weight": {
         "path": "pretrained_models/resnet18-f37072fd.pth",
         "url": "https://download.pytorch.org/models/resnet18-f37072fd.pth",
+        "map_location": "cpu",
+        "strict": False,
+    },
+}
+
+
+demo_config_two_inputs_one_outputs = {
+    "structure": {
+        "inputs": [
+            {"name": "img1", "shape": (3, 32, 32)},
+            {"name": "img2", "shape": (3, 32, 32)},
+        ],
+        "outputs": [{"name": "class", "shape": (10,), "from": ["fc"]}],
+        "layers": [
+            {
+                "name": "conv1",
+                "module": "torch.nn.Conv2d",
+                "args": {
+                    "in_channels": 3,
+                    "out_channels": 16,
+                    "kernel_size": 3,
+                    "padding": 1,
+                },
+                "from": ["img1"],
+            },
+            {
+                "name": "conv2",
+                "module": "torch.nn.Conv2d",
+                "args": {
+                    "in_channels": 3,
+                    "out_channels": 16,
+                    "kernel_size": 3,
+                    "padding": 1,
+                },
+                "from": ["img2"],
+            },
+            {
+                "name": "concat",
+                "module": "lovely_deep_learning.nn.conv.Concat",
+                "args": {"dim": 1},
+                "from": ["conv1", "conv2"],
+            },
+            {
+                "name": "conv3",
+                "module": "torch.nn.Conv2d",
+                "args": {
+                    "in_channels": 32,
+                    "out_channels": 32,
+                    "kernel_size": 3,
+                    "padding": 1,
+                },
+                "from": ["concat"],
+            },
+            {
+                "name": "flatten",
+                "module": "torch.nn.Flatten",
+                "args": {},
+                "from": ["conv3"],
+            },
+            {
+                "name": "fc",
+                "module": "torch.nn.LazyLinear",
+                "args": {"out_features": 10},
+                "from": ["flatten"],
+            },
+        ],
     },
 }

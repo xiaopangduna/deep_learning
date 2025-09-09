@@ -7,8 +7,6 @@ import torch
 import torch.nn as nn
 
 
-
-
 class DAGWeightLoader():
     """
     用于加载 TorchVision 预训练权重的加载器。
