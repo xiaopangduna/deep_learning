@@ -2,6 +2,8 @@
 /logs/
 /tmp/
 lightning_logs/
+*.pt
+*.pth
 
 
 *.pyc
