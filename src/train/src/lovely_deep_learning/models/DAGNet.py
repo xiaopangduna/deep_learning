@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-
+from collections import OrderedDict
 from lovely_deep_learning.utils.factory import dynamic_class_instantiate_from_string
 
 
@@ -93,10 +93,29 @@ class DAGNet(nn.Module):
                     "Each layer must have 'name', 'module', and 'from' keys"
                 )
 
+    # def _init_layers(self):
+    #     for cfg in self.layers_config:
+    #         name = cfg["name"]
+    #         module = cfg["module"]
+    #         args = cfg.get("args", {})
+    #         instantiate = dynamic_class_instantiate_from_string(module, **args)
+    #         self.layers[name] = instantiate
     def _init_layers(self):
+        def build_module(cfg):
+            """递归构建单个模块"""
+            if "children" in cfg:
+                # 构建子模块 (nn.Sequential)
+                children = []
+                for child_cfg in cfg["children"]:
+                    child_name = child_cfg["name"]
+                    children.append((child_name, build_module(child_cfg)))
+                return nn.Sequential(OrderedDict(children))
+            else:
+                # 普通模块
+                module = cfg["module"]
+                args = cfg.get("args", {})
+                return dynamic_class_instantiate_from_string(module, **args)
+
         for cfg in self.layers_config:
             name = cfg["name"]
-            module = cfg["module"]
-            args = cfg.get("args", {})
-            instantiate = dynamic_class_instantiate_from_string(module, **args)
-            self.layers[name] = instantiate
+            self.layers[name] = build_module(cfg)
