@@ -29,7 +29,7 @@ class DAGNet(nn.Module):
 
         self._init_layers()
 
-    def forward(self, x):
+    def forward(self, x:list):
         outputs = {}
         # 初始化输入
         for i, node in enumerate(self.inputs):
@@ -93,13 +93,6 @@ class DAGNet(nn.Module):
                     "Each layer must have 'name', 'module', and 'from' keys"
                 )
 
-    # def _init_layers(self):
-    #     for cfg in self.layers_config:
-    #         name = cfg["name"]
-    #         module = cfg["module"]
-    #         args = cfg.get("args", {})
-    #         instantiate = dynamic_class_instantiate_from_string(module, **args)
-    #         self.layers[name] = instantiate
     def _init_layers(self):
         def build_module(cfg):
             """递归构建单个模块"""

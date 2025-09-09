@@ -1,0 +1,66 @@
+structure:
+  inputs: [{name: input, shape: [3, 224, 224]}]
+  outputs: [{name: classification, from: [fc]}]
+  layers:
+    # Stem
+    - name: conv1
+      from: [input]
+      module: torch.nn.Conv2d
+      args: {in_channels: 3, out_channels: 64, kernel_size: 7, stride: 2, padding: 3, bias: false}
+    - name: bn1
+      from: [conv1]
+      module: torch.nn.BatchNorm2d
+      args: {num_features: 64}
+    - name: relu
+      from: [bn1]
+      module: torch.nn.ReLU
+      args: {inplace: true}
+    - name: maxpool
+      from: [relu]
+      module: torch.nn.MaxPool2d
+      args: {kernel_size: 3, stride: 2, padding: 1}
+    # Layer1
+    - name: layer1
+      from: [maxpool]
+      module: torch.nn.Sequential
+      children:
+        - {name: "0", module: lovely_deep_learning.nn.conv.BasicBlock, args: {in_channels: 64, out_channels: 64, stride: 1}}
+        - {name: "1", module: lovely_deep_learning.nn.conv.BasicBlock, args: {in_channels: 64, out_channels: 64, stride: 1}}
+    # Layer2
+    - name: layer2
+      from: [layer1]
+      module: torch.nn.Sequential
+      children:
+        - {name: "0", module: lovely_deep_learning.nn.conv.BasicBlock, args: {in_channels: 64, out_channels: 128, stride: 2}}
+        - {name: "1", module: lovely_deep_learning.nn.conv.BasicBlock, args: {in_channels: 128, out_channels: 128, stride: 1}}
+    # Layer3
+    - name: layer3
+      from: [layer2]
+      module: torch.nn.Sequential
+      children:
+        - {name: "0", module: lovely_deep_learning.nn.conv.BasicBlock, args: {in_channels: 128, out_channels: 256, stride: 2}}
+        - {name: "1", module: lovely_deep_learning.nn.conv.BasicBlock, args: {in_channels: 256, out_channels: 256, stride: 1}}
+    # Layer4
+    - name: layer4
+      from: [layer3]
+      module: torch.nn.Sequential
+      children:
+        - {name: "0", module: lovely_deep_learning.nn.conv.BasicBlock, args: {in_channels: 256, out_channels: 512, stride: 2}}
+        - {name: "1", module: lovely_deep_learning.nn.conv.BasicBlock, args: {in_channels: 512, out_channels: 512, stride: 1}}
+    # Head
+    - name: avgpool
+      from: [layer4]
+      module: torch.nn.AdaptiveAvgPool2d
+      args: {output_size: [1, 1]}
+    - name: flatten
+      from: [avgpool]
+      module: torch.nn.Flatten
+      args: {}
+    - name: fc
+      from: [flatten]
+      module: torch.nn.Linear
+      args: {in_features: 512, out_features: 1000}
+weight:
+  path: pretrained_models/resnet18-f37072fd.pth
+  url: https://download.pytorch.org/models/resnet18-f37072fd.pth
+  
