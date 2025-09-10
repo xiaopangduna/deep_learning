@@ -1,8 +1,9 @@
 import torch
-import torchvision.models.resnet
-import re
-import yaml
+# import torchvision.models.resnet
+# import re
+# import yaml
 import torchvision.models as models
+
 from lovely_deep_learning.models.DAGNet import DAGNet
 from lovely_deep_learning.models.DAGWeightLoader import DAGWeightLoader
 from .utils import *
@@ -11,13 +12,12 @@ from .utils import *
 def test_yaml_config_equal_dict_config():
     """测试函数：使用辅助函数读取YAML，通过assert对比内容"""
     test_cases = [
-        (resnet18_config,"configs/models/resnet18.yaml"),
+        (resnet18_config, "configs/models/resnet18.yaml"),
     ]
-    
+
     for expected, yaml_path in test_cases:
         actual = load_yaml_config(yaml_path)
-        assert actual == expected, \
-            f"配置不匹配 - 文件: {yaml_path}\n预期: {expected}\n实际: {actual}"
+        assert actual == expected, f"配置不匹配 - 文件: {yaml_path}\n预期: {expected}\n实际: {actual}"
 
 
 def test_DAGNet_demo_model_two_inputs_one_outputs():
@@ -33,7 +33,6 @@ def test_DAGNet_demo_model_two_inputs_one_outputs():
 
 
 def test_DAGNet_equal_ResNet18():
-
     config = resnet18_config
 
     net = DAGNet(config["structure"])
@@ -63,7 +62,6 @@ def test_DAGNet_equal_ResNet18():
     official_stem_out = official_resnet(x)
     dag_stem_out = net([x])[0]  # 输出 fc 层对应的 from="relu" 或 maxpool
 
-
     # loader = DAGWeightLoader()
     # loader.load_weights(net, **loader_config)
     # url = ("https://download.pytorch.org/models/resnet18-f37072fd.pth",)
@@ -83,3 +81,7 @@ def test_DAGWeightLoader_resnet18():
     assert torch.allclose(official_out, dag_out, atol=1e-6)
 
 
+def test_DAGNet_equal_yolov8():
+
+    
+    pass
