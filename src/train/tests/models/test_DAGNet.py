@@ -1,8 +1,7 @@
 import torch
-# import torchvision.models.resnet
-# import re
-# import yaml
+import torch.nn as nn
 import torchvision.models as models
+from ultralytics import YOLO
 
 from lovely_deep_learning.models.DAGNet import DAGNet
 from lovely_deep_learning.models.DAGWeightLoader import DAGWeightLoader
@@ -46,7 +45,7 @@ def test_DAGNet_equal_ResNet18():
     net.load_state_dict(my_sd)
 
     x = torch.randn(1, 3, 224, 224)
-    net.eval()
+
     official_resnet.eval()
     # with torch.no_grad():
     #     # 官方 ResNet18 stem: conv1->bn1->relu->maxpool
@@ -60,11 +59,9 @@ def test_DAGNet_equal_ResNet18():
     #     official_stem_out = official_resnet.layer4(official_stem_out)
     #     official_stem_out = official_resnet.avgpool(official_stem_out)
     official_stem_out = official_resnet(x)
-    dag_stem_out = net([x])[0]  # 输出 fc 层对应的 from="relu" 或 maxpool
 
-    # loader = DAGWeightLoader()
-    # loader.load_weights(net, **loader_config)
-    # url = ("https://download.pytorch.org/models/resnet18-f37072fd.pth",)
+    net.eval()
+    dag_stem_out = net([x])[0]  # 输出 fc 层对应的 from="relu" 或 maxpool
 
     assert torch.allclose(official_stem_out, dag_stem_out, atol=1e-6)
 
@@ -83,5 +80,37 @@ def test_DAGWeightLoader_resnet18():
 
 def test_DAGNet_equal_yolov8():
 
+    official_model = YOLO("configs/object_detection/yolov8.yaml")  # 使用下载的配置构建模型
+    # official_model = YOLO("yolov8n.pt")  # 使用下载的配置构建模型
+
+    config= yolov8_n_config
+    net = DAGNet(config["structure"])
+    official_sd = official_model.state_dict()
+    my_sd = net.state_dict()
+    new_sd = {"layers." + k[12:]: v for k, v in official_sd.items()}
+    compatible_sd = {k: v for k, v in new_sd.items() if k in my_sd}
+    my_sd.update(compatible_sd)
+    net.load_state_dict(my_sd)
+
+    x = torch.randn(1, 3, 640, 640)
+
+    official_model.eval()
+    with torch.no_grad():
+        # 官方 ResNet18 stem: conv1->bn1->relu->maxpool
+        official_out = official_model.model.model[0](x)
+        # official_stem_out = official_resnet.bn1(official_stem_out)
+        # official_stem_out = official_resnet.relu(official_stem_out)
+        # official_stem_out = official_resnet.maxpool(official_stem_out)
+        # official_stem_out = official_resnet.layer1(official_stem_out)
+        # official_stem_out = official_resnet.layer2(official_stem_out)
+        # official_stem_out = official_resnet.layer3(official_stem_out)
+        # official_stem_out = official_resnet.layer4(official_stem_out)
+        # official_stem_out = official_resnet.avgpool(official_stem_out)
+        pass
     
+    net.eval()
+    dag_out = net([x])[0]
+    print(official_model.model.model[0])
+    print(net.layers["0"])
+    assert torch.allclose(official_out, dag_out, atol=1e-6)
     pass

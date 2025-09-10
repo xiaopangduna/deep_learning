@@ -154,6 +154,254 @@ resnet18_config = {
     },
 }
 
+yolov8_n_config = {
+    "structure": {
+        "inputs": [{"name": "input", "shape": [3, 640, 640]}],
+        "outputs": [{"name": "detect", "from": ["0"]}],
+        "layers": [
+            # Stem
+            {
+                "name": "0",
+                "module": "lovely_deep_learning.nn.conv.Conv",
+                "args": {
+                    "c1": 3,
+                    "c2": 16,
+                    "k": 3,
+                    "s": 2,
+                },
+                "from": ["input"],
+            },
+            # {
+            #     "name": "1",
+            #     "module": "ultralytics.nn.modules.conv.Conv",
+            #     "args": {
+            #         "c1": 16,
+            #         "c2": 32,
+            #         "k": 3,
+            #         "s": 2,
+            #     },
+            #     "from": ["0"],
+            # },
+            # {
+            #     "name": "2",
+            #     "module": "ultralytics.nn.modules.block.C2f",
+            #     "args": {
+            #         "c1": 32,
+            #         "c2": 32,
+            #         "n": 1,
+            #         "shortcut": True,
+            #     },
+            #     "from": ["1"],
+            # },
+            # {
+            #     "name": "3",
+            #     "module": "ultralytics.nn.modules.conv.Conv",
+            #     "args": {
+            #         "c1": 32,
+            #         "c2": 64,
+            #         "k": 3,
+            #         "s": 2,
+            #     },
+            #     "from": ["input"],
+            # },
+            # {
+            #     "name": "4",
+            #     "module": "ultralytics.nn.modules.block.C2f",
+            #     "args": {
+            #         "c1": 64,
+            #         "c2": 64,
+            #         "n": 2,
+            #         "shortcut": True,
+            #     },
+            #     "from": ["3"],
+            # },
+            # {
+            #     "name": "5",
+            #     "module": "ultralytics.nn.modules.conv.Conv",
+            #     "args": {
+            #         "c1": 64,
+            #         "c2": 128,
+            #         "k": 3,
+            #         "s": 2,
+            #     },
+            #     "from": ["4"],
+            # },
+            # {
+            #     "name": "6",
+            #     "module": "ultralytics.nn.modules.block.C2f",
+            #     "args": {
+            #         "c1": 128,
+            #         "c2": 128,
+            #         "n": 2,
+            #         "shortcut": True,
+            #     },
+            #     "from": ["5"],
+            # },
+            # {
+            #     "name": "7",
+            #     "module": "ultralytics.nn.modules.conv.Conv",
+            #     "args": {
+            #         "c1": 128,
+            #         "c2": 256,
+            #         "k": 3,
+            #         "s": 2,
+            #     },
+            #     "from": ["6"],
+            # },
+            # {
+            #     "name": "8",
+            #     "module": "ultralytics.nn.modules.block.C2f",
+            #     "args": {
+            #         "c1": 256,
+            #         "c2": 256,
+            #         "n": 1,
+            #         "shortcut": True,
+            #     },
+            #     "from": ["7"],
+            # },
+            # {
+            #     "name": "9",
+            #     "module": "ultralytics.nn.modules.block.SPPF",
+            #     "args": {
+            #         "c1": 256,
+            #         "c2": 256,
+            #         "k": 5,
+            #     },
+            #     "from": ["8"],
+            # },
+            # {
+            #     "name": "upsample",
+            #     "module": "torch.nn.modules.upsampling.Upsample",
+            #     "args": {
+            #         "size": None,
+            #         "scale_factor": 2,
+            #         "mode": "nearest",
+            #     },
+            #     "from": ["conv2"],
+            # },
+            # {
+            #     "name": "upsample",
+            #     "module": "ultralytics.nn.modules.conv.Concat",
+            #     "args": {
+            #         "dimension": 1,
+            #     },
+            #     "from": ["conv2"],
+            # },
+            # {
+            #     "name": "C2f_2",
+            #     "module": "ultralytics.nn.modules.block.C2f",
+            #     "args": {
+            #         "c1": 384,
+            #         "c2": 128,
+            #         "n": 1,
+            #     },
+            #     "from": ["conv2"],
+            # },
+            # {
+            #     "name": "upsample",
+            #     "module": "torch.nn.modules.upsampling.Upsample",
+            #     "args": {
+            #         "size": None,
+            #         "scale_factor": 2,
+            #         "mode": "nearest",
+            #     },
+            #     "from": ["conv2"],
+            # },
+            # {
+            #     "name": "upsample",
+            #     "module": "ultralytics.nn.modules.conv.Concat",
+            #     "args": {
+            #         "dimension": 1,
+            #     },
+            #     "from": ["conv2"],
+            # },
+            # {
+            #     "name": "C2f_2",
+            #     "module": "ultralytics.nn.modules.block.C2f",
+            #     "args": {
+            #         "c1": 192,
+            #         "c2": 64,
+            #         "n": 1,
+            #     },
+            #     "from": ["conv2"],
+            # },
+            # {
+            #     "name": "conv4",
+            #     "module": "ultralytics.nn.modules.conv.Conv",
+            #     "args": {
+            #         "c1": 64,
+            #         "c2": 64,
+            #         "k": 3,
+            #         "s": 2,
+            #     },
+            #     "from": ["input"],
+            # },
+            # {
+            #     "name": "upsample",
+            #     "module": "ultralytics.nn.modules.conv.Concat",
+            #     "args": {
+            #         "dimension": 1,
+            #     },
+            #     "from": ["conv2"],
+            # },
+            # {
+            #     "name": "C2f_2",
+            #     "module": "ultralytics.nn.modules.block.C2f",
+            #     "args": {
+            #         "c1": 192,
+            #         "c2": 128,
+            #         "n": 1,
+            #     },
+            #     "from": ["conv2"],
+            # },
+            # {
+            #     "name": "conv4",
+            #     "module": "ultralytics.nn.modules.conv.Conv",
+            #     "args": {
+            #         "c1": 128,
+            #         "c2": 128,
+            #         "k": 3,
+            #         "s": 2,
+            #     },
+            #     "from": ["input"],
+            # },
+            # {
+            #     "name": "upsample",
+            #     "module": "ultralytics.nn.modules.conv.Concat",
+            #     "args": {
+            #         "dimension": 1,
+            #     },
+            #     "from": ["conv2"],
+            # },
+            # {
+            #     "name": "C2f_2",
+            #     "module": "ultralytics.nn.modules.block.C2f",
+            #     "args": {
+            #         "c1": 384,
+            #         "c2": 256,
+            #         "n": 1,
+            #     },
+            #     "from": ["conv2"],
+            # },
+            # {
+            #     "name": "C2f_2",
+            #     "module": "ultralytics.nn.modules.head.Detect",
+            #     "args": {
+            #         "nc": 80,
+            #         "ch": [64,128,256],
+            #         "n": 1,
+            #     },
+            #     "from": ["conv2"],
+            # },
+        ],
+    },
+    "weight": {
+        "path": "pretrained_models/resnet18-f37072fd.pth",
+        "url": "https://download.pytorch.org/models/resnet18-f37072fd.pth",
+        "map_location": "cpu",
+        "strict": False,
+    },
+}
 
 demo_config_two_inputs_one_outputs = {
     "structure": {
