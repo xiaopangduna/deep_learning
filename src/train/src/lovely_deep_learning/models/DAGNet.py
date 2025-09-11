@@ -46,8 +46,6 @@ class DAGNet(nn.Module):
             if len(from_layers) == 1:
                 inp = outputs[from_layers[0]]
             else:
-                # 多输入 concat
-                # inp = torch.cat([outputs[f] for f in from_layers])
                 inp = [outputs[f] for f in from_layers]
 
             outputs[name] = layer(inp)

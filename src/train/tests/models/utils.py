@@ -154,10 +154,11 @@ resnet18_config = {
     },
 }
 
+
 yolov8_n_config = {
     "structure": {
         "inputs": [{"name": "input", "shape": [3, 640, 640]}],
-        "outputs": [{"name": "detect", "from": ["0"]}],
+        "outputs": [{"name": "detect", "from": ["13"]}],
         "layers": [
             # Stem
             {
@@ -171,160 +172,160 @@ yolov8_n_config = {
                 },
                 "from": ["input"],
             },
-            # {
-            #     "name": "1",
-            #     "module": "ultralytics.nn.modules.conv.Conv",
-            #     "args": {
-            #         "c1": 16,
-            #         "c2": 32,
-            #         "k": 3,
-            #         "s": 2,
-            #     },
-            #     "from": ["0"],
-            # },
-            # {
-            #     "name": "2",
-            #     "module": "ultralytics.nn.modules.block.C2f",
-            #     "args": {
-            #         "c1": 32,
-            #         "c2": 32,
-            #         "n": 1,
-            #         "shortcut": True,
-            #     },
-            #     "from": ["1"],
-            # },
-            # {
-            #     "name": "3",
-            #     "module": "ultralytics.nn.modules.conv.Conv",
-            #     "args": {
-            #         "c1": 32,
-            #         "c2": 64,
-            #         "k": 3,
-            #         "s": 2,
-            #     },
-            #     "from": ["input"],
-            # },
-            # {
-            #     "name": "4",
-            #     "module": "ultralytics.nn.modules.block.C2f",
-            #     "args": {
-            #         "c1": 64,
-            #         "c2": 64,
-            #         "n": 2,
-            #         "shortcut": True,
-            #     },
-            #     "from": ["3"],
-            # },
-            # {
-            #     "name": "5",
-            #     "module": "ultralytics.nn.modules.conv.Conv",
-            #     "args": {
-            #         "c1": 64,
-            #         "c2": 128,
-            #         "k": 3,
-            #         "s": 2,
-            #     },
-            #     "from": ["4"],
-            # },
-            # {
-            #     "name": "6",
-            #     "module": "ultralytics.nn.modules.block.C2f",
-            #     "args": {
-            #         "c1": 128,
-            #         "c2": 128,
-            #         "n": 2,
-            #         "shortcut": True,
-            #     },
-            #     "from": ["5"],
-            # },
-            # {
-            #     "name": "7",
-            #     "module": "ultralytics.nn.modules.conv.Conv",
-            #     "args": {
-            #         "c1": 128,
-            #         "c2": 256,
-            #         "k": 3,
-            #         "s": 2,
-            #     },
-            #     "from": ["6"],
-            # },
-            # {
-            #     "name": "8",
-            #     "module": "ultralytics.nn.modules.block.C2f",
-            #     "args": {
-            #         "c1": 256,
-            #         "c2": 256,
-            #         "n": 1,
-            #         "shortcut": True,
-            #     },
-            #     "from": ["7"],
-            # },
-            # {
-            #     "name": "9",
-            #     "module": "ultralytics.nn.modules.block.SPPF",
-            #     "args": {
-            #         "c1": 256,
-            #         "c2": 256,
-            #         "k": 5,
-            #     },
-            #     "from": ["8"],
-            # },
-            # {
-            #     "name": "upsample",
-            #     "module": "torch.nn.modules.upsampling.Upsample",
-            #     "args": {
-            #         "size": None,
-            #         "scale_factor": 2,
-            #         "mode": "nearest",
-            #     },
-            #     "from": ["conv2"],
-            # },
-            # {
-            #     "name": "upsample",
-            #     "module": "ultralytics.nn.modules.conv.Concat",
-            #     "args": {
-            #         "dimension": 1,
-            #     },
-            #     "from": ["conv2"],
-            # },
-            # {
-            #     "name": "C2f_2",
-            #     "module": "ultralytics.nn.modules.block.C2f",
-            #     "args": {
-            #         "c1": 384,
-            #         "c2": 128,
-            #         "n": 1,
-            #     },
-            #     "from": ["conv2"],
-            # },
-            # {
-            #     "name": "upsample",
-            #     "module": "torch.nn.modules.upsampling.Upsample",
-            #     "args": {
-            #         "size": None,
-            #         "scale_factor": 2,
-            #         "mode": "nearest",
-            #     },
-            #     "from": ["conv2"],
-            # },
-            # {
-            #     "name": "upsample",
-            #     "module": "ultralytics.nn.modules.conv.Concat",
-            #     "args": {
-            #         "dimension": 1,
-            #     },
-            #     "from": ["conv2"],
-            # },
-            # {
-            #     "name": "C2f_2",
-            #     "module": "ultralytics.nn.modules.block.C2f",
-            #     "args": {
-            #         "c1": 192,
-            #         "c2": 64,
-            #         "n": 1,
-            #     },
-            #     "from": ["conv2"],
-            # },
+            {
+                "name": "1",
+                "module": "lovely_deep_learning.nn.conv.Conv",
+                "args": {
+                    "c1": 16,
+                    "c2": 32,
+                    "k": 3,
+                    "s": 2,
+                },
+                "from": ["0"],
+            },
+            {
+                "name": "2",
+                "module": "lovely_deep_learning.nn.block.C2f",
+                "args": {
+                    "c1": 32,
+                    "c2": 32,
+                    "n": 1,
+                    "shortcut": True,
+                },
+                "from": ["1"],
+            },
+            {
+                "name": "3",
+                "module": "lovely_deep_learning.nn.conv.Conv",
+                "args": {
+                    "c1": 32,
+                    "c2": 64,
+                    "k": 3,
+                    "s": 2,
+                },
+                "from": ["2"],
+            },
+            {
+                "name": "4",
+                "module": "lovely_deep_learning.nn.block.C2f",
+                "args": {
+                    "c1": 64,
+                    "c2": 64,
+                    "n": 2,
+                    "shortcut": True,
+                },
+                "from": ["3"],
+            },
+            {
+                "name": "5",
+                "module": "lovely_deep_learning.nn.conv.Conv",
+                "args": {
+                    "c1": 64,
+                    "c2": 128,
+                    "k": 3,
+                    "s": 2,
+                },
+                "from": ["4"],
+            },
+            {
+                "name": "6",
+                "module": "lovely_deep_learning.nn.block.C2f",
+                "args": {
+                    "c1": 128,
+                    "c2": 128,
+                    "n": 2,
+                    "shortcut": True,
+                },
+                "from": ["5"],
+            },
+            {
+                "name": "7",
+                "module": "lovely_deep_learning.nn.conv.Conv",
+                "args": {
+                    "c1": 128,
+                    "c2": 256,
+                    "k": 3,
+                    "s": 2,
+                },
+                "from": ["6"],
+            },
+            {
+                "name": "8",
+                "module": "lovely_deep_learning.nn.block.C2f",
+                "args": {
+                    "c1": 256,
+                    "c2": 256,
+                    "n": 1,
+                    "shortcut": True,
+                },
+                "from": ["7"],
+            },
+            {
+                "name": "9",
+                "module": "lovely_deep_learning.nn.block.SPPF",
+                "args": {
+                    "c1": 256,
+                    "c2": 256,
+                    "k": 5,
+                },
+                "from": ["8"],
+            },
+            {
+                "name": "10",
+                "module": "torch.nn.modules.upsampling.Upsample",
+                "args": {
+                    "size": None,
+                    "scale_factor": 2,
+                    "mode": "nearest",
+                },
+                "from": ["9"],
+            },
+            {
+                "name": "11",
+                "module": "ultralytics.nn.modules.conv.Concat",
+                "args": {
+                    "dimension": 1,
+                },
+                "from": ["10", "6"],
+            },
+            {
+                "name": "12",
+                "module": "lovely_deep_learning.nn.block.C2f",
+                "args": {
+                    "c1": 384,
+                    "c2": 128,
+                    "n": 1,
+                },
+                "from": ["11"],
+            },
+            {
+                "name": "13",
+                "module": "torch.nn.modules.upsampling.Upsample",
+                "args": {
+                    "size": None,
+                    "scale_factor": 2,
+                    "mode": "nearest",
+                },
+                "from": ["12"],
+            },
+            {
+                "name": "14",
+                "module": "ultralytics.nn.modules.conv.Concat",
+                "args": {
+                    "dimension": 1,
+                },
+                "from": ["13", "4"],
+            },
+            {
+                "name": "15",
+                "module": "lovely_deep_learning.nn.block.C2f",
+                "args": {
+                    "c1": 192,
+                    "c2": 64,
+                    "n": 1,
+                },
+                "from": ["14"],
+            },
             # {
             #     "name": "conv4",
             #     "module": "ultralytics.nn.modules.conv.Conv",
