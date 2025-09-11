@@ -158,7 +158,7 @@ resnet18_config = {
 yolov8_n_config = {
     "structure": {
         "inputs": [{"name": "input", "shape": [3, 640, 640]}],
-        "outputs": [{"name": "detect", "from": ["13"]}],
+        "outputs": [{"name": "detect", "from": ["22"]}],
         "layers": [
             # Stem
             {
@@ -326,74 +326,73 @@ yolov8_n_config = {
                 },
                 "from": ["14"],
             },
-            # {
-            #     "name": "conv4",
-            #     "module": "ultralytics.nn.modules.conv.Conv",
-            #     "args": {
-            #         "c1": 64,
-            #         "c2": 64,
-            #         "k": 3,
-            #         "s": 2,
-            #     },
-            #     "from": ["input"],
-            # },
-            # {
-            #     "name": "upsample",
-            #     "module": "ultralytics.nn.modules.conv.Concat",
-            #     "args": {
-            #         "dimension": 1,
-            #     },
-            #     "from": ["conv2"],
-            # },
-            # {
-            #     "name": "C2f_2",
-            #     "module": "ultralytics.nn.modules.block.C2f",
-            #     "args": {
-            #         "c1": 192,
-            #         "c2": 128,
-            #         "n": 1,
-            #     },
-            #     "from": ["conv2"],
-            # },
-            # {
-            #     "name": "conv4",
-            #     "module": "ultralytics.nn.modules.conv.Conv",
-            #     "args": {
-            #         "c1": 128,
-            #         "c2": 128,
-            #         "k": 3,
-            #         "s": 2,
-            #     },
-            #     "from": ["input"],
-            # },
-            # {
-            #     "name": "upsample",
-            #     "module": "ultralytics.nn.modules.conv.Concat",
-            #     "args": {
-            #         "dimension": 1,
-            #     },
-            #     "from": ["conv2"],
-            # },
-            # {
-            #     "name": "C2f_2",
-            #     "module": "ultralytics.nn.modules.block.C2f",
-            #     "args": {
-            #         "c1": 384,
-            #         "c2": 256,
-            #         "n": 1,
-            #     },
-            #     "from": ["conv2"],
-            # },
-            # {
-            #     "name": "C2f_2",
-            #     "module": "ultralytics.nn.modules.head.Detect",
-            #     "args": {
-            #         "nc": 80,
-            #         "ch": [64,128,256],
-            #         "n": 1,
-            #     },
-            #     "from": ["conv2"],
-            # },
+            {
+                "name": "16",
+                "module": "lovely_deep_learning.nn.conv.Conv",
+                "args": {
+                    "c1": 64,
+                    "c2": 64,
+                    "k": 3,
+                    "s": 2,
+                },
+                "from": ["15"],
+            },
+            {
+                "name": "17",
+                "module": "ultralytics.nn.modules.conv.Concat",
+                "args": {
+                    "dimension": 1,
+                },
+                "from": ["16", "12"],
+            },
+            {
+                "name": "18",
+                "module": "lovely_deep_learning.nn.block.C2f",
+                "args": {
+                    "c1": 192,
+                    "c2": 128,
+                    "n": 1,
+                },
+                "from": ["17"],
+            },
+            {
+                "name": "19",
+                "module": "lovely_deep_learning.nn.conv.Conv",
+                "args": {
+                    "c1": 128,
+                    "c2": 128,
+                    "k": 3,
+                    "s": 2,
+                },
+                "from": ["18"],
+            },
+            {
+                "name": "20",
+                "module": "ultralytics.nn.modules.conv.Concat",
+                "args": {
+                    "dimension": 1,
+                },
+                "from": ["19", "9"],
+            },
+            {
+                "name": "21",
+                "module": "lovely_deep_learning.nn.block.C2f",
+                "args": {
+                    "c1": 384,
+                    "c2": 256,
+                    "n": 1,
+                },
+                "from": ["20"],
+            },
+            {
+                "name": "22",
+                "module": "ultralytics.nn.modules.head.Detect",
+                "args": {
+                    "nc": 80,
+                    "ch": [64,128,256],
+                },
+                "from": ["15", "18", "21"],
+            },
         ],
     },
     "weight": {

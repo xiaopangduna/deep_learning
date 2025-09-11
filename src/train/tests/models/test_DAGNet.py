@@ -79,8 +79,8 @@ def test_DAGWeightLoader_resnet18():
 
 
 def test_DAGNet_equal_yolov8():
-    # official_model = YOLO("configs/object_detection/yolov8.yaml")  # 使用下载的配置构建模型
-    official_model = YOLO("yolov8n.pt")  # 使用下载的配置构建模型
+    official_model = YOLO("configs/object_detection/yolov8.yaml")  # 使用下载的配置构建模型
+    # official_model = YOLO("yolov8n.pt")  # 使用下载的配置构建模型
 
     config = yolov8_n_config
     net = DAGNet(config["structure"])
@@ -94,6 +94,7 @@ def test_DAGNet_equal_yolov8():
     x = torch.randn(1, 3, 640, 640)
 
     official_model.eval()
+    official_out_last = official_model.model(x)
     with torch.no_grad():
         # 官方 ResNet18 stem: conv1->bn1->relu->maxpool
         official_out = official_model.model.model[0](x)
@@ -108,15 +109,30 @@ def test_DAGNet_equal_yolov8():
         official_out = official_model.model.model[7](official_out)
         official_out = official_model.model.model[8](official_out)
         official_out = official_model.model.model[9](official_out)
+        official_out_9 = official_out.clone()
         official_out = official_model.model.model[10](official_out)
         official_out = official_model.model.model[11]([official_out, official_out_6])
         official_out = official_model.model.model[12](official_out)
+        official_out_12 = official_out.clone()
         official_out = official_model.model.model[13](official_out)
-        pass
+        official_out = official_model.model.model[14]([official_out, official_out_4])
+        official_out = official_model.model.model[15](official_out)
+        official_out_15 = official_out.clone()
+        official_out = official_model.model.model[16](official_out)
+        official_out = official_model.model.model[17]([official_out, official_out_12])
+        official_out = official_model.model.model[18](official_out)
+        official_out_18 = official_out.clone()
+        official_out = official_model.model.model[19](official_out)
+        official_out = official_model.model.model[20]([official_out, official_out_9])
+        official_out = official_model.model.model[21](official_out)
+        official_out_21 = official_out.clone()
+        official_out = official_model.model.model[22]([official_out_15, official_out_18, official_out_21])
+
+
 
     net.eval()
     dag_out = net([x])[0]
-    print(official_model.model.model[11])
-    print(net.layers["11"])
-    assert torch.allclose(official_out, dag_out, atol=1e-6)
+    print(official_model.model.model[22])
+    print(net.layers["22"])
+    assert torch.allclose(official_out[0], dag_out[0], atol=1e-6)
     pass
