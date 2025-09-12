@@ -142,12 +142,20 @@ def test_DAGNet_equal_yolov8():
 
 
     net.eval()
+    net.layers["22"].stride =  torch.tensor([8,16,32], dtype=torch.float32)
     dag_out = net([x])[0]
+
     print(official_model.model.model[22])
     print(net.layers["22"])
-    assert torch.allclose(official_out[0], official_out_last[0], atol=1e-6)
+    # assert torch.allclose(official_out, dag_out, atol=1e-6)
+    # assert torch.allclose(official_out[0], official_out_last[0], atol=1e-6)
     # assert torch.allclose(official_out[1][0], official_out_last[1][0], atol=1e-6)
     # assert torch.allclose(official_out[1][1], official_out_last[1][1], atol=1e-6)
     # assert torch.allclose(official_out[1][2], official_out_last[1][2], atol=1e-6)
+
+    assert torch.allclose(dag_out[1][0], official_out_last[1][0], atol=1e-6)
+    assert torch.allclose(dag_out[1][1], official_out_last[1][1], atol=1e-6)
+    assert torch.allclose(dag_out[1][2], official_out_last[1][2], atol=1e-6)
+
     assert torch.allclose(official_out[0], dag_out[0], atol=1e-6)
     pass
