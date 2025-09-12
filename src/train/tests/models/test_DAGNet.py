@@ -79,11 +79,22 @@ def test_DAGWeightLoader_resnet18():
 
 
 def test_DAGNet_equal_yolov8():
+    torch.manual_seed(42)
     official_model = YOLO("configs/object_detection/yolov8.yaml")  # 使用下载的配置构建模型
     # official_model = YOLO("yolov8n.pt")  # 使用下载的配置构建模型
 
     config = yolov8_n_config
     net = DAGNet(config["structure"])
+
+    for m in net.modules():
+        t = type(m)
+        if t is nn.Conv2d:
+            pass  # nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+        elif t is nn.BatchNorm2d:
+            m.eps = 1e-3
+            m.momentum = 0.03
+        elif t in {nn.Hardswish, nn.LeakyReLU, nn.ReLU, nn.ReLU6, nn.SiLU}:
+            m.inplace = True
     official_sd = official_model.state_dict()
     my_sd = net.state_dict()
     new_sd = {"layers." + k[12:]: v for k, v in official_sd.items()}
@@ -134,5 +145,9 @@ def test_DAGNet_equal_yolov8():
     dag_out = net([x])[0]
     print(official_model.model.model[22])
     print(net.layers["22"])
+    assert torch.allclose(official_out[0], official_out_last[0], atol=1e-6)
+    # assert torch.allclose(official_out[1][0], official_out_last[1][0], atol=1e-6)
+    # assert torch.allclose(official_out[1][1], official_out_last[1][1], atol=1e-6)
+    # assert torch.allclose(official_out[1][2], official_out_last[1][2], atol=1e-6)
     assert torch.allclose(official_out[0], dag_out[0], atol=1e-6)
     pass
