@@ -33,7 +33,9 @@ src/lovely_deep_learning/modules/base_lightning_module.py
 src/lovely_deep_learning/modules/object_detection.py
 src/lovely_deep_learning/modules/trainer_classify.py
 src/lovely_deep_learning/nn/__init__.py
+src/lovely_deep_learning/nn/block.py
 src/lovely_deep_learning/nn/conv.py
+src/lovely_deep_learning/nn/head.py
 src/lovely_deep_learning/utils/__init__.py
 src/lovely_deep_learning/utils/dataset_txt_producer.py
 src/lovely_deep_learning/utils/factory.py

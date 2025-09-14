@@ -386,20 +386,22 @@ yolov8_n_config = {
             },
             {
                 "name": "22",
-                "module": "ultralytics.nn.modules.head.Detect",
+                "module": "lovely_deep_learning.nn.head.Detect",
                 "args": {
                     "nc": 80,
-                    "ch": [64,128,256],
+                    "ch": [64, 128, 256],
                 },
                 "from": ["15", "18", "21"],
             },
         ],
     },
     "weight": {
-        "path": "pretrained_models/resnet18-f37072fd.pth",
-        "url": "https://download.pytorch.org/models/resnet18-f37072fd.pth",
+        "path": "pretrained_models/yolov8n.pt",
+        "url": "'https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov8n.pt'",
         "map_location": "cpu",
         "strict": False,
+        "src_key_prefix": "layers.",
+        "src_key_slice_start": 12,
     },
 }
 

@@ -5,17 +5,10 @@ import urllib.request
 # weight_loader/base.py
 import torch
 import torch.nn as nn
+from ultralytics import YOLO
 
 
 class DAGWeightLoader():
-    """
-    用于加载 TorchVision 预训练权重的加载器。
-    专为 DAGNet 设计，假设其键名比标准 TorchVision 模型多了 'layers.' 前缀。
-    支持从本地路径加载，或从 URL 下载并缓存到指定路径。
-    """
-
-    # 固定的键名前缀
-    _KEY_PREFIX = "layers."
 
     def load_weights(
         self,
@@ -24,14 +17,10 @@ class DAGWeightLoader():
         url: Optional[str] = None,
         map_location: Optional[Union[str, torch.device]] = "cpu",
         strict: bool = False,
+        src_key_prefix: str = "layers.",  # 在这里接收prefix
+        src_key_slice_start: int = 0  # 新增参数：从哪个索引开始截断src_key
     ) -> None:
         """
-        加载 TorchVision 预训练权重到指定的 DAGNet 模型。
-        权重文件键名（如 'conv1.weight'）会自动加上 'layers.' 前缀（如 'layers.conv1.weight'）
-        以匹配 DAGNet 模型的结构。
-        如果 path 指向的文件存在，则直接加载。
-        如果 path 文件不存在，且提供了 url，则从 url 下载到 path，然后加载。
-
         Args:
             model (nn.Module): 目标 DAGNet 模型实例。
             path (str): 权重文件 (.pth) 的本地路径。
@@ -42,11 +31,19 @@ class DAGWeightLoader():
             strict (bool, optional): 是否使用严格模式加载权重。
                                      如果为 True，键名必须完全匹配。
                                      如果为 False (默认)，则忽略不匹配的键。
+            prefix (str, optional): 权重文件的前缀，默认为 "layers."。 
+                                     可在每次加载时动态指定。
+            key_truncate_start (int, optional): 从哪个索引位置开始截断源键名，默认为 0（不截断）。
+                                     例如，若设为12，会将src_key处理为src_key[12:]
         Raises:
-            ValueError: 如果 path 未提供，或 path 文件不存在且未提供 url。
+            ValueError: 如果 path 未提供，或 key_truncate_start 为负数。
+            FileNotFoundError: 如果 path 文件不存在且未提供 url。
         """
         if not path:
             raise ValueError("'path' must be provided as the target file location.")
+            
+        if src_key_slice_start < 0:
+            raise ValueError("'key_truncate_start' must be a non-negative integer.")
 
         final_path = path
 
@@ -74,21 +71,26 @@ class DAGWeightLoader():
         # 3. 从确定的本地路径加载权重
         try:
             print(f"TorchVisionWeightLoader: Loading weights from {final_path} (map_location={map_location})")
-            source_state_dict: Dict[str, Any] = torch.load(final_path, map_location=map_location)
+            if "yolo" in path:
+                source_state_dict: Dict[str, Any] = YOLO(path).state_dict()
+            else:
+                source_state_dict: Dict[str, Any] = torch.load(final_path, map_location=map_location)
+
             print(f"TorchVisionWeightLoader: Weights loaded successfully. Total keys: {len(source_state_dict)}")
 
-            # 4. 固定映射键名 (添加 'layers.' 前缀)
+            # 4. 固定映射键名 (先截断再添加动态前缀)
             mapped_state_dict: Dict[str, Any] = {}
             model_state_keys = set(model.state_dict().keys())
 
-            print(f"TorchVisionWeightLoader: Mapping keys with fixed prefix '{self._KEY_PREFIX}'...")
+            print(f"TorchVisionWeightLoader: Mapping keys with prefix '{src_key_prefix}' and truncating from index {src_key_slice_start}...")
             for src_key, value in source_state_dict.items():
-                # 将 TorchVision 的键 'conv1.weight' 映射为 DAGNet 的键 'layers.conv1.weight'
-                dag_net_key = self._KEY_PREFIX + src_key
+                # 先截断源键名，再添加前缀
+                truncated_key = src_key[src_key_slice_start:]
+                dag_net_key = src_key_prefix + truncated_key
                 if dag_net_key in model_state_keys:
                     mapped_state_dict[dag_net_key] = value
-                # else:
-                #     print(f"Info: Mapped key '{dag_net_key}' (from '{src_key}') not found in model. Skipping.")
+                else:
+                    print(f"Info: Mapped key '{dag_net_key}' (from '{src_key}') not found in model. Skipping.")
 
             print(f"TorchVisionWeightLoader: Mapped {len(mapped_state_dict)} compatible keys.")
 
