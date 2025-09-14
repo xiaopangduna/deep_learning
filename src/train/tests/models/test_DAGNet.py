@@ -80,8 +80,8 @@ def test_DAGWeightLoader_resnet18():
 
 def test_DAGNet_equal_yolov8_n():
     torch.manual_seed(42)
-    official_model = YOLO(r"configs\yolo\yolov8.yaml")  # 使用下载的配置构建模型
-
+    # official_model = YOLO(r"configs/yolo/yolov8.yaml")  # 使用下载的配置构建模型
+    official_model = YOLO(r"yolov8n.pt")  # 使用下载的配置构建模型
     config = yolov8_n_config
     net = DAGNet(config["structure"])
 
@@ -97,7 +97,6 @@ def test_DAGNet_equal_yolov8_n():
     official_model.eval()
     official_out_last = official_model.model(x)
     with torch.no_grad():
-        # 官方 ResNet18 stem: conv1->bn1->relu->maxpool
         official_out = official_model.model.model[0](x)
         official_out = official_model.model.model[1](official_out)
         official_out = official_model.model.model[2](official_out)
@@ -148,23 +147,31 @@ def test_DAGNet_equal_yolov8_n():
 
     assert torch.allclose(official_out[0], dag_out[0], atol=1e-6)
 
+
 def test_DAGWeightLoader_yolov8_n():
     config = yolov8_n_config
     net = DAGNet(config["structure"])
     net.layers["22"].stride =  torch.tensor([8,16,32], dtype=torch.float32)
     DAGWeightLoader().load_weights(net, **config["weight"]) 
-    official_model = YOLO(r"pretrained_models\yolov8n.pt")  # 使用下载的配置构建模型
+    # official_model = YOLO(r"pretrained_models/yolov8n.pt")  
+    official_model = YOLO("yolov8s.pt")  
     official_model.eval()
     net.eval()
     x = torch.randn(1, 3, 640, 640)
     official_out = official_model.model(x)
     dag_out = net([x])[0]
-
     print("official_out[0].shape:", official_out[0].shape)
     print("dag_out[0].shape:", dag_out[0].shape)
 
     print("max abs diff:", (official_out[0] - dag_out[0]).abs().max().item())
     print("mean abs diff:", (official_out[0] - dag_out[0]).abs().mean().item())
+    diff = (official_out[0] - dag_out[0])
+    max_val = diff.abs().max()
+    idx = (diff.abs() == max_val).nonzero(as_tuple=True)
+    print("最大差异值:", max_val.item())
+    print("最大差异位置:", idx)
+    print("official_out[0] 最大差异位置值:", official_out[0][idx].item())
+    print("dag_out[0] 最大差异位置值:", dag_out[0][idx].item())
     # assert torch.allclose(dag_out[1][0], official_out[1][0], atol=1e-4)
     # assert torch.allclose(dag_out[1][1], official_out[1][1], atol=1e-4)
     # assert torch.allclose(dag_out[1][2], official_out[1][2], atol=1e-4)
