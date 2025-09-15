@@ -73,45 +73,39 @@ class DAGWeightLoader():
             print(f"TorchVisionWeightLoader: Loading weights from {final_path} (map_location={map_location})")
             if "yolo" in path:
                 source_state_dict: Dict[str, Any] = YOLO(path).state_dict()
-                new_sd = {"layers." + k[12:]: v for k, v in source_state_dict.items()}
-                my_sd = model.state_dict()
-                compatible_sd = {k: v for k, v in new_sd.items() if k in my_sd}
-                my_sd.update(compatible_sd)
-                model.load_state_dict(my_sd)
             else:
                 source_state_dict: Dict[str, Any] = torch.load(final_path, map_location=map_location)
+            print(f"TorchVisionWeightLoader: Weights loaded successfully. Total keys: {len(source_state_dict)}")
 
-            # print(f"TorchVisionWeightLoader: Weights loaded successfully. Total keys: {len(source_state_dict)}")
+            # 4. 固定映射键名 (先截断再添加动态前缀)
+            mapped_state_dict: Dict[str, Any] = {}
+            model_state_keys = set(model.state_dict().keys())
 
-            # # 4. 固定映射键名 (先截断再添加动态前缀)
-            # mapped_state_dict: Dict[str, Any] = {}
-            # model_state_keys = set(model.state_dict().keys())
+            print(f"TorchVisionWeightLoader: Mapping keys with prefix '{src_key_prefix}' and truncating from index {src_key_slice_start}...")
+            for src_key, value in source_state_dict.items():
+                # 先截断源键名，再添加前缀
+                truncated_key = src_key[src_key_slice_start:]
+                dag_net_key = src_key_prefix + truncated_key
+                if dag_net_key in model_state_keys:
+                    mapped_state_dict[dag_net_key] = value
+                else:
+                    print(f"Info: Mapped key '{dag_net_key}' (from '{src_key}') not found in model. Skipping.")
 
-            # print(f"TorchVisionWeightLoader: Mapping keys with prefix '{src_key_prefix}' and truncating from index {src_key_slice_start}...")
-            # for src_key, value in source_state_dict.items():
-            #     # 先截断源键名，再添加前缀
-            #     truncated_key = src_key[src_key_slice_start:]
-            #     dag_net_key = src_key_prefix + truncated_key
-            #     if dag_net_key in model_state_keys:
-            #         mapped_state_dict[dag_net_key] = value
-            #     else:
-            #         print(f"Info: Mapped key '{dag_net_key}' (from '{src_key}') not found in model. Skipping.")
+            print(f"TorchVisionWeightLoader: Mapped {len(mapped_state_dict)} compatible keys.")
 
-            # print(f"TorchVisionWeightLoader: Mapped {len(mapped_state_dict)} compatible keys.")
+            # 5. 加载映射后的权重到模型
+            print(
+                f"TorchVisionWeightLoader: Loading {len(mapped_state_dict)} mapped keys into model (strict={strict})..."
+            )
+            missing_keys, unexpected_keys = model.load_state_dict(mapped_state_dict, strict=strict)
 
-            # # 5. 加载映射后的权重到模型
-            # print(
-            #     f"TorchVisionWeightLoader: Loading {len(mapped_state_dict)} mapped keys into model (strict={strict})..."
-            # )
-            # missing_keys, unexpected_keys = model.load_state_dict(mapped_state_dict, strict=strict)
+            if strict and (missing_keys or unexpected_keys):
+                print(f"Warning (Strict Mode): Missing keys: {missing_keys}, Unexpected keys: {unexpected_keys}")
+            elif not strict:
+                if missing_keys:
+                    print(f"Info (Non-Strict): Missing keys (in model but not in mapped weights): {missing_keys}")
 
-            # if strict and (missing_keys or unexpected_keys):
-            #     print(f"Warning (Strict Mode): Missing keys: {missing_keys}, Unexpected keys: {unexpected_keys}")
-            # elif not strict:
-            #     if missing_keys:
-            #         print(f"Info (Non-Strict): Missing keys (in model but not in mapped weights): {missing_keys}")
-
-            # print("TorchVisionWeightLoader: Weights loading process completed.")
+            print("TorchVisionWeightLoader: Weights loading process completed.")
 
         except Exception as e:
             error_msg = f"TorchVisionWeightLoader Error during loading from {final_path}: {e}"

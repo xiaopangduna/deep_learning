@@ -1,0 +1,104 @@
+structure:
+  inputs: [{name: input, shape: [3, 640, 640]}]
+  outputs: [{name: detect, from: ["22"]}]
+  layers:
+    - name: "0"
+      from: ["input"]
+      module: lovely_deep_learning.nn.conv.Conv
+      args: {c1: 3, c2: 16, k: 3, s: 2}
+    - name: "1"
+      from: ["0"]
+      module: lovely_deep_learning.nn.conv.Conv
+      args: {c1: 16, c2: 32, k: 3, s: 2}
+    - name: "2"
+      from: ["1"]
+      module: lovely_deep_learning.nn.block.C2f
+      args: {c1: 32, c2: 32, n: 1, shortcut: true}
+    - name: "3"
+      from: ["2"]
+      module: lovely_deep_learning.nn.conv.Conv
+      args: {c1: 32, c2: 64, k: 3, s: 2}
+    - name: "4"
+      from: ["3"]
+      module: lovely_deep_learning.nn.block.C2f
+      args: {c1: 64, c2: 64, n: 2, shortcut: true}
+    - name: "5"
+      from: ["4"]
+      module: lovely_deep_learning.nn.conv.Conv
+      args: {c1: 64, c2: 128, k: 3, s: 2}
+    - name: "6"
+      from: ["5"]
+      module: lovely_deep_learning.nn.block.C2f
+      args: {c1: 128, c2: 128, n: 2, shortcut: true}
+    - name: "7"
+      from: ["6"]
+      module: lovely_deep_learning.nn.conv.Conv
+      args: {c1: 128, c2: 256, k: 3, s: 2}
+    - name: "8"
+      from: ["7"]
+      module: lovely_deep_learning.nn.block.C2f
+      args: {c1: 256, c2: 256, n: 1, shortcut: true}
+    - name: "9"
+      from: ["8"]
+      module: lovely_deep_learning.nn.block.SPPF
+      args: {c1: 256, c2: 256, k: 5}
+    - name: "10"
+      from: ["9"]
+      module: torch.nn.modules.upsampling.Upsample
+      args: {size: null, scale_factor: 2, mode: nearest}
+    - name: "11"
+      from: ["10", "6"]
+      module: ultralytics.nn.modules.conv.Concat
+      args: {dimension: 1}
+    - name: "12"
+      from: ["11"]
+      module: lovely_deep_learning.nn.block.C2f
+      args: {c1: 384, c2: 128, n: 1}
+    - name: "13"
+      from: ["12"]
+      module: torch.nn.modules.upsampling.Upsample
+      args: {size: null, scale_factor: 2, mode: nearest}
+    - name: "14"
+      from: ["13", "4"]
+      module: ultralytics.nn.modules.conv.Concat
+      args: {dimension: 1}
+    - name: "15"
+      from: ["14"]
+      module: lovely_deep_learning.nn.block.C2f
+      args: {c1: 192, c2: 64, n: 1}
+    - name: "16"
+      from: ["15"]
+      module: lovely_deep_learning.nn.conv.Conv
+      args: {c1: 64, c2: 64, k: 3, s: 2}
+    - name: "17"
+      from: ["16", "12"]
+      module: ultralytics.nn.modules.conv.Concat
+      args: {dimension: 1}
+    - name: "18"
+      from: ["17"]
+      module: lovely_deep_learning.nn.block.C2f
+      args: {c1: 192, c2: 128, n: 1}
+    - name: "19"
+      from: ["18"]
+      module: lovely_deep_learning.nn.conv.Conv
+      args: {c1: 128, c2: 128, k: 3, s: 2}
+    - name: "20"
+      from: ["19", "9"]
+      module: ultralytics.nn.modules.conv.Concat
+      args: {dimension: 1}
+    - name: "21"
+      from: ["20"]
+      module: lovely_deep_learning.nn.block.C2f
+      args: {c1: 384, c2: 256, n: 1}
+    - name: "22"
+      from: ["15", "18", "21"]
+      module: lovely_deep_learning.nn.head.Detect
+      args: {nc: 80, ch: [64, 128, 256], legacy: true, stride: [8, 16, 32], shape: [136, 64, 80, 80]}
+
+weight:
+  path: pretrained_models/yolov8n.pt
+  url: https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov8n.pt
+  map_location: cpu
+  strict: false
+  src_key_prefix: layers.
+  src_key_slice_start: 12

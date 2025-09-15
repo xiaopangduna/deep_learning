@@ -8,8 +8,9 @@ import torch.nn.functional as F
 from torch.nn.init import constant_, xavier_uniform_
 from ultralytics.utils.tal import TORCH_1_10, dist2bbox, dist2rbox, make_anchors
 
-from .conv import Conv,DWConv
+from .conv import Conv, DWConv
 from .block import DFL
+
 
 class Detect(nn.Module):
     """
@@ -54,18 +55,32 @@ class Detect(nn.Module):
         >>> outputs = detect(x)
     """
 
-    dynamic = False  # force grid reconstruction
-    export = False  # export mode
-    format = None  # export format
-    end2end = False  # end2end
-    max_det = 300  # max_det
-    shape = None
-    anchors = torch.empty(0)  # init
-    strides = torch.empty(0)  # init
-    legacy = True  # backward compatibility for v3/v5/v8/v9 models
-    xyxy = False  # xyxy or xywh output
+    # dynamic = False  # force grid reconstruction
+    # export = False  # export mode
+    # format = None  # export format
+    # end2end = False  # end2end
+    # max_det = 300  # max_det
+    # shape = None
+    # anchors = torch.empty(0)  # init
+    # strides = torch.empty(0)  # init
+    # legacy = True  # backward compatibility for v3/v5/v8/v9 models
+    # xyxy = False  # xyxy or xywh output
 
-    def __init__(self, nc: int = 80, ch: Tuple = ()):
+    def __init__(
+        self,
+        nc: int = 80,
+        ch: Tuple = (),
+        dynamic=False,
+        export=False,
+        format=None,
+        end2end=False,
+        max_det=300,
+        shape=None,
+        anchors=None,
+        stride=None,
+        legacy=False,
+        xyxy=False,
+    ):
         """
         Initialize the YOLO detection layer with specified number of classes and channels.
 
@@ -76,9 +91,37 @@ class Detect(nn.Module):
         super().__init__()
         self.nc = nc  # number of classes
         self.nl = len(ch)  # number of detection layers
+        self.dynamic = dynamic
+        self.export = export
+        self.format = format
+        self.end2end = end2end
+        self.max_det = max_det
+        self.shape = shape
+        self.legacy = legacy
+        self.xyxy = xyxy
+        # 处理 anchors
+        if anchors is None:
+            self.anchors = torch.empty(0)
+        elif isinstance(anchors, list):
+            self.anchors = torch.tensor(anchors, dtype=torch.float32)
+        elif isinstance(anchors, torch.Tensor):
+            self.anchors = anchors.clone()
+        else:
+            raise TypeError(f"anchors must be list or torch.Tensor, got {type(anchors)}")
+
+        # 处理 strides
+        if stride is None:
+            self.stride =  torch.empty(0)
+        elif isinstance(stride, list):
+            self.stride = torch.tensor(stride, dtype=torch.float32)
+        elif isinstance(stride, torch.Tensor):
+            self.stride = stride.clone()
+        else:
+            raise TypeError(f"strides must be list or torch.Tensor, got {type(strides)}")
+
         self.reg_max = 16  # DFL channels (ch[0] // 16 to scale 4/8/12/16/20 for n/s/m/l/x)
         self.no = nc + self.reg_max * 4  # number of outputs per anchor
-        self.stride = torch.zeros(self.nl)  # strides computed during build
+        # self.stride = torch.zeros(self.nl)  # strides computed during build
         c2, c3 = max((16, ch[0] // 4, self.reg_max * 4)), max(ch[0], min(self.nc, 100))  # channels
         self.cv2 = nn.ModuleList(
             nn.Sequential(Conv(x, c2, 3), Conv(c2, c2, 3), nn.Conv2d(c2, 4 * self.reg_max, 1)) for x in ch

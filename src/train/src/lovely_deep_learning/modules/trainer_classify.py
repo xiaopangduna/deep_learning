@@ -424,36 +424,7 @@ class ClassifyDataset(Dataset):
         # 如果指定了保存路径，保存图片
         if dir_save is not None:
             save_images(image_paths, titles, dir_save)
-
-# # 示例数据
-# # 1. 图片路径
-# image_paths = [
-#     'path/to/image1.jpg',
-#     'path/to/image2.jpg',
-#     'path/to/image3.jpg',
-#     'path/to/image4.jpg'
-# ]
-
-# # 2. 图像数据（np.ndarray）
-# image_data_1 = np.random.rand(100, 100, 3)  # 随机生成一张 100x100 的 RGB 图像
-# image_data_2 = np.random.rand(100, 100, 3)  # 随机生成一张 100x100 的 RGB 图像
-
-# # 混合输入
-# mixed_image_paths = [
-#     'path/to/image1.jpg',  # 图片路径
-#     image_data_1,          # 图像数据
-#     'path/to/image2.jpg',  # 图片路径
-#     image_data_2           # 图像数据
-# ]
-
-# # 调用函数绘制图形
-# # 1. 自动布局，不保存图片
-# plot_image_subplots_flexible(mixed_image_paths)
-
-# # 2. 指定 nrows=2, ncols=2，保存图片
-# plot_image_subplots_flexible(mixed_image_paths, dir_save="output_images")
-
-# L.LightningModule
+            
 class ClassifyModule(AbstractLightningModule):
     def __init__(
         self,

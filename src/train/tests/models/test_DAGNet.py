@@ -12,6 +12,7 @@ def test_yaml_config_equal_dict_config():
     """测试函数：使用辅助函数读取YAML，通过assert对比内容"""
     test_cases = [
         (resnet18_config, "configs/models/resnet18.yaml"),
+        (yolov8_n_config, "configs/models/yolov8_n.yaml"),
     ]
 
     for expected, yaml_path in test_cases:
@@ -80,8 +81,7 @@ def test_DAGWeightLoader_resnet18():
 
 def test_DAGNet_equal_yolov8_n():
     torch.manual_seed(42)
-    # official_model = YOLO(r"configs/yolo/yolov8.yaml")  # 使用下载的配置构建模型
-    official_model = YOLO(r"yolov8n.pt")  # 使用下载的配置构建模型
+    official_model = YOLO(r"pretrained_models/yolov8n.pt")  # 使用下载的配置构建模型
     config = yolov8_n_config
     net = DAGNet(config["structure"])
 
@@ -129,13 +129,13 @@ def test_DAGNet_equal_yolov8_n():
         official_out = official_model.model.model[22]([official_out_15, official_out_18, official_out_21])
 
     net.eval()
-    net.layers["22"].stride =  torch.tensor([8,16,32], dtype=torch.float32)
     dag_out = net([x])[0]
 
     print(official_model.model.model[22])
     print(net.layers["22"])
 
     # assert torch.allclose(official_out, dag_out, atol=1e-6)
+
     # assert torch.allclose(official_out[0], official_out_last[0], atol=1e-6)
     # assert torch.allclose(official_out[1][0], official_out_last[1][0], atol=1e-6)
     # assert torch.allclose(official_out[1][1], official_out_last[1][1], atol=1e-6)
@@ -153,27 +153,15 @@ def test_DAGWeightLoader_yolov8_n():
     net = DAGNet(config["structure"])
     net.layers["22"].stride =  torch.tensor([8,16,32], dtype=torch.float32)
     DAGWeightLoader().load_weights(net, **config["weight"]) 
-    # official_model = YOLO(r"pretrained_models/yolov8n.pt")  
-    official_model = YOLO("yolov8s.pt")  
+    official_model = YOLO(r"pretrained_models/yolov8n.pt")  
     official_model.eval()
     net.eval()
     x = torch.randn(1, 3, 640, 640)
     official_out = official_model.model(x)
     dag_out = net([x])[0]
-    print("official_out[0].shape:", official_out[0].shape)
-    print("dag_out[0].shape:", dag_out[0].shape)
 
-    print("max abs diff:", (official_out[0] - dag_out[0]).abs().max().item())
-    print("mean abs diff:", (official_out[0] - dag_out[0]).abs().mean().item())
-    diff = (official_out[0] - dag_out[0])
-    max_val = diff.abs().max()
-    idx = (diff.abs() == max_val).nonzero(as_tuple=True)
-    print("最大差异值:", max_val.item())
-    print("最大差异位置:", idx)
-    print("official_out[0] 最大差异位置值:", official_out[0][idx].item())
-    print("dag_out[0] 最大差异位置值:", dag_out[0][idx].item())
-    # assert torch.allclose(dag_out[1][0], official_out[1][0], atol=1e-4)
-    # assert torch.allclose(dag_out[1][1], official_out[1][1], atol=1e-4)
-    # assert torch.allclose(dag_out[1][2], official_out[1][2], atol=1e-4)
+    assert torch.allclose(dag_out[1][0], official_out[1][0], atol=1e-6)
+    assert torch.allclose(dag_out[1][1], official_out[1][1], atol=1e-6)
+    assert torch.allclose(dag_out[1][2], official_out[1][2], atol=1e-6)
 
     assert torch.allclose(official_out[0], dag_out[0], atol=1e-4)

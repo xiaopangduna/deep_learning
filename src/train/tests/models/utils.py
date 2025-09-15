@@ -390,6 +390,9 @@ yolov8_n_config = {
                 "args": {
                     "nc": 80,
                     "ch": [64, 128, 256],
+                    "legacy": True,
+                    "stride": [8, 16, 32],
+                    "shape": [136, 64, 80,80],
                 },
                 "from": ["15", "18", "21"],
             },
@@ -397,7 +400,7 @@ yolov8_n_config = {
     },
     "weight": {
         "path": "pretrained_models/yolov8n.pt",
-        "url": "'https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov8n.pt'",
+        "url": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov8n.pt",
         "map_location": "cpu",
         "strict": False,
         "src_key_prefix": "layers.",
