@@ -7,6 +7,15 @@ pretrained_models/
 *.pth
 runs/
 
+datasets/*
+# 保留示例数据集
+!datasets/coco8/
+!datasets/image/
+!datasets/labelme/
+!datasets/visual/
+!datasets/parking_slot/
+!datasets/test_labels/
+
 *.pyc
 *.bin
 
