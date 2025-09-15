@@ -2,6 +2,7 @@
 /logs/
 /tmp/
 lightning_logs/
+pretrained_models/
 *.pt
 *.pth
 runs/
