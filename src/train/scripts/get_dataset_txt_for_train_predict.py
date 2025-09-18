@@ -20,9 +20,12 @@ from typing import List
 import random
 import logging
 from collections import defaultdict
-
+from typing import List, Optional, Union
 # Set up logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+
+
+
 
 
 class DatasetGenerator:
@@ -151,7 +154,7 @@ class DatasetGenerator:
                 if relative_path:
                     file_path = os.path.relpath(file_path, relative_path)
                 file_paths[i] = file_path
-            line = " ".join(file_paths)
+            line = ",".join(file_paths)
             dataset_lines.append(line)
 
         return dataset_lines
@@ -209,26 +212,26 @@ def main():
     parser.add_argument(
         "--dirs-group",
         nargs="+",
-        default=["/home/xiaopangdun/project/database/ps2.0/training,/home/xiaopangdun/project/database/ps2.0/labelme_json/training"],
+        default=["/home/xiaopangdun/project/deep_learning/src/train/datasets/coco8/images/train,/home/xiaopangdun/project/deep_learning/src/train/datasets/coco8/labels/train"],
         help="List of folder groups, each group separated by commas, the whole separated by spaces. For example: 'dir1,dir2' 'dir3,dir4'",
     )
     parser.add_argument(
         "--suffixs",
         nargs="+",
-        default=[".jpg,.png", ".json"],
+        default=[".jpg,.png", ".txt"],
         help="List of suffix groups, each group separated by commas, the whole separated by spaces. For example: '.jpg,.png' '.json' '.txt'",
     )
-    parser.add_argument("--dir-save", default="/home/xiaopangdun/project/database/ps2.0", help="Directory to save output files")
+    parser.add_argument("--dir-save", default="/home/xiaopangdun/project/deep_learning/src/train/datasets/coco8", help="Directory to save output files")
     parser.add_argument(
         "--split-ratio",
         nargs="+",
-        default=[0.75,0.25],
+        default=[1.0,0.0],
         help="Split ratio for train, val, and test. For example: 0.6 0.2 0.2",
     )
     parser.add_argument(
         "--output-names",
         nargs="+",
-        default=["train.txt","val.txt"],
+        default=["train.csv","val.csv"],
         help="List of output file names, corresponding one-to-one with split-ratio. For example: 'train val test'",
     )
     parser.add_argument("--shuffle", type=bool, default=False, help="shuffle for dataset splitting")

@@ -69,23 +69,3 @@ class DatasetTXTProducer(object):
             print("Error: Unable to save to {}. Reason: {}".format(path_save, e))
 
 
-if __name__ == "__main__":
-
-    list1 = [1, 2, 3, 4, 5, 6, 7, 8, 9, 9, 1]
-    list2 = ["a", "b", "c", "d", "e", 1, 1, 1, 1, 1, 1]
-
-    # 打包成元组列表
-    combined = list(zip(list1, list2))
-    print(combined)
-    producer = DatasetTXTProducer()
-    train, val, test = producer.split_train_val_test(combined)
-
-    print(train)  # 输出：(3, 2, 1, 5, 4)
-    print(val)  # 输出：('c', 'b', 'a', 'e', 'd')
-    print(test)  # 输出：('c', 'b', 'a', 'e', 'd')
-    # # 解包成两个列表
-    # list1_shuffled, list2_shuffled = zip(*combined)
-
-    # print(list1_shuffled)  # 输出：(3, 2, 1, 5, 4)
-    # print(list2_shuffled)  # 输出：('c', 'b', 'a', 'e', 'd')
-    pass
