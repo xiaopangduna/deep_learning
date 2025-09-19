@@ -3,6 +3,31 @@
 # 1.Introduce
 {**以下是 Gitee 平台说明，您可以替换此简介**}
 
+## 常用指令
+
+使用以下命令查看工具的完整功能和参数说明：
+
+```bash
+# 创建训练需要的数据表.csv文件
+python scripts/create_dataset_table_from_multi_folders_for_train_predict.py --help
+```
+
+### Home
+
+```bash
+python scripts/create_dataset_table_from_multi_folders_for_train_predict.py \
+  --headers "data_img,label_detect_yolo" \
+  --dirs "/home/xiaopangdun/project/deep_learning/src/train/datasets/coco8/images/train" \
+  --dirs "/home/xiaopangdun/project/deep_learning/src/train/datasets/coco8/labels/train" \
+  --suffix-groups ".jpg,.png" \
+  --suffix-groups ".txt" \
+  --output-dir "/home/xiaopangdun/project/deep_learning/src/train/datasets/coco8" \
+  --split-ratio "1.0" \
+  --output-names "train.csv" \
+  --allow-missing \
+  --shuffle \
+  --verbose
+```
 
 #### 软件架构
 软件架构说明

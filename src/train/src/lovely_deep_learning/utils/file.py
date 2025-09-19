@@ -10,8 +10,9 @@
 import os
 import shutil
 from pathlib import Path
-from typing import List, Optional, Union, Dict, Set
-
+from typing import List, Optional, Union, Dict, Set, Any, Iterable
+from pathlib import Path
+import random
 
 def list_grouped_files_from_folders(
     dirs: List[Union[str, Path]],
@@ -127,6 +128,73 @@ def list_grouped_files_from_folders(
     # Generate final result
     return [[file_map.get(base, "None") for file_map in file_maps] for base in sorted(valid_bases)]
 
+def split_list_by_ratio(
+    items: Iterable[Any],  # 1. 修正参数名：从grouped_files→items（通用化）
+    ratios: List[float],
+    shuffle: bool = True  # 2. 增加默认值：简化无特殊需求的调用
+) -> List[List[Any]]:  # 3. 修正返回值类型：原List[List[List[Any]]]是过度嵌套
+    """
+    按比例将可迭代对象拆分为多个子列表。
+    
+    特性：
+    - 自动处理比例总和与实际数量的匹配（最后一组分配剩余元素）
+    - 支持拆分前打乱顺序
+    - 输入可迭代对象（列表、元组等），输出统一为列表
+    
+    参数：
+        items: 待拆分的可迭代对象（如列表、元组、文件组列表等）
+        ratios: 拆分比例列表（需为正数，总和应接近1.0，如 [0.7, 0.2, 0.1]）
+        shuffle: 拆分前是否打乱 items 的顺序，默认 True
+    
+    返回：
+        List[List[Any]]: 按比例拆分后的子列表组成的列表，长度与 ratios 一致
+        例：拆分 [1,2,3,4,5] 为 [0.6,0.4]，可能返回 [[3,1,5], [2,4]]
+    
+    异常：
+        ValueError: 若 ratios 包含非正数
+        TypeError: 若 items 不可迭代或 ratios 非列表
+    """
+    # 4. 确保输入可迭代且转换为列表（适配元组等其他可迭代类型）
+    try:
+        items_list = list(items)
+    except TypeError as e:
+        raise TypeError(f"items 必须是可迭代对象（如列表、元组），当前类型：{type(items)}") from e
+    
+    total = len(items_list)
+    if total == 0:
+        return [[] for _ in ratios]
+    
+    # 5. 加强参数校验（公共函数必备：提前暴露错误）
+    if not isinstance(ratios, list) or not all(isinstance(r, (int, float)) for r in ratios):
+        raise TypeError("ratios 必须是浮点数/整数组成的列表（如 [0.7, 0.3]）")
+    
+    for ratio in ratios:
+        if ratio <= 0:
+            raise ValueError(f"拆分比例必须为正数，当前存在无效值：{ratio}")
+    
+    # 打乱顺序（核心逻辑不变）
+    if shuffle:
+        items_list = random.sample(items_list, k=total)
+    
+    # 计算每组数量（核心逻辑不变，仅修正变量名适配通用场景）
+    counts = []
+    remaining = total
+    for ratio in ratios[:-1]:
+        count = int(round(total * ratio))
+        count = min(count, remaining)  # 避免比例计算溢出
+        counts.append(count)
+        remaining -= count
+    counts.append(remaining)  # 最后一组兜底剩余元素
+    
+    # 切片拆分（核心逻辑不变）
+    split_result = []
+    start = 0
+    for count in counts:
+        end = start + count
+        split_result.append(items_list[start:end])
+        start = end
+    
+    return split_result
 
 class FileProcessor(object):
 
