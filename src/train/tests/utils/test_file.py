@@ -26,7 +26,7 @@ def create_file_structure(root: Path, structure: dict):
             "allow_missing": True,
             "expected": [
                 ["images/0001.jpg", "labels/0001.txt", "masks/0001.png"],
-                ["images/0002.jpg", "None", "masks/0002.png"],
+                ["images/0002.jpg", "", "masks/0002.png"],
                 ["images/0003.jpg", "labels/0003.txt", "masks/0003.png"]
             ]
         },

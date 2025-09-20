@@ -126,7 +126,7 @@ def list_grouped_files_from_folders(
         print("=" * 80)
 
     # Generate final result
-    return [[file_map.get(base, "None") for file_map in file_maps] for base in sorted(valid_bases)]
+    return [[file_map.get(base, "") for file_map in file_maps] for base in sorted(valid_bases)]
 
 def split_list_by_ratio(
     items: Iterable[Any],  # 1. 修正参数名：从grouped_files→items（通用化）

@@ -1,285 +1,244 @@
-# -*- encoding: utf-8 -*-
-"""
-@File    :   base_dataset.py
-@Python  :   python3.8
-@version :   0.0
-@Time    :   2024/09/11 22:01:17
-@Author  :   xiaopangdun 
-@Email   :   18675381281@163.com 
-@Desc    :   This is a simple example
-"""
+import csv
 import os
-import warnings
-from typing import Tuple, List, Union
-from pathlib import Path
-
+from typing import List, Dict, Optional, Callable
 from torch.utils.data import Dataset
 
 
 class BaseDataset(Dataset):
-    def __init__(
-        self,
-        path_txts: list,
-        cfgs: dict = {},
-        indexs_annotations: Tuple[str, str] = ("data_image", "label_0"),
-        transforms: str = None,
-    ) -> None:
-        """Initialize the dataset.
+    """
+    基础数据集类，继承自PyTorch的Dataset，用于加载和管理带路径信息的CSV格式数据集。
 
-        Args:
-            path_txt_or_list (Union[str, Path, list]): The path of a txt file or a list of paths.
-                If it's a txt file, each line contains paths of data and labels.
-                If it's a list, each element can be a txt file path (str or Path) or a direct data path.
-            cfgs (dict, optional): Configuration parameters. Defaults to {}.
-            indexs_annotations (tuple, optional): Indexes for data and label in each line. Defaults to ("data_image", "label_0").
-            transforms (str, optional): Indicates the type of data transforms (train, val, test, or None). Defaults to None.
+    【核心功能】
+    - 解析CSV中的绝对/相对路径（相对路径基于CSV所在目录解析）
+    - 区分有效样本（含负样本）与无效样本，仅保留有效样本
+    - 提供完整的样本统计信息（总数、负样本占比、无效样本详情等）
+
+    【核心属性】
+    - csv_paths: List[str]，输入的CSV文件路径列表
+    - key_map: Dict[str, str]，类内字段→CSV表头字段的映射（如{"img": "image_path"}）
+    - transform: Optional[Callable]，数据增强实例（外部传入，需为可调用对象，如Compose包装的增强流水线；默认None，即不增强）
+    - sample_path_table: Dict[str, List[str]]，路径表格（键为类内字段，值为路径列表，空字符串表示负样本）
+    - num_samples: int，有效样本总数（含负样本）
+
+    【核心方法】
+    - __init__: 初始化数据集，完成输入验证、路径解析和样本计数
+    - __getitem__: 通过索引获取样本容器（字典，键为"类内字段_path"）
+    - __len__: 返回有效样本总数
+    - __str__: 打印数据集完整统计信息（CSV列表、字段映射、样本统计等）
+
+    【用法示例】
+    >>> # 1. 定义字段映射（类内字段→CSV表头）
+    >>> key_map = {"img": "image_path", "label": "label_path"}
+    >>> # 2. 实例化数据集
+    >>> dataset = BaseDataset(csv_paths=["train.csv"], key_map=key_map)
+    >>> # 3. 查看统计信息
+    >>> print(dataset)
+    >>> # 4. 访问样本（返回{"img_path": "...", "label_path": "..."}）
+    >>> sample = dataset[0]
+
+    【术语说明】
+    - 负样本：包含空路径（""）的有效样本（如label_path为空，表示无标签的负样本）
+    - 无效样本：包含非空但实际不存在的路径的样本（会被过滤，不纳入有效样本）
+    """
+
+    def __init__(self, csv_paths: List[str], key_map: Dict[str, str], transform: Optional[Callable] = None):
+        # 核心配置参数
+        self.csv_paths = csv_paths  # CSV文件路径列表
+        self.key_map = key_map  # 类内字段→CSV表头字段的映射
+        self.transform = transform  # 数据增强实例（外部传入，兼容任意库）
+
+        # 核心数据
+        self.sample_path_table: Dict[str, List[str]] = {}  # 存储解析后的绝对路径
+        self.num_samples: int = 0
+
+        # 统计信息
+        self._stats_invalid_records: List[str] = []  # 记录无效路径详情
+        self._stats_negative_samples: int = 0  # 新增：负样本计数（含空路径的样本）
+        # 初始化
+        self._validate_inputs()
+        self.sample_path_table = self._generate_sample_path_table()
+        self.num_samples = self._count_and_validate_samples()
+
+    def _validate_inputs(self) -> None:
+        """验证输入的CSV文件是否存在"""
+        if not isinstance(self.csv_paths, list) or len(self.csv_paths) == 0:
+            raise ValueError("❌ csv_paths必须是至少包含1个文件路径的列表")
+
+        for path in self.csv_paths:
+            abs_path = os.path.abspath(path)
+            if not os.path.isfile(abs_path):
+                raise FileNotFoundError(f"❌ CSV文件不存在：{path}（解析为绝对路径：{abs_path}）")
+
+        if not isinstance(self.key_map, dict) or len(self.key_map) == 0:
+            raise ValueError("❌ key_map必须是至少包含1个键值对的字典")
+
+        # 检查CSV表头字段是否重复
+        csv_fields = list(self.key_map.values())
+        if len(csv_fields) != len(set(csv_fields)):
+            duplicates = [f for f in set(csv_fields) if csv_fields.count(f) > 1]
+            raise ValueError(f"❌ key_map中CSV表头字段重复：{duplicates}")
+
+    def _generate_sample_path_table(self) -> Dict[str, List[str]]:
+        """生成路径表格，正确处理绝对路径、相对路径和空路径（负样本）"""
+        path_table = {inner_field: [] for inner_field in self.key_map.keys()}
+        csv_fields = list(self.key_map.values())
+
+        for csv_path in self.csv_paths:
+            # 1. 解析CSV文件的绝对路径和所在目录
+            abs_csv_path = os.path.abspath(csv_path)
+            csv_dir = os.path.dirname(abs_csv_path)  # 相对路径的基准目录
+
+            with open(abs_csv_path, "r", encoding="utf-8", newline="") as f:
+                reader = csv.DictReader(f)
+
+                # 检查CSV是否包含所需字段
+                missing_fields = [f for f in csv_fields if f not in reader.fieldnames]
+                if missing_fields:
+                    raise ValueError(f"❌ CSV {abs_csv_path} 缺少必需字段：{missing_fields}")
+
+                # 2. 逐行处理路径
+                for row_idx, row in enumerate(reader, start=2):  # 行号从2开始（表头为1）
+                    current_row = {}
+                    valid = True
+                    error_details = []
+                    has_empty_path = False  # 标记当前行是否包含空路径（负样本）
+
+                    for inner_field, csv_field in self.key_map.items():
+                        # 读取原始路径
+                        raw_path = row[csv_field].strip()
+                        if not raw_path:
+                            # 空路径：视为负样本特征，保留空字符串
+                            current_row[inner_field] = ""
+                            has_empty_path = True
+                            continue  # 空路径不影响样本有效性
+
+                        # 3. 路径解析核心逻辑（非空路径）
+                        if os.path.isabs(raw_path):
+                            resolved_path = raw_path
+                        else:
+                            resolved_path = os.path.join(csv_dir, raw_path)
+                            resolved_path = os.path.abspath(resolved_path)
+
+                        # 4. 检查路径有效性（非空路径必须存在）
+                        current_row[inner_field] = resolved_path
+                        if not os.path.exists(resolved_path):
+                            valid = False
+                            error_details.append(
+                                f"字段[{csv_field}]路径不存在（原始路径：{raw_path}，解析后：{resolved_path}）"
+                            )
+
+                    # 5. 处理当前行结果
+                    if valid:
+                        # 所有非空路径都有效：添加到表格
+                        for field, path in current_row.items():
+                            path_table[field].append(path)
+                        # 统计负样本（包含空路径的有效样本）
+                        if has_empty_path:
+                            self._stats_negative_samples += 1
+                    else:
+                        # 存在无效路径（非空且不存在）：记录并跳过
+                        self._stats_invalid_records.append(
+                            f"CSV {abs_csv_path} 第{row_idx}行：{'; '.join(error_details)}"
+                        )
+
+        # 打印跳过的样本统计
+        total_skipped = len(self._stats_invalid_records)
+        if total_skipped > 0:
+            print(f"⚠️  共跳过{total_skipped}个无效样本")
+
+        return path_table
+
+    def _count_and_validate_samples(self) -> int:
+        """验证所有字段的样本数量是否一致"""
+        if not self.sample_path_table:
+            return 0
+
+        field_lengths = [len(paths) for paths in self.sample_path_table.values()]
+        if len(set(field_lengths)) != 1:
+            raise ValueError(f"❌ 字段样本数不匹配：{field_lengths}")
+
+        return field_lengths[0]
+
+    def __len__(self) -> int:
+        return self.num_samples
+
+    def __getitem__(self, index: int) -> Dict[str, str]:
+        if not 0 <= index < self.num_samples:
+            raise IndexError(f"❌ 索引超出范围（有效范围：0~{self.num_samples-1}）")
+
+        # 生成样本信息容器：键为key_map的类内字段+"_path"，值为对应的绝对路径
+        sample_container = {
+            f"{inner_field}_path": self.sample_path_table[inner_field][index] for inner_field in self.key_map.keys()
+        }
+
+        return sample_container
+
+    def __str__(self) -> str:
         """
-        self.cfgs = cfgs
-        self.indexs_annotations = indexs_annotations
-        self.transforms = self._get_transforms(transforms)
-        self.path_txts = path_txts
-
-        # Parse paths from input
-        self.path_datas, self.path_labels = self._parse_paths(path_txts)
-
-    def _get_transforms(self, transforms: str):
+        魔法函数：print(dataset) 时自动调用，输出完整的统计信息
+        包含CSV文件信息、字段映射、样本数量及无效样本详情
         """
-        根据传入的转换类型字符串获取相应的数据转换函数。
+        # 计算负样本占比
+        negative_ratio = (self._stats_negative_samples / self.num_samples * 100) if self.num_samples > 0 else 0
 
-        Args:
-            transforms (str): 指示数据转换的类型，可选值为 "train", "val", "test" 或其他值。
+        lines = [
+            "=" * 70,
+            "📊 BaseDataset 完整统计信息",
+            "-" * 70,
+        ]
 
-        Returns:
-            Union[Callable, None]: 如果转换类型为 "train"，返回训练时的数据转换函数；
-                                   如果转换类型为 "val" 或 "test"，返回验证/测试时的数据转换函数；
-                                   否则返回 None。
-        """
-        # 如果转换类型为 "train"，调用训练时的数据转换函数
-        if transforms == "train":
-            return self.get_transforms_for_train()
-        # 如果转换类型为 "val" 或 "test"，调用验证/测试时的数据转换函数
-        elif transforms in ["val", "test"]:
-            return self.get_transforms_for_val()
-        # 如果转换类型不是上述三种情况，返回 None
-        else:
-            return None
+        # 1. CSV文件信息
+        lines.append(f"1. 加载的CSV文件（共{len(self.csv_paths)}个）：")
+        for i, path in enumerate(self.csv_paths, 1):
+            lines.append(f"   {i}. 路径：{path}")
 
-    def _parse_paths(self, path_txts: list):
-        """
-        从输入中解析数据和标签的路径。
+        # 2. 字段映射关系
+        lines.append(f"\n2. 字段映射关系（共{len(self.key_map)}个）：")
+        for inner_field, csv_field in self.key_map.items():
+            lines.append(f"   类内字段[{inner_field}] → CSV表头[{csv_field}]")
 
-        Args:
-            path_txt_or_list (Union[str, Path, list]): 一个文本文件的路径或者路径列表。
-                如果是文本文件路径，每一行包含数据和标签的路径。
-                如果是列表，每个元素可以是文本文件路径（字符串或 Path 对象）或者直接的数据路径。
-
-        Returns:
-            Tuple[List[List[str]], List[List[str]]]: 解析后的数据路径列表和标签路径列表。
-        """
-        # 初始化数据路径列表
-        path_datas = []
-        # 初始化标签路径列表
-        path_labels = []
-        # 从 indexs_annotations 中提取数据和标签的索引
-        self.indexs_data, self.indexs_label = self.get_indexs_data_and_indexs_label_from_indexs_annotation(
-            self.indexs_annotations
+        # 3. 样本数量统计（新增负样本信息）
+        lines.extend(
+            [
+                f"\n3. 样本数量统计：",
+                f"   有效样本总数（含负样本）：{self.num_samples}",
+                f"   负样本数（含空路径）：{self._stats_negative_samples}（{negative_ratio:.1f}%）",
+                f"   无效样本总数（非空路径不存在）：{len(self._stats_invalid_records)}",
+            ]
         )
-        # 遍历列表中的每个元素
-        for path_txt in path_txts:
-            # 检查元素是否为文本文件
-            if os.path.isfile(path_txt) and path_txt.endswith(".txt"):
-                # 从文本文件中读取每一行
-                with open(path_txt, "r") as f:
-                    lines = f.readlines()
-                # 解析文件中的每一行
-                self._parse_lines(lines, path_datas, path_labels,path_txt)
+
+        # 4. 无效样本详情（如果有）
+        if self._stats_invalid_records:
+            lines.append(f"\n4. 无效样本详情（共{len(self._stats_invalid_records)}个）：")
+            for i, err in enumerate(self._stats_invalid_records, 1):
+                lines.append(f"   {i}. {err}")
+        else:
+            lines.append("\n4. 无效样本详情：无")
+
+        lines.append("=" * 70)
+        return "\n".join(lines)
 
 
-        return path_datas, path_labels
+if __name__ == "__main__":
+    # 示例用法
 
-    def _parse_lines(self, lines: List[str], path_datas: List[List[str]], path_labels: List[List[str]],path_txt):
-        """
-        解析文本文件中的每一行，提取数据和标签的路径。
+    # 假设CSV文件和数据文件夹结构如下：
+    # dataset/
+    #   ├─ data.csv
+    #   ├─ images/
+    #   │   ├─ 001.jpg
+    #   │   └─ 002.jpg
+    #   └─ labels/
+    #       ├─ 001.txt
+    #       └─ 002.txt
 
-        Args:
-            lines (List[str]): 从文本文件中读取的行列表。
-            path_datas (List[List[str]]): 用于存储解析后的数据路径列表。
-            path_labels (List[List[str]]): 用于存储解析后标签路径列表。
-        """
-        # 遍历每一行
-        for line in lines:
-            # 去除行首尾的空白字符
-            line = line.strip()
-            # 如果行为空，则跳过当前循环
-            if not line:
-                continue
+    CSV_FILES = [
+        "/home/xiaopangdun/project/deep_learning/src/train/datasets/coco8/train.csv"
+    ]  # 可以是相对路径或绝对路径
+    FIELD_MAP = {
+        "img": "data_img",  # 类内字段img对应CSV中的image_path列
+        "label": "label_detect_yolo",  # 类内字段label对应CSV中的label_path列
+    }
 
-            # 按空格分割每一行
-            parts = line.split(" ")
-            # 检查分割后的部分数量是否小于索引注释的数量
-            if len(parts) < len(self.indexs_annotations):
-                # 若小于，发出警告并跳过当前行
-                warnings.warn(f"Invalid line format: {line}. Ignored.")
-                continue
-
-            # 临时存储当前行的数据路径
-            tmp_data = []
-            # 临时存储当前行的标签路径
-            tmp_label = []
-            # 遍历数据索引
-            for i in self.indexs_data:
-                # 检查索引是否在分割后的部分范围内
-                if i < len(parts):
-                    # 若在范围内，将对应部分添加到临时数据列表
-                    tmp_path = Path(parts[i])
-                    if not tmp_path.is_absolute():
-                        tmp_path = Path(path_txt).parent.resolve() / tmp_path
-                    tmp_data.append(str(tmp_path))
-                else:
-                    # 若不在范围内，发出索引超出范围的警告
-                    warnings.warn(f"Index {i} out of range for line: {line}")
-            # 遍历标签索引
-            for i in self.indexs_label:
-                # 检查索引是否在分割后的部分范围内
-                if i < len(parts):
-                    # 若在范围内，将对应部分添加到临时标签列表
-                    tmp_path = Path(parts[i])
-                    if not tmp_path.is_absolute():
-                        tmp_path = Path(path_txt).parent.resolve() / tmp_path
-                    tmp_label.append(str(tmp_path))
-                else:
-                    # 若不在范围内，发出索引超出范围的警告
-                    warnings.warn(f"Index {i} out of range for line: {line}")
-
-            # 将临时数据列表添加到最终的数据路径列表
-            path_datas.append(tmp_data)
-            # 将临时标签列表添加到最终的标签路径列表
-            path_labels.append(tmp_label)
-
-    def get_indexs_data_and_indexs_label_from_indexs_annotation(
-        self, indexs_annotation: Tuple[str, str]
-    ) -> Tuple[List[int], List[int]]:
-        """
-        根据给定的注释信息提取数据和标签的索引。
-
-        Args:
-            indexs_annotation (Tuple[str, str]): 一个包含注释信息的元组，每个元素应为以 'data' 或 'label' 开头的字符串。
-
-        Returns:
-            Tuple[List[int], List[int]]: 一个元组，包含两个列表，分别为数据的索引列表和标签的索引列表。
-        """
-        # 初始化数据索引列表
-        indexs_data = []
-        # 初始化标签索引列表
-        indexs_label = []
-        # 遍历注释信息元组，同时获取索引和对应的值
-        for i, v in enumerate(indexs_annotation):
-            # 如果值以 'data' 开头
-            if v.startswith("data"):
-                # 将当前索引添加到数据索引列表
-                indexs_data.append(i)
-            # 如果值以 'label' 开头
-            elif v.startswith("label"):
-                # 将当前索引添加到标签索引列表
-                indexs_label.append(i)
-            # 如果值既不以 'data' 也不以 'label' 开头
-            else:
-                # 发出警告，提示该值将被忽略
-                warnings.warn(
-                    f"{v} not start with 'data' or 'label'. It will be ignored in indexs_annotation "
-                    f"and not used during training."
-                )
-        # 如果数据索引列表为空
-        if not indexs_data:
-            # 抛出异常，提示未找到 'data' 项
-            raise ValueError("No 'data' items found in indexs_annotation")
-        # 返回数据索引列表和标签索引列表组成的元组
-        return indexs_data, indexs_label
-
-    def __len__(self):
-        return len(self.path_datas)
-
-    def __getitem__(self, index):
-        return super().__getitem__(index)
-
-    def get_transforms_for_train():
-        """Set up the data enhancer during training."""
-        pass
-
-    def get_transforms_for_val():
-        """Set up the data enhancer for validation/testing."""
-        pass
-
-    def save_config(self):
-        pass
-
-    @staticmethod
-    def filter_shapes_from_labelme(labelme: dict, shapes: dict):
-        """Extract data from a dictionary formatted from labelme according to label.
-
-        Args:
-            labelme (dict): A dict in labelme format
-            shapes (dict): A dictionary whose key is label and whose value is an empty list,such as
-                {"X_box":[],"U_box":[]}
-
-        Returns:
-            shapes (dict): A dictionary contains the extracted data.
-
-        Example:
-            shapes = {"X_box":[],"U_box":[]}
-            shapes = filter_shapes_from_labelme(shapes)
-        """
-        for shape in labelme["shapes"]:
-            label = shape["label"]
-            shapes[label].append(shape["points"])
-        return shapes
-
-    @staticmethod
-    def convert_raw_to_valid(self):
-        """Extract valid data from raw data."""
-        pass
-
-    @staticmethod
-    def convert_valid_to_tensor(self):
-        pass
-
-    @staticmethod
-    def convert_tensor_to_valid(self):
-        pass
-
-    @staticmethod
-    def convert_valid_to_raw(self):
-        pass
-
-    @staticmethod
-    def draw_valid_on_data(self, image, true_valid, perdict_valid):
-        """
-        该方法用于在数据上绘制有效的标注信息。
-
-        此方法通常会接收有效数据（如关键点、边界框等），并将这些信息可视化地绘制在原始数据（如图像）上。
-        绘制的目的可能是为了数据检查、调试模型或者展示标注结果。
-
-        目前该方法为空，后续可以根据具体需求实现绘制逻辑，例如使用 OpenCV 或其他图像处理库进行绘制操作。
-
-        Returns:
-            None
-        """
-        pass
-
-    @staticmethod
-    def draw_tensor_on_data(self, image, true_tensor, perdict_tensor):
-        pass
-
-    @staticmethod
-    def draw_valid_on_data_as_grid(images, true_valid, predict_valid):
-        pass
-
-    @staticmethod
-    def draw_tensor_on_data_as_grid(images, true_tensor, predict_tensor):
-        pass
-
-    @staticmethod
-    def get_collate_fn_for_dataloader():
-        def collate_fn(x):
-            return list(zip(*x))
-        return collate_fn
+    dataset = BaseDataset(csv_paths=CSV_FILES, key_map=FIELD_MAP)
+    print(dataset)
