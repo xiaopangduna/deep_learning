@@ -26,7 +26,7 @@ python scripts/create_dataset_table_from_multi_folders_for_train_predict.py \
   --output-names "train.csv" \
   --allow-missing \
   --shuffle \
-  --verbose
+  --verbose 
 ```
 
 #### 软件架构

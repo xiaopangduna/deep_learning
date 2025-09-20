@@ -1,53 +1,8 @@
-from sys import prefix
-from turtle import st
 
-# from sympy import frac, fraction
-from matplotlib.pylab import f
 from ultralytics import YOLO
-import yaml
-# from ultralytics.models import yolo
-# from ultralytics.utils import (
-#     ARGV,
-#     ASSETS,
-#     DEFAULT_CFG_DICT,
-#     LOGGER,
-#     RANK,
-#     SETTINGS,
-#     YAML,
-#     callbacks,
-#     checks,
-# )
 
-import os
-import random
-from pathlib import Path
-from typing import Any, Dict, Iterator
-
-import numpy as np
-import torch
-from PIL import Image
-from torch.utils.data import dataloader, distributed
-
-from ultralytics.cfg import IterableSimpleNamespace
-from ultralytics.data.dataset import GroundingDataset, YOLODataset, YOLOMultiModalDataset
-from ultralytics.data.loaders import (
-    LOADERS,
-    LoadImagesAndVideos,
-    LoadPilAndNumpy,
-    LoadScreenshots,
-    LoadStreams,
-    LoadTensor,
-    SourceTypes,
-    autocast_list,
-)
-from ultralytics.data.utils import IMG_FORMATS, VID_FORMATS
 from ultralytics.utils import RANK, colorstr
-from ultralytics.utils.checks import check_file
 
-
-from ultralytics.models.yolo.detect import DetectionTrainer
-
-from ultralytics.data.dataset import GroundingDataset, YOLODataset, YOLOMultiModalDataset
 
 
 from ultralytics.cfg import get_cfg
@@ -55,10 +10,28 @@ from ultralytics.data.dataset import YOLODataset
 from ultralytics.utils import DEFAULT_CFG
 from ultralytics.data.utils import check_cls_dataset, check_det_dataset
 
+from lovely_deep_learning.datasets.yolo_dataset import YoloDataset
+
+
+CSV_FILES = [
+    "/home/xiaopangdun/project/deep_learning/src/train/datasets/coco8/train.csv"
+]  # 可以是相对路径或绝对路径
+FIELD_MAP = {
+    "img": "data_img",  # 类内字段img对应CSV中的image_path列
+    "label": "label_detect_yolo",  # 类内字段label对应CSV中的label_path列
+}
+
+
+my_dataset = YoloDataset(csv_paths=CSV_FILES, key_map=FIELD_MAP)
+
+
+
 path_image = "/home/ubuntu/Desktop/project/deep_learning/src/train/datasets/coco8"
 
 # model = YOLO("pretrained_models/yolov8n.pt")  # 使用下载的配置构建模型
 # model.train(data="coco8.yaml", epochs=10,batch=1,workers=0)  # 在COCO数据集上训练模型
+
+
 
 
 img_path = "/home/xiaopangdun/project/deep_learning/src/train/datasets/coco8/images/train"
