@@ -22,7 +22,7 @@ FIELD_MAP = {
 }
 
 
-my_dataset = YoloDataset(csv_paths=CSV_FILES, key_map=FIELD_MAP)
+my_dataset = YoloDataset(csv_paths=CSV_FILES, key_map=FIELD_MAP,cache=False)
 
 
 
