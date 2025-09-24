@@ -6,6 +6,7 @@ pretrained_models/
 *.pt
 *.pth
 runs/
+cache/
 
 datasets/*
 # 保留示例数据集

@@ -17,12 +17,12 @@ CSV_FILES = [
     "/home/xiaopangdun/project/deep_learning/src/train/datasets/coco8/train.csv"
 ]  # 可以是相对路径或绝对路径
 FIELD_MAP = {
-    "img": "data_img",  # 类内字段img对应CSV中的image_path列
-    "label": "label_detect_yolo",  # 类内字段label对应CSV中的label_path列
+    "img_path": "data_img",  # 类内字段img对应CSV中的image_path列
+    "label_path": "label_detect_yolo",  # 类内字段label对应CSV中的label_path列
 }
 
 
-my_dataset = YoloDataset(csv_paths=CSV_FILES, key_map=FIELD_MAP,cache=False)
+my_dataset = YoloDataset(csv_paths=CSV_FILES, key_map=FIELD_MAP, cache_label_path="cache/coco8_train.cache",cache_image_dir="cache")
 
 
 

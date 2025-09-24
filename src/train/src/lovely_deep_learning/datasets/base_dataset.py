@@ -1,9 +1,11 @@
 import csv
 import os
+import hashlib
 from typing import List, Dict, Optional, Callable
 from torch.utils.data import Dataset
-
-
+from tqdm import tqdm  # 直接引入tqdm用于进度显示
+import cv2
+import numpy as np
 class BaseDataset(Dataset):
     """
     基础数据集类，继承自PyTorch的Dataset，用于加载和管理带路径信息的CSV格式数据集。
@@ -168,7 +170,7 @@ class BaseDataset(Dataset):
 
         # 生成样本信息容器：键为key_map的类内字段+"_path"，值为对应的绝对路径
         sample_container = {
-            f"{inner_field}_path": self.sample_path_table[inner_field][index] for inner_field in self.key_map.keys()
+            f"{inner_field}": self.sample_path_table[inner_field][index] for inner_field in self.key_map.keys()
         }
 
         return sample_container
@@ -218,6 +220,60 @@ class BaseDataset(Dataset):
         lines.append("=" * 70)
         return "\n".join(lines)
 
+    @staticmethod
+    def cache_image(img_paths: List[str], cache_dir: str) -> List[str]:
+        """
+        生成图像缓存（仅加速读取，不做任何预处理）
+        
+        功能：
+            将原始图像以.npy格式保存到指定目录，通过图像内容哈希确保缓存唯一性，
+            已存在的缓存会被复用，最终返回与输入图像路径顺序一致的缓存路径列表。
+        
+        缓存文件名规则：
+            采用图像内容MD5哈希前16位 + ".npy"格式，例如：
+            "a1b2c3d4e5f6g7h8.npy"，便于区分图像缓存与其他类型文件。
+        
+        参数：
+            img_paths: List[str] - 原始图像路径列表（完整路径）
+            cache_dir: str - 缓存文件保存目录（不存在时自动创建）
+        
+        返回：
+            List[str] - 与img_paths顺序对应的.npy缓存路径列表
+        
+        异常：
+            FileNotFoundError: 当输入图像路径不存在或无法读取时抛出
+        """
+        # 确保缓存目录存在，不存在则创建
+        os.makedirs(cache_dir, exist_ok=True)
+        
+        # 存储缓存路径，与输入图像路径顺序严格一致
+        npy_paths = []
+        
+        # 遍历所有图像路径，带进度条显示
+        for img_path in tqdm(img_paths, desc="生成图像缓存", unit="张"):
+            # 生成图像内容的MD5哈希（确保相同图像复用缓存）
+            with open(img_path, "rb") as f:
+                img_content = f.read()
+            img_hash = hashlib.md5(img_content).hexdigest()[:16]  # 取前16位哈希值
+            
+            # 构建缓存文件名和完整路径
+            npy_filename = f"{img_hash}.npy"
+            npy_path = os.path.join(cache_dir, npy_filename)
+            
+            # 若缓存不存在，则生成（仅读取原图，不做任何预处理）
+            if not os.path.exists(npy_path):
+                # 读取原始图像（保留OpenCV默认的BGR通道顺序）
+                img = cv2.imread(img_path)
+                if img is None:
+                    raise FileNotFoundError(f"无法读取图像文件（路径不存在或文件损坏）：{img_path}")
+                
+                # 直接保存原始图像数据（不做通道转换、resize等任何操作）
+                np.save(npy_path, img)
+            
+            # 记录当前图像的缓存路径，保持与输入顺序一致
+            npy_paths.append(npy_path)
+        
+        return npy_paths
 
 if __name__ == "__main__":
     # 示例用法
@@ -236,9 +292,11 @@ if __name__ == "__main__":
         "/home/xiaopangdun/project/deep_learning/src/train/datasets/coco8/train.csv"
     ]  # 可以是相对路径或绝对路径
     FIELD_MAP = {
-        "img": "data_img",  # 类内字段img对应CSV中的image_path列
-        "label": "label_detect_yolo",  # 类内字段label对应CSV中的label_path列
+        "img_path": "data_img",  # 类内字段img对应CSV中的image_path列
+        "label_path": "label_detect_yolo",  # 类内字段label对应CSV中的label_path列
     }
 
     dataset = BaseDataset(csv_paths=CSV_FILES, key_map=FIELD_MAP)
+
+    dataset.cache_image(dataset.sample_path_table['img'], 'cache')
     print(dataset)
