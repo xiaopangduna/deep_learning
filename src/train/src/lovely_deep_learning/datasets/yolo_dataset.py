@@ -4,46 +4,39 @@ import numpy as np
 from typing import List, Dict, Optional, Callable
 from pathlib import Path
 from .base_dataset import BaseDataset
-from typing import List, Dict, Optional, Callable, Any,Tuple
+from typing import List, Dict, Optional, Callable, Any, Tuple, Union
 from multiprocessing.pool import ThreadPool
 from tqdm import tqdm
 import cv2  # 假设使用OpenCV处理图像
 import hashlib
 from PIL import Image, ImageOps
 
+
 class YoloDataset(BaseDataset):
     def __init__(
         self,
         # 父类必需参数（原样传递）
         csv_paths: List[str],
-        key_map: Dict[str, str],
+        key_map: Dict[str, str] = {"img_paths": "data_img", "label_paths": "label_detect_yolo"},
         transform: Optional[Callable] = None,
         # 子类特有参数（图像配置字典）
-        cfgs: Optional[Dict] = None,
+        cfgs: Optional[Dict] = {},
         cache_label_path: Optional[str] = None,
         cache_image_dir: Optional[str] = None,
     ):
         # 1. 调用父类初始化方法，完成路径解析等核心功能
         super().__init__(csv_paths=csv_paths, key_map=key_map, transform=transform)
-        self.cfgs = cfgs or {}  # 若未提供配置，使用空字典
-        self.is_cache_label = cache_label_path is not None
-        self.cache_label_path = Path(cache_label_path) if self.is_cache_label else None
-        self.is_cache_image = cache_image_dir is not None
-        self.cache_image_dir = Path(cache_image_dir) if self.is_cache_image else None
-        # 检查是否已经缓存标签
-        # 检测是否已经缓图像
-        if self.is_cache_image:
-            # 检测缓存文件是否存在
-            # 不存在则生成
-            self.sample_path_table["img_npy"] = self.cache_image(
-                self.sample_path_table["img_path"], cache_dir=str(self.cache_image_dir)
+        self.cfgs = cfgs
+        self.cache_label_path = Path(cache_label_path) if self.cache_label_path else None
+        self.cache_image_dir = Path(cache_image_dir) if self.cache_image_dir else None
+        self.sample_path_table["img_npy_paths"] = [None for _ in range(len(self))]
+        # 检查是否需要缓存
+        if self._should_cache_image():
+            self.sample_path_table["img_npy_paths"] = self.cache_image(
+                self.sample_path_table["img_paths"], cache_dir=str(self.cache_image_dir)
             )
-            pass
-        if self.is_cache_label:
-            # 检测缓存文件是否存在
-            # 不存在则生成
-            self.labels = self.cache_label()
-            pass
+        if self._should_cache_label():
+            self.labels = self._cache_label()
 
 
     # def __getitem__(self, index):
@@ -107,6 +100,32 @@ class YoloDataset(BaseDataset):
             return len(self.cache_data["samples"])
         return super().__len__()
 
+    def _should_cache_image(self) -> bool:
+        """判断是否需要缓存图像"""
+
+        return self.cache_image_dir is not None
+    
+    def _cache_image(self) -> List[str]:
+        """缓存图像并返回缓存路径列表"""
+        img_npy_paths = self.cache_image(
+                        self.sample_path_table["img_paths"], cache_dir=str(self.cache_image_dir)
+                    )
+        
+        return img_npy_paths
+    
+    def _should_cache_label(self) -> bool:
+        """判断是否需要缓存标签"""
+
+        return self.cache_label_path is not None
+    
+    def _cache_label(self) -> List[str]:
+        """缓存标签并返回缓存路径列表"""
+        label_paths = self.cache_label(
+                        self.sample_path_table["label_paths"], cache_dir=str(self.cache_label_path)
+                    )
+        
+        return label_paths
+    
     def cache_label(self):
         return self._load_or_generate_cache()
 
@@ -175,81 +194,41 @@ class YoloDataset(BaseDataset):
             "version": "1.0",
             "image_hash": self._get_hash(self.sample_path_table["img_path"]),
             "label_hash": self._get_hash(self.sample_path_table["label_path"]),
-            "stats": {"total_samples": self.num_samples, "corrupt_samples": 0, "negative_samples": 0},
-            "sample_fields": ["img_path", "label_path", "original_shape", "is_negative", "img_array", "bbox", "cls"],
+            # "stats": {"total_samples": self.num_samples, "corrupt_samples": 0, "negative_samples": 0},
+            "sample_fields": ["img_path", "label_path", "original_shape", "cls", "bboxes", "normalized", "bbox_format"],
         }
-
-        # 2. 定义单个样本的处理函数
-        def process_sample(index: int) -> Optional[dict]:
-            try:
-                # 获取样本路径
-                paths = super().__getitem__(index)
-                img_path = paths.get("img_path", "")  # 对应key_map中的图像字段
-                label_path = paths.get("label_path", "")  # 对应key_map中的标签字段
-
-                # 读取图像
-                if not img_path or not os.path.exists(img_path):
-                    raise FileNotFoundError(f"图像文件不存在: {img_path}")
-
-                img = cv2.imread(img_path)
-                if img is None:
-                    raise ValueError(f"无法读取图像: {img_path}")
-
-                original_shape = img.shape[:2]  # (H, W)
-
-                # 解析标签
-                bbox = np.array([], dtype=np.float32)
-                cls = np.array([], dtype=np.int32)
-                is_negative = True
-
-                if label_path and os.path.exists(label_path):
-                    with open(label_path, "r") as f:
-                        lines = [line.strip() for line in f if line.strip()]
-
-                    if lines:
-                        # 假设标签格式: 类别 x_center y_center width height (归一化)
-                        labels = np.array([list(map(float, line.split())) for line in lines])
-                        cls = labels[:, 0].astype(np.int32)
-                        bbox = labels[:, 1:5].astype(np.float32)  # (n, 4)
-                        is_negative = False
-                    else:
-                        meta["stats"]["negative_samples"] += 1
-                else:
-                    meta["stats"]["negative_samples"] += 1
-
-                # 返回样本数据（平级结构，无meta子键）
-                return {
-                    "img_path": img_path,
-                    "label_path": label_path,
-                    "original_shape": original_shape,
-                    "is_negative": is_negative,
-                    "bbox": bbox,
-                    "cls": cls,
-                }
-
-            except Exception as e:
-                meta["stats"]["corrupt_samples"] += 1
-                print(f"处理样本{index}出错: {str(e)}")
-                return None
-
+        samples = []
         # 3. 多线程处理所有样本
         print(f"开始生成缓存: {self.cache_label_path}")
+        # 生成标签缓存
         with ThreadPool(min(8, os.cpu_count())) as pool:
-            samples = list(
-                tqdm(pool.imap(process_sample, range(self.num_samples)), total=self.num_samples, desc="生成缓存")
+            results_label = pool.imap(
+                func=lambda x: read_img_and_yolo_detection_labels(*x),
+                iterable=zip(
+                    self.sample_path_table["img_paths"],
+                    self.sample_path_table["img_npy_paths"],
+                    self.sample_path_table["label_paths"],
+                ),
             )
-
+            pbar = tqdm(results_label, total=len(self.sample_path_table["label_path"]), desc="处理标签")
+            for img_path, img_npy_path, label_path, img, shape_ori, cls, bboxes in pbar:
+                samples.append(
+                    {
+                        "img_path": img_path,
+                        "img_npy_path": img_npy_path,
+                        "label_path": label_path,
+                        "original_shape": shape_ori,
+                        "cls": cls,  # n, 1
+                        "bboxes": bboxes,
+                        "normalized": True,
+                        "bbox_format": "xywh",
+                    }
+                )
         # 过滤损坏的样本
-        valid_samples = [s for s in samples if s is not None]
-        meta["stats"]["total_samples"] = len(valid_samples)  # 更新有效样本数
-
         # 4. 组装完整缓存并保存
-        cache = {"meta": meta, "samples": valid_samples}
+        cache = {"meta": meta, "samples": samples}
         with open(str(self.cache_label_path), "wb") as file:  # context manager here fixes windows async np.save bug
             np.save(file, cache)
-        print(
-            f"缓存生成完成: {self.cache_label_path} (有效样本: {len(valid_samples)}, 损坏: {meta['stats']['corrupt_samples']})"
-        )
 
         return cache
 
@@ -271,10 +250,65 @@ class YoloDataset(BaseDataset):
 
         # 生成新缓存
         return self._generate_cache()
-    
-    def a():
-        pass
-    
+
+
+def read_img_and_yolo_detection_labels(img_path: str, img_npy_path: str, label_path: str):
+    """
+    从YOLO格式的.txt文件中读取目标检测标签，并转换为NumPy数组。
+
+    此函数假设标签文件格式正确，不包含任何校验。
+
+    Args:
+        file_path (str): YOLO标签文件的路径。
+
+    Returns:
+        np.ndarray: 一个形状为 (n, 5) 的NumPy数组，其中n是目标数量。
+                    每行包含 [class_id, x_center, y_center, width, height]。
+                    如果文件为空或不存在，返回一个空数组 (0, 5)。
+    """
+    img, shape_ori = read_img(img_path, img_npy_path)
+    cls, bboxes = read_yolo_detection_labels(label_path)
+    return img_path, img_npy_path, label_path, img, shape_ori, cls, bboxes
+
+
+def read_img(img_path: str, img_npy_path: Union[str, None]):
+    if img_npy_path:
+        img = np.load(img_npy_path)
+    else:
+        img = cv2.imread(img_path)
+    shape_ori = img.shape
+    return img, shape_ori
+
+
+def read_yolo_detection_labels(file_path: str):
+    """
+    从YOLO格式的.txt文件中读取目标检测标签，并转换为NumPy数组。
+
+    此函数假设标签文件格式正确，不包含任何校验。
+
+    Args:
+        file_path (str): YOLO标签文件的路径。
+
+    Returns:
+        np.ndarray: 一个形状为 (n, 5) 的NumPy数组，其中n是目标数量。
+                    每行包含 [class_id, x_center, y_center, width, height]。
+                    如果文件为空或不存在，返回一个空数组 (0, 5)。
+    """
+    if not file_path:
+        labels = np.empty((0, 5), dtype=np.float32)
+    else:
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                labels = [x.split() for x in f.read().strip().splitlines() if len(x)]
+                labels = np.array(labels, dtype=np.float32)
+        except FileNotFoundError:
+            # 如果标签文件不存在，视为空标签
+            labels = np.empty((0, 5), dtype=np.float32)
+    cls = labels[:, 0].astype(np.int32)
+    bbox = labels[:, 1:5].astype(np.float32)
+    return cls, bbox
+
+
 def verify_image_label(args: Tuple) -> List:
     """Verify one image-label pair."""
     im_file, lb_file, prefix, keypoint, num_cls, nkpt, ndim, single_cls = args
@@ -345,7 +379,8 @@ def verify_image_label(args: Tuple) -> List:
         nc = 1
         msg = f"{prefix}{im_file}: ignoring corrupt image/label: {e}"
         return [None, None, None, None, None, nm, nf, ne, nc, msg]
-    
+
+
 def load_yolo_label_from_txt(label_path: str) -> np.ndarray:
     """Load YOLO format labels from a text file.
 

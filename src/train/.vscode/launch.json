@@ -49,7 +49,8 @@
             "request": "launch",
             "program": "${file}",
             "console": "integratedTerminal",
-            "justMyCode": false  // 允许调试第三方库
+            "justMyCode": false,  // 允许调试第三方库
+            "subProcess": false
         },
         // 调试pytest测试用例
         {
