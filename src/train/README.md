@@ -17,13 +17,14 @@ python scripts/create_dataset_table_from_multi_folders_for_train_predict.py --he
 ```bash
 python scripts/create_dataset_table_from_multi_folders_for_train_predict.py \
   --headers "data_img,label_detect_yolo" \
-  --dirs "/home/xiaopangdun/project/deep_learning/src/train/datasets/coco8/images/train" \
-  --dirs "/home/xiaopangdun/project/deep_learning/src/train/datasets/coco8/labels/train" \
+  --dirs "datasets/coco8/images/train" \
+  --dirs "datasets/coco8/labels/train" \
   --suffix-groups ".jpg,.png" \
   --suffix-groups ".txt" \
-  --output-dir "/home/xiaopangdun/project/deep_learning/src/train/datasets/coco8" \
+  --output-dir "datasets/coco8" \
   --split-ratio "1.0" \
   --output-names "train.csv" \
+  --relative-to "datasets/coco8" \
   --allow-missing \
   --shuffle \
   --verbose 

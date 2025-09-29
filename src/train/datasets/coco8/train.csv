@@ -1,5 +1,5 @@
 data_img,label_detect_yolo
-images/train/000000000030.jpg,labels/train/000000000030.txt
-images/train/000000000009.jpg,labels/train/000000000009.txt
 images/train/000000000034.jpg,labels/train/000000000034.txt
 images/train/000000000025.jpg,labels/train/000000000025.txt
+images/train/000000000030.jpg,labels/train/000000000030.txt
+images/train/000000000009.jpg,labels/train/000000000009.txt
