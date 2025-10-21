@@ -2,8 +2,8 @@
 
 # 1. 收集核心源文件（根据你的实际文件路径修改）
 set(CORE_SRCS
-  core/Device.cpp
-  core/ModelInfo.cpp
+  infer_engine/Device.cpp
+  infer_engine/ModelInfo.cpp
   perception_model/PerceptionModelFactory.cpp
   perception_model/Yolov5SegModel.cpp
   preprocess/Yolov5SegPreprocess.cpp

@@ -4,7 +4,7 @@
 # ============================================
 
 # 使用系统 OpenCV
-find_package(OpenCV 4.5.5 REQUIRED)
+find_package(OpenCV REQUIRED)
 
 # 导出常用变量
 set(OpenCV_FOUND TRUE)
