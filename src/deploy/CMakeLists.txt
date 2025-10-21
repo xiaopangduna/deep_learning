@@ -24,7 +24,6 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/lib)  # 静态库
 #    开关命名规则：<动作>_<模块>，如BUILD_EXAMPLES、ENABLE_RKNN
 option(BUILD_EXAMPLES "Build example programs (verify framework)" ON)
 option(ENABLE_RKNN "Enable RKNN backend support (for Rockchip NPU)" OFF)  # 初期默认关闭
-
 option(ENABLE_DEBUG "Enable debug mode (with -g and verbose log)" OFF)
 
 
@@ -35,7 +34,9 @@ endif()
 
 # 3. 基础依赖管理（传递给所有子目录）
 list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
-find_package(OpenCV REQUIRED)
+
+include(cmake/find_opencv.cmake)  # 自定义 OpenCV 查找模块
+# find_package(OpenCV REQUIRED)
 
 # 用INTERFACE目标统一传递依赖（子目录只需链接此目标）
 add_library(deploy_global INTERFACE)
