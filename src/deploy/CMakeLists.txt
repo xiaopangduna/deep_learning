@@ -37,6 +37,7 @@ list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
 
 include(cmake/find_opencv.cmake)  # 自定义 OpenCV 查找模块
 include(cmake/find_yaml-cpp.cmake)  # 自定义 YAML-CPP 查找模块
+include(cmake/find_spdlog.cmake)  # 导入 spdlog 查找逻辑
 
 # 用INTERFACE目标统一传递依赖（子目录只需链接此目标）
 add_library(deploy_global INTERFACE)
@@ -49,6 +50,7 @@ target_link_libraries(deploy_global INTERFACE
 target_include_directories(deploy_global INTERFACE
     ${OpenCV_INCLUDE_DIRS}
     ${YAML_CPP_INCLUDE_DIRS}   # 加入 yaml-cpp 头文件路径
+    ${SPDLOG_INCLUDE_DIRS}     # 加入 spdlog 头文件路径
 )
 
 # 4. 子目录管理（只决定“编译哪些目录”，不干涉目录内逻辑）
