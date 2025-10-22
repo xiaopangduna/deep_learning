@@ -57,3 +57,7 @@ add_subdirectory(src)  # 核心库（必选）
 if(BUILD_EXAMPLES)
   add_subdirectory(examples)  # 示例程序（可选，由开关控制）
 endif()
+
+# 编译测试代码（test目录下的代码）
+enable_testing()  # 启用测试
+add_subdirectory(test)

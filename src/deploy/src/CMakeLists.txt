@@ -2,11 +2,9 @@
 
 # 1. 收集核心源文件（根据你的实际文件路径修改）
 set(CORE_SRCS
+  common/Platform.cpp
   infer_engine/Device.cpp
   infer_engine/ModelInfo.cpp
-  perception_model/PerceptionModelFactory.cpp
-  perception_model/Yolov5SegModel.cpp
-  preprocess/Yolov5SegPreprocess.cpp
 )
 
 # 2. 排除未实现的文件（如果某些文件还没写，先注释掉，避免编译错误）
