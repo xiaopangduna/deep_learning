@@ -26,3 +26,6 @@ target_include_directories(deploy_core PRIVATE
 target_include_directories(deploy_core PUBLIC
   ${PROJECT_SOURCE_DIR}/include  # 让examples等外部目录能引用接口（如#include "infer_engine/Device.hpp"）
 )
+
+# 添加processing子模块
+add_subdirectory(processing)
