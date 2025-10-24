@@ -1,40 +1,86 @@
-// 正确的main函数定义（必须是全局作用域，不能在命名空间内）
+// Illustrative yolov5-seg demo (spec-style). Libraries are referenced by expected API.
+
 #include <iostream>
+#include <string>
+#include <vector>
+#include <map>
+#include <optional>
+
 #include <opencv2/opencv.hpp>
-#include <yaml-cpp/yaml.h>
 
-int main()
-{ // 函数名必须是main，返回类型必须是int
-    std::cout << "Yolov5 seg demo is running..." << std::endl;
+// 直接使用具体模型实现，配置已合并到模型头中
+#include "perception_model/segmentation/Yolov5SegModel.hpp"
 
-    // 1. 打印OpenCV版本（验证头文件是否正常包含）
-    std::cout << "OpenCV版本: " << CV_VERSION << std::endl;
+int main(int argc, char** argv) {
+    // 使用命名空间别名，调用更简洁
+    namespace dpy = deploy::perception::yolov5_seg;
 
-    // 2. 读取测试图像（验证图像读取功能）
-    cv::Mat img = cv::imread("/home/xiaopangdun/project/deep_learning/src/deploy/examples/yolov5_seg_example/test_image.jpg"); // 假设该文件存在于examples/yolov5_seg_example目录
-    if (img.empty())
-    {
-        std::cerr << "错误：无法读取图像 test_image.jpg" << std::endl;
-        return -1;
-    }
-    std::cout << "图像读取成功，尺寸: " << img.rows << "x" << img.cols << std::endl;
+    dpy::Config cfg;
+    cfg.pre.steps = {
+        {"Resize",      {{"width","640"}, {"height","640"}, {"mode","letterbox"}, {"device","cuda:0"}}},
+        // {"ColorConvert",{{"from","bgr"}, {"to","rgb"}, {"device","cuda:0"}}},
+        // {"Normalize",    {{ "mean","0.485,0.456,0.406"}, {"std","0.229,0.224,0.225"}, {"scale","1/255"}, {"device","cpu"}}},
+        // {"Permute",      {{"order","HWC->CHW"}, {"device","cpu"}}}
+    };
+    cfg.engine = {"onnxruntime", {
+        {"model_path", "models/yolov5_seg.onnx"},
+        {"precision", "fp32"},
+        {"device", "cuda:0"},
+        {"batch_size", "1"},
+        {"dynamic_shape", "false"},
+        {"output_names", "boxes,scores,masks"},
+        {"optimization_level", "1"} // backend-specific
+    }};
+    cfg.post.steps = {
+        {"DecodeYolo", {{"score_thresh","0.25"}, {"device","cuda:0"}}},
+        // {"NMS",        {{"iou_thresh","0.45"}, {"device","cpu"}}}
+    };
 
-    // 3. 简单图像处理（验证OpenCV功能是否正常）
-    cv::Mat gray;
-    cv::cvtColor(img, gray, cv::COLOR_BGR2GRAY); // 转为灰度图
-    std::cout << "图像处理成功（转为灰度图）" << std::endl;
 
-    // 5. （可选，若有显示器）显示图像
-    cv::namedWindow("Test Image", cv::WINDOW_NORMAL);
-    cv::imshow("Test Image", img);
-    cv::waitKey(0); // 按任意键关闭窗口
-    cv::destroyAllWindows();
+    // Create（在 Create 中完成初始化），返回 optional<shared_ptr<Yolov5SegModel>>
+    auto model_opt = dpy::Yolov5SegModel::Create(cfg);
+    if (!model_opt) { std::cerr<<"Create failed\n"; return -1; }
+    auto model = std::move(*model_opt);
 
-    std::cout << "OpenCV功能验证成功！" << std::endl;
+    // // 3) gather inputs (support multiple image paths)
+    // std::vector<cv::Mat> images;
+    // if (argc > 1) {
+    //     for (int i = 1; i < argc; ++i) {
+    //         cv::Mat im = cv::imread(argv[i], cv::IMREAD_COLOR);
+    //         if (im.empty()) {
+    //             std::cerr << "warning: failed to read image: " << argv[i] << "\n";
+    //             continue;
+    //         }
+    //         images.push_back(std::move(im));
+    //     }
+    // } else {
+    //     const std::string image_path = "examples/yolov5_seg_example/test_image.jpg";
+    //     cv::Mat im = cv::imread(image_path, cv::IMREAD_COLOR);
+    //     if (im.empty()) {
+    //         std::cerr << "read image failed: " << image_path << "\n";
+    //         return -1;
+    //     }
+    //     images.push_back(std::move(im));
+    // }
 
-    YAML::Node node = YAML::Load("{name: ChatGPT, type: AI}");
-    std::cout << "name: " << node["name"].as<std::string>() << std::endl;
-    std::cout << "type: " << node["type"].as<std::string>() << std::endl;
-    return 0;
+    // if (images.empty()) {
+    //     std::cerr << "no valid input images\n";
+    //     return -1;
+    // }
+
+    // // 4) Predict -> 填充调用方提供的结果结构（约定：bool Predict(const std::vector<cv::Mat>&, std::vector<dpy::Result>&)）
+    // std::vector<dpy::Result> results;
+    // if (!model->Predict(images, results)) {
+    //     std::cerr << "predict failed\n";
+    //     return -1;
+    // }
+
+    // if (results.size() != images.size()) {
+    //     std::cerr << "warning: results count (" << results.size()
+    //               << ") != images count (" << images.size() << ")\n";
+    // }
+
+
+    // // 不再显式调用 Shutdown，资源在 model 析构时释放
     return 0;
 }
