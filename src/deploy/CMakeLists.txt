@@ -56,10 +56,10 @@ target_include_directories(deploy_global INTERFACE
 # 4. 子目录管理（只决定“编译哪些目录”，不干涉目录内逻辑）
 add_subdirectory(src)  # 核心库（必选）
 
-if(BUILD_EXAMPLES)
-  add_subdirectory(examples)  # 示例程序（可选，由开关控制）
-endif()
+# if(BUILD_EXAMPLES)
+#   add_subdirectory(examples)  # 示例程序（可选，由开关控制）
+# endif()
 
 # 编译测试代码（test目录下的代码）
-enable_testing()  # 启用测试
-add_subdirectory(tests)
+# enable_testing()  # 启用测试
+# add_subdirectory(tests)

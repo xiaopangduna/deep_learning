@@ -1,17 +1,20 @@
-# Minimal processing submodule target
-
-add_library(processing_core STATIC
-    core/MemoryPool.cpp
-    core/PipelineRunner.cpp
-    transforms/Resize.cpp
+set(PROCESSING_SRCS
+  Factory.cpp               
 )
 
-target_include_directories(processing_core
-    PUBLIC
-        ${CMAKE_SOURCE_DIR}/include
+add_library(processing STATIC ${PROCESSING_SRCS})
+
+target_include_directories(processing
+  PUBLIC ${CMAKE_SOURCE_DIR}/include
+  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
-# keep target lightweight: no extra dependencies now.
-set_target_properties(processing_core PROPERTIES
-    POSITION_INDEPENDENT_CODE ON
+# link common/public deps
+target_link_libraries(processing
+  PUBLIC common
 )
+
+# Ensure C++17 for this target
+target_compile_features(processing PUBLIC cxx_std_17)
+
+target_link_libraries(processing PUBLIC deploy_global)
