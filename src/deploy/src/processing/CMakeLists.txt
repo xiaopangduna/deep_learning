@@ -1,5 +1,7 @@
 set(PROCESSING_SRCS
   Factory.cpp               
+  Op.cpp
+  ops/Resize.cpp   
 )
 
 add_library(processing STATIC ${PROCESSING_SRCS})

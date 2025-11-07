@@ -11,7 +11,7 @@ namespace deploy::perception::processing {
 
 // Build a preprocess pipeline from cfg.pre.steps.
 // On failure returns nullptr and writes a human-readable reason to err (if non-null).
-std::unique_ptr<PreprocessPipeline> BuildPreprocessPipeline(const std::vector<Step>& steps,
+std::unique_ptr<PreprocessPipeline> BuildPreprocessPipeline(const std::vector<deploy::perception::types::Step>& steps,
                                                             std::string* err = nullptr);
 
 // // Build a postprocess pipeline from cfg.post.steps.

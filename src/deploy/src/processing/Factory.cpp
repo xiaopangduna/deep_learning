@@ -67,24 +67,24 @@ namespace deploy::perception::processing
     {
 
         std::vector<OpPtr> ops;
-        // ops.reserve(steps.size());
+        ops.reserve(steps.size());
 
-        // for (size_t i = 0; i < steps.size(); ++i)
-        // {
-        //     const auto &s = steps[i];
-        //     std::string create_err;
-        //     auto op = CreateOpByName(s.name, s.params, &create_err);
-        //     if (!op)
-        //     {
-        //         if (err)
-        //         {
-        //             *err = "BuildPreprocessPipeline: failed to create op '" + s.name +
-        //                    "' at index " + std::to_string(i) + ": " + create_err;
-        //         }
-        //         return nullptr;
-        //     }
-        //     ops.push_back(std::move(op));
-        // }
+        for (size_t i = 0; i < steps.size(); ++i)
+        {
+            const auto &s = steps[i];
+            std::string create_err;
+            auto op = CreateOpByName(s.name, s.params, &create_err);
+            if (!op)
+            {
+                if (err)
+                {
+                    *err = "BuildPreprocessPipeline: failed to create op '" + s.name +
+                           "' at index " + std::to_string(i) + ": " + create_err;
+                }
+                return nullptr;
+            }
+            ops.push_back(std::move(op));
+        }
 
         return std::make_unique<PipelineImpl>(std::move(ops));
     }

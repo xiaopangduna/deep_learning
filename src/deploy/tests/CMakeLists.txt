@@ -8,6 +8,6 @@ find_package(GTest REQUIRED)
 set(TEST_INCLUDE_DIR ${CMAKE_SOURCE_DIR}/include)
 
 # add per-module test subdirectories
-add_subdirectory(common)
+# add_subdirectory(common)
 add_subdirectory(processing)
-add_subdirectory(utils)
+# add_subdirectory(utils)

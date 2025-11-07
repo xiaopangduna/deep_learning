@@ -9,8 +9,6 @@ namespace deploy::perception::processing {
 using TensorPtr = std::shared_ptr<deploy::perception::types::Tensor>;
 
 // 预处理流水线抽象：批量接口，输入/输出为 TensorPtr 向量。
-// - in/out 长度一一对应；失败项可用空的 TensorPtr 占位。
-// - per_tensor_err 可选，用于返回每个输入的错误信息（与 in 顺序对应）。
 class PreprocessPipeline {
 public:
     virtual ~PreprocessPipeline() = default;
