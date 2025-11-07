@@ -5,67 +5,76 @@
 #include <cstring>
 #include <opencv2/opencv.hpp>
 
-#include "processing/ops/Resize.hpp"
+#include "processing/ops/BgrToRgb.hpp"
 #include "processing/ImageCvUtils.hpp"
 #include "type/Tensor.hpp"
 
 using namespace deploy::perception::processing;
 namespace types = deploy::perception::types;
 
-int main(int argc, char** argv) {
-    if (argc < 3) {
-        std::cerr << "Usage: demo_resize <input_image> <output_image> [width] [height]\n";
+int main(int argc, char **argv)
+{
+    if (argc < 3)
+    {
+        std::cerr << "Usage: demo_bgr2rgb <input_image> <output_image>\n";
         return 2;
     }
     std::string in_path = argv[1];
     std::string out_path = argv[2];
-    int target_w = (argc >= 4) ? std::stoi(argv[3]) : 64;
-    int target_h = (argc >= 5) ? std::stoi(argv[4]) : 64;
 
     cv::Mat src = cv::imread(in_path, cv::IMREAD_UNCHANGED);
-    if (src.empty()) {
+    if (src.empty())
+    {
         std::cerr << "Failed to read image: " << in_path << "\n";
         return 1;
     }
 
-    // determine dtype and convert cv::Mat -> Tensor using shared util
+    // convert cv::Mat -> Tensor using shared util
     types::DType dt = (src.depth() == CV_8U) ? types::DType::UINT8 : types::DType::FLOAT32;
     auto in_t = deploy::perception::processing::CvMatToTensor(src, dt);
+    if (!in_t)
+    {
+        std::cerr << "CvMatToTensor failed\n";
+        return 1;
+    }
 
-    // setup ResizeOp
-    ResizeOp op;
-    std::map<std::string, std::string> params;
-    params["width"] = std::to_string(target_w);
-    params["height"] = std::to_string(target_h);
+    // setup BgrToRgbOp
+    BgrToRgbOp op;
+    std::map<std::string, std::string> params; // no params required
     std::string init_err;
-    if (!op.Init(params, &init_err)) {
-        std::cerr << "Resize init error: " << init_err << "\n";
+    if (!op.Init(params, &init_err))
+    {
+        std::cerr << "BgrToRgb init error: " << init_err << "\n";
         return 1;
     }
 
     types::TensorPtr out_t;
     std::string run_err;
-    if (!op.Run(in_t, out_t, &run_err)) {
-        std::cerr << "Resize run error: " << run_err << "\n";
+    if (!op.Run(in_t, out_t, &run_err))
+    {
+        std::cerr << "BgrToRgb run error: " << run_err << "\n";
         return 1;
     }
-    if (!out_t) {
-        std::cerr << "Resize returned null tensor\n";
+    if (!out_t)
+    {
+        std::cerr << "BgrToRgb returned null tensor\n";
         return 1;
     }
 
     // convert output tensor back to cv::Mat using shared util
     cv::Mat result;
     std::string t2m_err;
-    if (!deploy::perception::processing::TensorToCvMat(out_t, result, &t2m_err)) {
+    if (!deploy::perception::processing::TensorToCvMat(out_t, result, &t2m_err))
+    {
         std::cerr << "TensorToCvMat failed: " << t2m_err << "\n";
         return 1;
     }
 
-    if (!cv::imwrite(out_path, result)) {
+    if (!cv::imwrite(out_path, result))
+    {
         std::cerr << "Failed to write image: " << out_path << "\n";
         return 1;
     }
-    std::cout << "Saved resized image to " << out_path << "\n";
+    std::cout << "Saved BGR->RGB image to " << out_path << "\n";
     return 0;
 }

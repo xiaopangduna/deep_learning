@@ -18,3 +18,5 @@ target_link_libraries(infer_engine
 target_compile_features(infer_engine PUBLIC cxx_std_17)
 
 target_link_libraries(infer_engine PUBLIC deploy_global)
+
+add_subdirectory(platform)

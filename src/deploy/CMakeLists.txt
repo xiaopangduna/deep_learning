@@ -23,7 +23,7 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/lib)  # 静态库
 # 3. 项目级功能开关（控制子模块编译，默认只开启核心功能）
 #    开关命名规则：<动作>_<模块>，如BUILD_EXAMPLES、ENABLE_RKNN
 option(BUILD_EXAMPLES "Build example programs (verify framework)" ON)
-option(ENABLE_RKNN "Enable RKNN backend support (for Rockchip NPU)" OFF)  # 初期默认关闭
+option(ENABLE_RKNN "Enable RKNN backend support (for Rockchip NPU)" ON)  # 初期默认关闭
 option(ENABLE_DEBUG "Enable debug mode (with -g and verbose log)" OFF)
 
 

@@ -1,7 +1,10 @@
 set(PROCESSING_SRCS
-  Factory.cpp               
   Op.cpp
-  ops/Resize.cpp   
+  ImageCvUtils.cpp
+  ops/Resize.cpp
+  ops/Letterbox.cpp
+  ops/BgrToRgb.cpp
+  ops/PackToRknn.cpp
 )
 
 add_library(processing STATIC ${PROCESSING_SRCS})
