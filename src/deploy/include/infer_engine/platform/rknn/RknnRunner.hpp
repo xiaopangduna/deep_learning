@@ -2,6 +2,7 @@
 #include <string>
 #include <vector>
 #include "type/Tensor.hpp"
+#include "rknn_api.h"
 
 namespace deploy::perception::infer_engine::platform::rknn {
 
