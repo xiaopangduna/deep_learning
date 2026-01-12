@@ -1,10 +1,9 @@
-/saved_models/
-/logs/
-/tmp/
-lightning_logs/
+logs/
+tmp/
+
 pretrained_models/
 *.pt
-*.pth
+*.pth 
 runs/
 cache/
 

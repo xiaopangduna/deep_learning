@@ -46,9 +46,96 @@ class YoloDataset(BaseDataset):
         else:
             self.samples = self._multithreaded_load_yolo_detection_samples()
 
+    @staticmethod
+    def draw_bounding_boxes(
+        image: np.ndarray, 
+        bboxes: np.ndarray, 
+        classes: np.ndarray, 
+        class_names: Optional[Dict[int, str]] = None, 
+        colors: Optional[List[Tuple[int, int, int]]] = None, 
+        thickness: int = 2
+    ) -> np.ndarray:
+        """
+        在图像上绘制边界框
+        
+        参数:
+            image: 输入图像 (numpy array)
+            bboxes: 边界框 numpy 数组，格式为 [[x_center, y_center, width, height], ...] (归一化坐标)
+            classes: 类别ID numpy 数组
+            class_names: 类别名称字典，键为类别ID，值为类别名称 (可选)
+            colors: 颜色列表，每个类别一种颜色 (可选)
+            thickness: 边界框线条粗细
+            
+        返回:
+            绘制了边界框的图像
+        """
+        h, w = image.shape[:2]
+        
+        # 如果没有提供颜色，则使用默认颜色
+        if colors is None:
+            colors = [(0, 255, 0)]  # BGR格式
+
+        for i, (bbox, cls_id) in enumerate(zip(bboxes, classes)):
+            # 解析边界框坐标 (x_center, y_center, width, height) - 归一化坐标
+            x_center, y_center, width, height = bbox
+            
+            # 转换为像素坐标
+            x_center *= w
+            y_center *= h
+            width *= w
+            height *= h
+            
+            # 计算左上角和右下角坐标
+            x1 = int(x_center - width / 2)
+            y1 = int(y_center - height / 2)
+            x2 = int(x_center + width / 2)
+            y2 = int(y_center + height / 2)
+            
+            # 获取当前框的颜色
+            if len(colors) > 1:
+                color = colors[cls_id % len(colors)]
+            else:
+                color = colors[0]
+            
+            # 绘制边界框
+            cv2.rectangle(image, (x1, y1), (x2, y2), color, thickness)
+            
+            # 添加类别标签
+            label = f"Class: {cls_id}"
+            if class_names and cls_id in class_names:
+                label = class_names[cls_id]
+                
+            # 计算标签背景框的大小
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            font_scale = 0.6
+            text_size = cv2.getTextSize(label, font, font_scale, 1)[0]
+            
+            # 绘制标签背景
+            cv2.rectangle(image, (x1, y1 - text_size[1] - 10), (x1 + text_size[0], y1), color, -1)
+            
+            # 绘制标签文字
+            cv2.putText(
+                image, 
+                label, 
+                (x1, y1 - 5), 
+                font, 
+                font_scale, 
+                (255, 255, 255),  # 白色文字
+                1, 
+                cv2.LINE_AA
+            )
+        
+        return image
 
     def __getitem__(self, index: int) -> Dict[str, Any]:
         sample = deepcopy(self.samples[index])
+        if self.transform:
+            # img_tv = 
+            # bboxex_tv =
+            # 
+            pass
+            #  = self.transform()
+
 
         return sample
 
@@ -93,7 +180,7 @@ class YoloDataset(BaseDataset):
                 "img_npy_path",
                 "label_path",
                 "original_shape",
-                "cls",
+                "classes",
                 "bboxes",
                 "normalized",
                 "bbox_format",
@@ -136,7 +223,7 @@ class YoloDataset(BaseDataset):
                         "img_npy_path": img_npy_path,
                         "label_path": label_path,
                         "original_shape": shape_ori,
-                        "cls": cls,  # n, 1
+                        "classes": cls,  # n, 1
                         "bboxes": bboxes,
                         "normalized": True,
                         "bbox_format": "xywh",
