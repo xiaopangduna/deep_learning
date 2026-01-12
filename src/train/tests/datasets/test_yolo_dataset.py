@@ -18,7 +18,8 @@ from ultralytics.data.augment import (
     classify_transforms,
     v8_transforms,
 )
-
+from torchvision.io import decode_image
+from torchvision.tv_tensors import Image
 from lovely_deep_learning.datasets.yolo_dataset import YoloDataset, read_yolo_detection_labels, read_img
 
 
@@ -140,6 +141,10 @@ print(sample)
 img = cv2.imread(sample["img_path"])
 img_npy = np.load(sample["img_npy_path"])
 img_with_box = YoloDataset.draw_bounding_boxes(img, sample["bboxes"], sample["classes"])
-cv2.imwrite("/home/xiaopangdun/project/deep_learning/src/train/tmp/test.jpg", img_with_box)
+# img_with_box_npy = YoloDataset.draw_bounding_boxes(img_npy, sample["bboxes"], sample["classes"])
+# cv2.imwrite("/home/xiaopangdun/project/deep_learning/src/train/tmp/test.jpg", img_with_box)
+# cv2.imwrite("/home/xiaopangdun/project/deep_learning/src/train/tmp/test_npy.jpg", img_with_box_npy)
+
+
 
 pass

@@ -10,7 +10,8 @@ from tqdm import tqdm
 import cv2  # 假设使用OpenCV处理图像
 from copy import deepcopy
 from PIL import Image, ImageOps
-
+from torchvision import tv_tensors
+import torch
 
 class YoloDataset(BaseDataset):
     def __init__(
@@ -129,6 +130,16 @@ class YoloDataset(BaseDataset):
 
     def __getitem__(self, index: int) -> Dict[str, Any]:
         sample = deepcopy(self.samples[index])
+        net_in = {}
+        net_out = {}
+        img = read_img(sample["img_path"],sample["img_npy_path"])
+        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        # 3. 转为 torch.Tensor 并调整维度 (H, W, C) -> (C, H, W)
+        img_tensor = torch.from_numpy(img_rgb).permute(2, 0, 1)  # (C, H, W)
+        img_tensor = img_tensor.contiguous()
+        img_tv = tv_tensors.Image(img_tensor)
+        # img_tv = 
+
         if self.transform:
             # img_tv = 
             # bboxex_tv =
