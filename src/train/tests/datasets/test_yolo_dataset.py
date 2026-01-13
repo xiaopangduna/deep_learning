@@ -20,6 +20,8 @@ from ultralytics.data.augment import (
 )
 from torchvision.io import decode_image
 from torchvision.tv_tensors import Image
+from torchvision.utils import draw_bounding_boxes,save_image
+from torchvision.transforms import v2
 from lovely_deep_learning.datasets.yolo_dataset import YoloDataset, read_yolo_detection_labels, read_img
 
 
@@ -132,6 +134,10 @@ transforms.append(
         mask_overlap=hyp.overlap_mask,
         bgr= 0.0,  # only affect training.
     ))
+
+transforms = v2.Compose([
+    v2.Resize(size=(640, 640)),
+])
 my_dataset = YoloDataset(
     csv_paths=CSV_FILES, key_map=FIELD_MAP,transform=transforms, cache_label_path="cache/coco8_train.cache", cache_image_dir="cache"
 )
@@ -141,6 +147,10 @@ print(sample)
 img = cv2.imread(sample["img_path"])
 img_npy = np.load(sample["img_npy_path"])
 img_with_box = YoloDataset.draw_bounding_boxes(img, sample["bboxes"], sample["classes"])
+img_tv_with_box = draw_bounding_boxes(sample["transformed_img"], sample["transformed_bboxes"])
+result_tensor_normalized =img_tv_with_box.float() / 255.0
+save_path = "/home/xiaopangdun/project/deep_learning/src/train/tmp/test_transforms.jpg"
+save_image(result_tensor_normalized, save_path)
 # img_with_box_npy = YoloDataset.draw_bounding_boxes(img_npy, sample["bboxes"], sample["classes"])
 # cv2.imwrite("/home/xiaopangdun/project/deep_learning/src/train/tmp/test.jpg", img_with_box)
 # cv2.imwrite("/home/xiaopangdun/project/deep_learning/src/train/tmp/test_npy.jpg", img_with_box_npy)

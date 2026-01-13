@@ -128,26 +128,78 @@ class YoloDataset(BaseDataset):
         
         return image
 
-    def __getitem__(self, index: int) -> Dict[str, Any]:
-        sample = deepcopy(self.samples[index])
-        net_in = {}
-        net_out = {}
-        img = read_img(sample["img_path"],sample["img_npy_path"])
+    @staticmethod
+    def convert_img_from_numpy_to_tensor(img: np.ndarray) -> torch.Tensor:
+        """
+        将numpy格式的图像转换为RGB格式的tensor，并调整维度从(H, W, C)到(C, H, W)
+        
+        Args:
+            img: 输入的numpy图像数组
+            
+        Returns:
+            转换后的torch.Tensor，格式为(C, H, W)
+        """
         img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        # 3. 转为 torch.Tensor 并调整维度 (H, W, C) -> (C, H, W)
+        # 转为 torch.Tensor 并调整维度 (H, W, C) -> (C, H, W)
         img_tensor = torch.from_numpy(img_rgb).permute(2, 0, 1)  # (C, H, W)
         img_tensor = img_tensor.contiguous()
+        return img_tensor
+
+    @staticmethod
+    def convert_bboxes_from_relative_to_absolute(bboxes_rel: np.ndarray, img_shape: tuple) -> np.ndarray:
+        """
+        将相对坐标（归一化坐标）的边界框转换为绝对坐标（像素值）的边界框
+        
+        Args:
+            bboxes_rel: 相对坐标边界框，形状为(N, 4)，格式为[x_center, y_center, width, height]，值范围[0, 1]
+            img_shape: 图像的形状，(height, width) 或 (height, width, channels)
+        
+        Returns:
+            绝对坐标边界框，形状为(N, 4)，格式为[x1, y1, x2, y2]，值为像素坐标
+        """
+        # 获取图像的高度和宽度
+        H, W = img_shape[0], img_shape[1]
+        
+        # 将归一化坐标转换为绝对坐标 (xywh格式)
+        bboxes_abs_xywh = bboxes_rel * np.array([W, H, W, H])
+        
+        # 分离中心点坐标和宽高
+        x_center, y_center, w, h = bboxes_abs_xywh[:, 0], bboxes_abs_xywh[:, 1], bboxes_abs_xywh[:, 2], bboxes_abs_xywh[:, 3]
+        
+        # 计算角点坐标 (xyxy格式)
+        x1 = x_center - w/2
+        y1 = y_center - h/2
+        x2 = x_center + w/2
+        y2 = y_center + h/2
+        
+        # 堆叠成 [x1, y1, x2, y2] 格式
+        bboxes_abs_xyxy = np.column_stack((x1, y1, x2, y2))
+        
+        return bboxes_abs_xyxy
+
+    def __getitem__(self, index: int) -> Dict[str, Any]:
+        sample = deepcopy(self.samples[index])
+
+        img, img_shape = read_img(sample["img_path"],sample["img_npy_path"])
+        img_tensor = self.convert_img_from_numpy_to_tensor(img)
         img_tv = tv_tensors.Image(img_tensor)
-        # img_tv = 
-
+        
+        bboxes_np = sample['bboxes']  # 归一化xywh，形状(N,4)
+        bboxes_abs_xyxy = self.convert_bboxes_from_relative_to_absolute(bboxes_np, img_shape)
+        bboxes_tensor = torch.from_numpy(bboxes_abs_xyxy)
+        # 创建BoundingBoxes对象（v2格式）
+        bboxes_tv = tv_tensors.BoundingBoxes(
+            bboxes_tensor, 
+            format="XYXY", 
+            canvas_size=( img_shape[0], img_shape[1])
+        )
         if self.transform:
-            # img_tv = 
-            # bboxex_tv =
-            # 
-            pass
-            #  = self.transform()
-
-
+            transformed_img, transformed_bboxes = self.transform(img_tv, bboxes_tv)
+        else:
+            transformed_img, transformed_bboxes = img_tv, bboxes_tv
+        sample["img_np"] = img
+        sample["transformed_img"] = transformed_img
+        sample["transformed_bboxes"] = transformed_bboxes
         return sample
 
     def _should_cache_image(self) -> bool:
