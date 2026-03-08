@@ -1,0 +1,3 @@
+[submodule "src/deploy_percept"]
+	path = src/deploy_percept
+	url = https://github.com/xiaopangduna/deploy_percept.git
