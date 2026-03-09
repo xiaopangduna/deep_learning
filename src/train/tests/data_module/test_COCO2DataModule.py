@@ -1,7 +1,7 @@
 import pytest
 from pathlib import Path
 
-from lovely_deep_learning.datamodules.COCO8_data_module import COCO8DataModule
+from lovely_deep_learning.data_module.COCO8_data_module import COCO8DataModule
 
 
 @pytest.mark.download

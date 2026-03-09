@@ -1,0 +1,20 @@
+trainer:
+  max_epochs: 3
+  accelerator: auto
+  logger:
+    class_path: lightning.pytorch.loggers.CSVLogger
+    init_args:
+      save_dir: logs
+      name: mnist
+
+model:
+  class_path: lovely_deep_learning.module.mnist.MNISTModule
+  init_args:
+    learning_rate: 2e-4
+
+data:
+  class_path: lovely_deep_learning.data_module.mnist.MNISTDataModule
+  init_args:
+    data_dir: datasets/MNIST
+    batch_size: 64
+    num_workers: 8

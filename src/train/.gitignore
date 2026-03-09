@@ -1,5 +1,7 @@
 logs/
+lightning_logs/
 tmp/
+data/
 
 pretrained_models/
 *.pt

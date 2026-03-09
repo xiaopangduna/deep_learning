@@ -78,3 +78,8 @@ cmd.txt:所有训练指令
 
 yolo-detection
 下载coco8数据集-
+
+# 示例
+ NMIST
+ 
+python scripts/train.py fit --config configs/experiments/mnist.yaml
