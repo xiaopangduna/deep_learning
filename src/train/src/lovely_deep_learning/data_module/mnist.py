@@ -8,7 +8,7 @@ class MNISTDataModule(pl.LightningDataModule):
 
     def __init__(
         self,
-        data_dir: str = "./data",
+        data_dir: str = "./datasets/MNIST",
         batch_size: int = 64,
         num_workers: int = 4,
     ):

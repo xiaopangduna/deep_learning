@@ -1,0 +1,22 @@
+trainer:
+  max_epochs: 10
+  accelerator: auto
+  logger:
+    class_path: lightning.pytorch.loggers.CSVLogger
+    init_args:
+      save_dir: logs
+      name: image_classifiter
+
+model:
+  class_path: lovely_deep_learning.module.image_classifier.ImageClassifierModule
+  init_args:
+    num_classes: 10
+    learning_rate: 2e-4
+    pretrained: true
+
+data:
+  class_path: lovely_deep_learning.data_module.image_nette.ImageNetteDataModule
+  init_args:
+    data_dir: datasets/IMAGENETTE/imagenette2-320
+    batch_size: 16
+    num_workers: 8

@@ -5,7 +5,7 @@ from lovely_deep_learning.data_module.mnist import MNISTDataModule
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DATA_DIR = PROJECT_ROOT / "datasets"
+DATA_DIR = PROJECT_ROOT / "datasets"/ "MNIST"
 
 
 class TestMNISTDataModule:

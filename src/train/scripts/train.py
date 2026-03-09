@@ -5,7 +5,8 @@ def cli_main():
     LightningCLI(
         subclass_mode_model=True,
         subclass_mode_data=True,
-        save_config_kwargs={"overwrite": True},
+        save_config_kwargs={"overwrite": True}
+
     )
 
 
