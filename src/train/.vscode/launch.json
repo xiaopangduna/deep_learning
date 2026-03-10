@@ -52,15 +52,14 @@
             "name": "Python: Debug scripts/train.py",
             "type": "debugpy",
             "request": "launch",
-            // "program": "poetry",
             "program": "${workspaceFolder}/scripts/train.py",
             "console": "integratedTerminal",
             "args": [
                 "fit",
                 "--config",
                 "configs/experiments/image_classifiter.yaml",
-                "--ckpt_path",
-                "logs/image_classifiter/version_1/checkpoints/epoch=4-step=2960.ckpt"
+                // "--ckpt_path",
+                // "logs/image_classifiter/version_1/checkpoints/epoch=1-step=1184.ckpt"
             ],
             "justMyCode": false
         },

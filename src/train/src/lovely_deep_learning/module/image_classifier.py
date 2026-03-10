@@ -12,7 +12,8 @@ class ImageClassifierModule(pl.LightningModule):
         pretrained: 是否使用 ImageNet 预训练权重
         """
         super().__init__()
-        self.save_hyperparameters()  # 保存超参到 checkpoint
+        # self.save_hyperparameters()  
+        self.learning_rate = learning_rate
 
         self.model = resnet50(pretrained=pretrained)
 
@@ -38,7 +39,7 @@ class ImageClassifierModule(pl.LightningModule):
         self.log("val_acc", acc, on_step=False, on_epoch=True, prog_bar=True)
 
     def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.parameters(), lr=self.hparams.learning_rate)
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.learning_rate)
         # 可选：学习率调度器
         scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.1)
         return [optimizer], [scheduler]

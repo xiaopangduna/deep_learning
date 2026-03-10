@@ -1,11 +1,12 @@
 trainer:
-  max_epochs: 10
+  max_epochs: 5
   accelerator: auto
   logger:
-    class_path: lightning.pytorch.loggers.CSVLogger
-    init_args:
-      save_dir: logs
-      name: image_classifiter
+    - class_path: lightning.pytorch.loggers.TensorBoardLogger
+      init_args:
+        save_dir: logs
+        name: image_classifier  
+        version: null
 
 model:
   class_path: lovely_deep_learning.module.image_classifier.ImageClassifierModule
