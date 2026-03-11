@@ -1,0 +1,10 @@
+transforms:
+  class_path: torchvision.transforms.Compose
+  init_args:
+    transforms:
+      - class_path: torchvision.transforms.Resize
+        init_args:
+          size: [224,224]
+          interpolation: 2 # bilinear
+      - class_path: torchvision.transforms.RandomHorizontalFlip
+      - class_path: torchvision.transforms.ToTensor

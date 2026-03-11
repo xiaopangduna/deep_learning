@@ -1,8 +1,28 @@
 import torch
 import lightning.pytorch as pl
-
+import yaml
 from lovely_deep_learning.data_module.image_nette import ImageNetteDataModule
 from lovely_deep_learning.module.image_classifier import ImageClassifierModule
+from torchvision import transforms
+
+def test_ImageClassifierModule_train():
+    path_yaml = "configs/experiments/image_classifiter.yaml"
+    with open(path_yaml,"r",encoding="utf-8") as f:
+        config = yaml.safe_load(f)
+    model = ImageClassifierModule(**config["model"]["init_args"])
+    train_transform = transforms.Compose([
+        transforms.Resize((224, 224)),
+        transforms.RandomHorizontalFlip(),
+        transforms.ToTensor(),
+    ])
+    val_transform = transforms.Compose([
+        transforms.Resize((224, 224)),
+        transforms.ToTensor(),
+    ])
+    dm = ImageNetteDataModule(data_dir="/home/xiaopangdun/project/deep_learning/src/train/datasets/IMAGENETTE/imagenette2-320", batch_size=1,transform_train=train_transform,transform_val=val_transform,num_workers=1)
+    trainer = pl.Trainer(max_epochs=5,fast_dev_run=True)  
+    trainer.fit(model, datamodule=dm)
+    pass
 
 
 if __name__ == "__main__":

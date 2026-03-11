@@ -8,7 +8,7 @@ import torch.nn as nn
 from ultralytics import YOLO
 
 
-class DAGWeightLoader():
+class DAGWeightLoader:
 
     def load_weights(
         self,
@@ -18,7 +18,7 @@ class DAGWeightLoader():
         map_location: Optional[Union[str, torch.device]] = "cpu",
         strict: bool = False,
         src_key_prefix: str = "layers.",  # 在这里接收prefix
-        src_key_slice_start: int = 0  # 新增参数：从哪个索引开始截断src_key
+        src_key_slice_start: int = 0,  # 新增参数：从哪个索引开始截断src_key
     ) -> None:
         """
         Args:
@@ -31,7 +31,7 @@ class DAGWeightLoader():
             strict (bool, optional): 是否使用严格模式加载权重。
                                      如果为 True，键名必须完全匹配。
                                      如果为 False (默认)，则忽略不匹配的键。
-            prefix (str, optional): 权重文件的前缀，默认为 "layers."。 
+            prefix (str, optional): 权重文件的前缀，默认为 "layers."。
                                      可在每次加载时动态指定。
             key_truncate_start (int, optional): 从哪个索引位置开始截断源键名，默认为 0（不截断）。
                                      例如，若设为12，会将src_key处理为src_key[12:]
@@ -41,7 +41,7 @@ class DAGWeightLoader():
         """
         if not path:
             raise ValueError("'path' must be provided as the target file location.")
-            
+
         if src_key_slice_start < 0:
             raise ValueError("'key_truncate_start' must be a non-negative integer.")
 
@@ -79,15 +79,23 @@ class DAGWeightLoader():
 
             # 4. 固定映射键名 (先截断再添加动态前缀)
             mapped_state_dict: Dict[str, Any] = {}
-            model_state_keys = set(model.state_dict().keys())
+            model_state_dict = model.state_dict()
+            model_state_keys = set(model_state_dict.keys())
 
-            print(f"TorchVisionWeightLoader: Mapping keys with prefix '{src_key_prefix}' and truncating from index {src_key_slice_start}...")
+            print(
+                f"TorchVisionWeightLoader: Mapping keys with prefix '{src_key_prefix}' and truncating from index {src_key_slice_start}..."
+            )
             for src_key, value in source_state_dict.items():
                 # 先截断源键名，再添加前缀
                 truncated_key = src_key[src_key_slice_start:]
                 dag_net_key = src_key_prefix + truncated_key
                 if dag_net_key in model_state_keys:
-                    mapped_state_dict[dag_net_key] = value
+                    # 检查张量形状是否匹配
+                    if model_state_dict[dag_net_key].shape == value.shape:
+                        mapped_state_dict[dag_net_key] = value
+                        print(f"Info: Mapped key '{dag_net_key}' with matching shape {value.shape}.")
+                    else:
+                        print(f"Info: Shape mismatch for key '{dag_net_key}'. Expected: {model_state_dict[dag_net_key].shape}, Got: {value.shape}. Skipping.")
                 else:
                     print(f"Info: Mapped key '{dag_net_key}' (from '{src_key}') not found in model. Skipping.")
 

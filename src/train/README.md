@@ -87,12 +87,12 @@ python scripts/train.py fit --config configs/experiments/mnist.yaml
 # image_classifie
 
 # 训练
-python scripts/train.py fit --config configs/experiments/image_classifiter.yaml 
+python scripts/train.py fit --config configs/experiments/image_classifiter.yaml --trainer.fast_dev_run true
 # 断点训练（pl.LightningModule禁用self.save_hyperparameters()  ）
 
-python scripts/train.py fit --config logs/ima
-ge_classifiter/version_2/config.yaml --ckpt_path logs/image_classifiter/version_2/checkpoints/epoch=1-step=1184.ckptlogs/image_classifiter/version_2/config.yaml --ckpt_path logs/image_classifiter/version_2/checkpoints/epoch=1-step=1184.ckpt
+python scripts/train.py fit --config logs/image_classifier/version_8/config.yaml --ckpt_path logs/image_classifier/version_8/checkpoints/epoch=1-step=18938.ckpt  --trainer.logger.init_args.version 8
 
+枚举类型的变量在构建类时最好用整数，如果用字符串可能无法断点训练
 # 训练过程查看
 tensorboard --logdir logs
 

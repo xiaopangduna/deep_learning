@@ -78,6 +78,14 @@ def test_DAGWeightLoader_resnet18():
     dag_out = net([x])[0]
     assert torch.allclose(official_out, dag_out, atol=1e-6)
 
+def test_DAGNet_resnet18_pretrained():
+    config = resnet18_config
+    net = DAGNet(config["structure"],config["weight"],True)
+    official_resnet = models.resnet18(weights=models.ResNet18_Weights.DEFAULT)
+    x = torch.randn(1, 3, 224, 224)
+    official_out = official_resnet(x)
+    dag_out = net([x])[0]
+    assert torch.allclose(official_out, dag_out, atol=1e-6)
 
 def test_DAGNet_equal_yolov8_n():
     torch.manual_seed(42)
