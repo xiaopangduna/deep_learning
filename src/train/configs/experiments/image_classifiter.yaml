@@ -1,6 +1,10 @@
 trainer:
   max_epochs: 5
   accelerator: auto
+  callbacks:
+    - class_path: lovely_deep_learning.callback.image_classifier_save_prediction.SavePredictionCallback
+      init_args:
+        save_dir: tmp
   logger:
     - class_path: lightning.pytorch.loggers.TensorBoardLogger
       init_args:

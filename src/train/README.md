@@ -92,11 +92,22 @@ python scripts/train.py fit --config configs/experiments/image_classifiter.yaml 
 
 python scripts/train.py fit --config logs/image_classifier/version_8/config.yaml --ckpt_path logs/image_classifier/version_8/checkpoints/epoch=1-step=18938.ckpt  --trainer.logger.init_args.version 8
 
+# 验证
 python scripts/train.py validate --config logs/image_classifier/version_0/config.yaml --ckpt_path logs/image_classifier/version_0/checkpoints/epoch\=9-step\=5920.ckpt 
 
+# 测试
 python scripts/train.py test --config logs/image_classifier/version_0/config.yaml --ckpt_path logs/image_classifier/version_0/checkpoints/epoch\=9-step\=5920.ckpt 
+
+# 预测
+python scripts/train.py predict --config configs/experiments/image_classifiter.yaml --ckpt_path logs/image_classifier/version_0/checkpoints/epoch\=9-step\=5920.ckpt 
 
 枚举类型的变量在构建类时最好用整数，如果用字符串可能无法断点训练
 # 训练过程查看
 tensorboard --logdir logs
 
+# 数据结构
+所有数据都用csv保存，train,valid,test,predict
+csv的内容都是，path_img,path_label
+
+# 生成图像分类的数据的csv
+python scripts/generate_classification_dataset_table.py       --data_dir /home/xiaopangdun/project/deep_learning/src/train/datasets/IMAGENETTE/imagenette2-320/train       --base_dir /home/xiaopangdun/project/deep_learning/src/train/datasets/IMAGENETTE       --output_files train.csv       --split_ratio 1.0
