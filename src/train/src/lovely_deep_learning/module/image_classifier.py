@@ -36,6 +36,18 @@ class ImageClassifierModule(pl.LightningModule):
         self.log("val_loss", loss, on_step=False, on_epoch=True, prog_bar=True)
         self.log("val_acc", acc, on_step=False, on_epoch=True, prog_bar=True)
 
+    def predict_step(self, batch, batch_idx):
+        x = batch
+        logits = self([x])
+        # 返回预测的类别和相应的概率
+        probabilities = F.softmax(logits[0], dim=1)
+        predictions = logits[0].argmax(dim=1)
+        return {
+            'predictions': predictions,
+            'probabilities': probabilities,
+            'logits': logits[0]
+        }
+
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.learning_rate)
         scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.1)
