@@ -21,18 +21,25 @@ class ImageClassifierModule(pl.LightningModule):
         return self.model(x)
 
     def training_step(self, batch, batch_idx):
-        x, y = batch
-        logits = self([x])
-        loss = F.cross_entropy(logits[0], y)
+        net_in, net_out = batch
+        img = net_in["img_tv_transformed"]
+        class_id = net_out["class_id"]
+        logits = self([img])
+        loss = F.cross_entropy(logits[0], class_id)
+        preds = logits[0].argmax(dim=1)
+        acc = (preds == class_id).float().mean()
         self.log("train_loss", loss, on_step=False, on_epoch=True, prog_bar=True)
-        return loss
+        self.log("train_acc", acc, on_step=False, on_epoch=True, prog_bar=True)
+
 
     def validation_step(self, batch, batch_idx):
-        x, y = batch
-        logits = self([x])
-        loss = F.cross_entropy(logits[0], y)
+        net_in, net_out = batch
+        img = net_in["img_tv_transformed"]
+        class_id = net_out["class_id"]
+        logits = self([img])
+        loss = F.cross_entropy(logits[0], class_id)
         preds = logits[0].argmax(dim=1)
-        acc = (preds == y).float().mean()
+        acc = (preds == class_id).float().mean()
         self.log("val_loss", loss, on_step=False, on_epoch=True, prog_bar=True)
         self.log("val_acc", acc, on_step=False, on_epoch=True, prog_bar=True)
 
@@ -42,11 +49,7 @@ class ImageClassifierModule(pl.LightningModule):
         # 返回预测的类别和相应的概率
         probabilities = F.softmax(logits[0], dim=1)
         predictions = logits[0].argmax(dim=1)
-        return {
-            'predictions': predictions,
-            'probabilities': probabilities,
-            'logits': logits[0]
-        }
+        return {"predictions": predictions, "probabilities": probabilities, "logits": logits[0]}
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.learning_rate)

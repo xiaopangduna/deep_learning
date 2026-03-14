@@ -30,13 +30,13 @@ def test_ImageClassifierModule_train():
     )
     dm = ImageNetteDataModule(
         data_dir="/home/xiaopangdun/project/deep_learning/src/train/datasets/IMAGENETTE/imagenette2-320",
-        batch_size=1,
+        batch_size=4,
         transform_train=train_transform,
         transform_val=val_transform,
         num_workers=1,
     )
 
-    trainer = pl.Trainer(max_epochs=5, fast_dev_run=True)
+    trainer = pl.Trainer(max_epochs=2)# , fast_dev_run=True
     trainer.fit(model, datamodule=dm)
 
 

@@ -1,6 +1,114 @@
 import pytest
 from pathlib import Path
-from lovely_deep_learning.utils.file import list_grouped_files_from_folders, split_list_by_ratio
+import os
+from lovely_deep_learning.utils.file import get_all_file_paths
+
+
+def test_get_all_file_paths_basic():
+    """测试基本功能：获取目录下所有文件"""
+    # 创建临时目录和文件进行测试
+    import tempfile
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_path = Path(temp_dir)
+        
+        # 创建一些测试文件
+        (temp_path / "file1.txt").write_text("content1")
+        (temp_path / "file2.jpg").write_text("content2")
+        subdir = temp_path / "subdir"
+        subdir.mkdir()
+        (subdir / "file3.png").write_text("content3")
+        (subdir / "file4.txt").write_text("content4")
+        
+        # 测试获取所有文件
+        result = get_all_file_paths(temp_path)
+        expected = [
+            str(Path("file1.txt")),
+            str(Path("file2.jpg")),
+            str(Path("subdir") / "file3.png"),
+            str(Path("subdir") / "file4.txt")
+        ]
+        assert len(result) == 4
+        assert set(result) == set(expected)
+
+
+def test_get_all_file_paths_recursive_false():
+    """测试非递归模式：只获取当前目录的文件"""
+    import tempfile
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_path = Path(temp_dir)
+        
+        # 创建一些测试文件
+        (temp_path / "file1.txt").write_text("content1")
+        (temp_path / "file2.jpg").write_text("content2")
+        subdir = temp_path / "subdir"
+        subdir.mkdir()
+        (subdir / "file3.png").write_text("content3")
+        
+        # 测试非递归模式
+        result = get_all_file_paths(temp_path, recursive=False)
+        expected = [
+            str(Path("file1.txt")),
+            str(Path("file2.jpg"))
+        ]
+        assert len(result) == 2
+        assert set(result) == set(expected)
+
+
+def test_get_all_file_paths_with_extensions():
+    """测试带扩展名过滤的功能"""
+    import tempfile
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_path = Path(temp_dir)
+        
+        # 创建一些测试文件
+        (temp_path / "file1.txt").write_text("content1")
+        (temp_path / "file2.jpg").write_text("content2")
+        (temp_path / "file3.png").write_text("content3")
+        (temp_path / "file4.txt").write_text("content4")
+        subdir = temp_path / "subdir"
+        subdir.mkdir()
+        (subdir / "file5.txt").write_text("content5")
+        
+        # 测试只获取.txt文件
+        result = get_all_file_paths(temp_path, file_extensions=['.txt'])
+        expected = [
+            str(Path("file1.txt")),
+            str(Path("file4.txt")),
+            str(Path("subdir") / "file5.txt")
+        ]
+        assert len(result) == 3
+        assert set(result) == set(expected)
+
+
+def test_get_all_file_paths_relative_to():
+    """测试relative_to参数"""
+    import tempfile
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_path = Path(temp_dir)
+        
+        # 创建一些测试文件
+        subdir1 = temp_path / "subdir1"
+        subdir1.mkdir()
+        (subdir1 / "file1.txt").write_text("content1")
+        
+        subdir2 = temp_path / "subdir2" 
+        subdir2.mkdir()
+        (subdir2 / "file2.jpg").write_text("content2")
+        
+        # 测试relative_to参数
+        result = get_all_file_paths(temp_path, relative_to=temp_path)
+        expected = [
+            str(Path("subdir1") / "file1.txt"),
+            str(Path("subdir2") / "file2.jpg")
+        ]
+        assert set(result) == set(expected)
+
+
+def test_get_all_file_paths_nonexistent_directory():
+    """测试不存在的目录"""
+    with pytest.raises(FileNotFoundError):
+        get_all_file_paths("/nonexistent/directory")
+
 
 def create_file_structure(root: Path, structure: dict):
     """根据输入结构动态创建文件夹和文件"""

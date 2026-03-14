@@ -57,7 +57,7 @@
             "args": [
                 "fit",
                 "--config",
-                "configs/experiments/image_classifiter.yaml",
+                "configs/experiments/image_classifiter_copy.yaml",
                 // "--ckpt_path",
                 // "logs/image_classifiter/version_1/checkpoints/epoch=1-step=1184.ckpt"
             ],

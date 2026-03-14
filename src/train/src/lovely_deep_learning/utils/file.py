@@ -14,6 +14,57 @@ from typing import List, Optional, Union, Dict, Set, Any, Iterable
 from pathlib import Path
 import random
 
+
+def get_all_file_paths(
+    directory: Union[str, Path],
+    recursive: bool = True,
+    file_extensions: Optional[List[str]] = None,
+    relative_to: Optional[Union[str, Path]] = None
+) -> List[str]:
+    """
+    获取指定文件夹下的所有文件路径
+    
+    Args:
+        directory: 目标文件夹路径
+        recursive: 是否递归查找子目录，默认为True
+        file_extensions: 要过滤的文件扩展名列表，例如 ['.txt', '.jpg']，如果为None则返回所有类型文件
+        relative_to: 如果指定，则返回相对于此路径的路径
+    
+    Returns:
+        文件路径列表
+    """
+    directory = Path(directory)
+    if not directory.exists():
+        raise FileNotFoundError(f"Directory does not exist: {directory}")
+    
+    if not directory.is_dir():
+        raise NotADirectoryError(f"Path is not a directory: {directory}")
+    
+    file_paths = []
+    
+    if recursive:
+        # 递归查找所有子目录中的文件
+        for file_path in directory.rglob('*'):
+            if file_path.is_file():
+                if file_extensions is None or file_path.suffix.lower() in [ext.lower() for ext in file_extensions]:
+                    if relative_to:
+                        file_path = file_path.relative_to(relative_to)
+                    file_paths.append(str(file_path))
+    else:
+        # 只查找当前目录中的文件
+        for file_path in directory.iterdir():
+            if file_path.is_file():
+                if file_extensions is None or file_path.suffix.lower() in [ext.lower() for ext in file_extensions]:
+                    if relative_to:
+                        file_path = file_path.relative_to(relative_to)
+                    file_paths.append(str(file_path))
+    
+    # 排序以保证返回结果的一致性
+    file_paths.sort()
+    
+    return file_paths
+
+
 def list_grouped_files_from_folders(
     dirs: List[Union[str, Path]],
     suffix_groups: List[List[str]],
@@ -128,6 +179,7 @@ def list_grouped_files_from_folders(
     # Generate final result
     return [[file_map.get(base, "") for file_map in file_maps] for base in sorted(valid_bases)]
 
+
 def split_list_by_ratio(
     items: Iterable[Any],  # 1. 修正参数名：从grouped_files→items（通用化）
     ratios: List[float],
@@ -195,6 +247,7 @@ def split_list_by_ratio(
         start = end
     
     return split_result
+
 
 class FileProcessor(object):
 

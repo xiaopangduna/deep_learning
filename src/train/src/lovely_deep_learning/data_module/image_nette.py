@@ -7,7 +7,7 @@ import lightning.pytorch as pl
 from torchvision.datasets import ImageFolder
 from torch.utils.data import DataLoader
 from lovely_deep_learning.dataset.predict import ImagePredictDataset
-
+from .base import BaseDataModule
 
 class ImageNetteDataModule(pl.LightningDataModule):
     def __init__(

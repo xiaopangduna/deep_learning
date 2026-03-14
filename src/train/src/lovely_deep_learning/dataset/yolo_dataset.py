@@ -3,7 +3,7 @@ import cv2
 import numpy as np
 from typing import List, Dict, Optional, Callable
 from pathlib import Path
-from .base_dataset import BaseDataset
+from .base import BaseDataset
 from typing import List, Dict, Optional, Callable, Any, Tuple, Union
 from multiprocessing.pool import ThreadPool
 from tqdm import tqdm

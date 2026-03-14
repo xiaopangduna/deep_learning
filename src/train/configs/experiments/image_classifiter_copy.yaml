@@ -1,0 +1,126 @@
+trainer:
+  max_epochs: 5
+  accelerator: auto
+  # callbacks:
+  #   - class_path: lovely_deep_learning.callback.image_classifier_save_prediction.SavePredictionCallback
+  #     init_args:
+  #       save_dir: tmp
+  logger:
+    - class_path: lightning.pytorch.loggers.TensorBoardLogger
+      init_args:
+        save_dir: logs
+        name: image_classifier  
+        version: null
+data:
+  class_path: lovely_deep_learning.data_module.image_classifier.ImageClassifierDataModule
+  init_args:
+    train_csv_paths: [datasets/IMAGENETTE/train.csv]
+    val_csv_paths: [datasets/IMAGENETTE/train.csv]
+    test_csv_paths: [datasets/IMAGENETTE/train.csv]
+    predict_csv_paths: [datasets/IMAGENETTE/train.csv]
+    key_map : {"img_path": "path_image", "class": "class", "class_id": "class_id"}
+    batch_size: 16
+    num_workers: 8
+    transform_train:
+      class_path: torchvision.transforms.v2.Compose
+      init_args:
+        transforms:
+          - class_path: torchvision.transforms.v2.Resize
+            init_args:
+              size: [224,224]
+              interpolation: 2 # bilinear
+          - class_path: torchvision.transforms.v2.ToDtype
+            init_args:
+              dtype: torch.float32
+              scale: true
+    transform_val:
+      class_path: torchvision.transforms.v2.Compose
+      init_args:
+        transforms:
+          - class_path: torchvision.transforms.v2.Resize
+            init_args:
+              size: [224,224]
+              interpolation: 2 # bilinear
+          - class_path: torchvision.transforms.v2.ToDtype
+            init_args:
+              dtype: torch.float32
+              scale: true
+
+        
+model:
+  class_path: lovely_deep_learning.module.image_classifier.ImageClassifierModule
+  init_args:
+    num_classes: 10
+    learning_rate: 2e-4
+    pretrained: true
+    model:
+      structure:
+        inputs: [{name: input, shape: [3, 224, 224]}]
+        outputs: [{name: classification, from: [fc]}]
+        layers:
+          # Stem
+          - name: conv1
+            from: [input]
+            module: torch.nn.Conv2d
+            args: {in_channels: 3, out_channels: 64, kernel_size: 7, stride: 2, padding: 3, bias: false}
+          - name: bn1
+            from: [conv1]
+            module: torch.nn.BatchNorm2d
+            args: {num_features: 64}
+          - name: relu
+            from: [bn1]
+            module: torch.nn.ReLU
+            args: {inplace: true}
+          - name: maxpool
+            from: [relu]
+            module: torch.nn.MaxPool2d
+            args: {kernel_size: 3, stride: 2, padding: 1}
+          # Layer1
+          - name: layer1
+            from: [maxpool]
+            module: torch.nn.Sequential
+            children:
+              - {name: "0", module: lovely_deep_learning.nn.conv.BasicBlock, args: {in_channels: 64, out_channels: 64, stride: 1}}
+              - {name: "1", module: lovely_deep_learning.nn.conv.BasicBlock, args: {in_channels: 64, out_channels: 64, stride: 1}}
+          # Layer2
+          - name: layer2
+            from: [layer1]
+            module: torch.nn.Sequential
+            children:
+              - {name: "0", module: lovely_deep_learning.nn.conv.BasicBlock, args: {in_channels: 64, out_channels: 128, stride: 2}}
+              - {name: "1", module: lovely_deep_learning.nn.conv.BasicBlock, args: {in_channels: 128, out_channels: 128, stride: 1}}
+          # Layer3
+          - name: layer3
+            from: [layer2]
+            module: torch.nn.Sequential
+            children:
+              - {name: "0", module: lovely_deep_learning.nn.conv.BasicBlock, args: {in_channels: 128, out_channels: 256, stride: 2}}
+              - {name: "1", module: lovely_deep_learning.nn.conv.BasicBlock, args: {in_channels: 256, out_channels: 256, stride: 1}}
+          # Layer4
+          - name: layer4
+            from: [layer3]
+            module: torch.nn.Sequential
+            children:
+              - {name: "0", module: lovely_deep_learning.nn.conv.BasicBlock, args: {in_channels: 256, out_channels: 512, stride: 2}}
+              - {name: "1", module: lovely_deep_learning.nn.conv.BasicBlock, args: {in_channels: 512, out_channels: 512, stride: 1}}
+          # Head
+          - name: avgpool
+            from: [layer4]
+            module: torch.nn.AdaptiveAvgPool2d
+            args: {output_size: [1, 1]}
+          - name: flatten
+            from: [avgpool]
+            module: torch.nn.Flatten
+            args: {}
+          - name: fc
+            from: [flatten]
+            module: torch.nn.Linear
+            args: {in_features: 512, out_features: 10}
+      weight:
+        path: pretrained_models/resnet18-f37072fd.pth
+        url: https://download.pytorch.org/models/resnet18-f37072fd.pth
+        map_location: cpu
+        strict: false
+
+
+

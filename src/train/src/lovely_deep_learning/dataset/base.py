@@ -1,14 +1,14 @@
 import csv
 import os
 import hashlib
-from typing import List, Dict, Optional, Callable, Any
+from typing import List, Dict, Optional, Callable, Any,Union
 from torch.utils.data import Dataset
 from tqdm import tqdm  # 直接引入tqdm用于进度显示
 import cv2
 import numpy as np
 import hashlib
 from pathlib import Path
-
+import torch
 
 class BaseDataset(Dataset):
     """
@@ -110,28 +110,39 @@ class BaseDataset(Dataset):
                     has_empty_path = False  # 标记当前行是否包含空路径（负样本）
 
                     for inner_field, csv_field in self.key_map.items():
-                        # 读取原始路径
-                        raw_path = row[csv_field].strip()
-                        if not raw_path:
-                            # 空路径：视为负样本特征，保留空字符串
+                        # 读取原始值
+                        raw_value = row[csv_field].strip()
+                        
+                        # 检查字段名是否包含"path"，决定是否需要路径验证
+                        is_path_field = "path" in csv_field.lower()
+                        
+                        if not raw_value:
+                            # 空值：视为负样本特征，保留空字符串
                             current_row[inner_field] = ""
-                            has_empty_path = True
-                            continue  # 空路径不影响样本有效性
+                            if is_path_field:
+                                has_empty_path = True
+                            continue  # 空值不影响样本有效性
+                        
+                        if is_path_field:
+                            # 是路径字段，需要解析和验证路径
+                            
+                            # 3. 路径解析核心逻辑（非空路径）
+                            if os.path.isabs(raw_value):
+                                resolved_path = raw_value
+                            else:
+                                resolved_path = os.path.join(csv_dir, raw_value)
+                                resolved_path = os.path.abspath(resolved_path)
 
-                        # 3. 路径解析核心逻辑（非空路径）
-                        if os.path.isabs(raw_path):
-                            resolved_path = raw_path
+                            # 4. 检查路径有效性（非空路径必须存在）
+                            current_row[inner_field] = resolved_path
+                            if not os.path.exists(resolved_path):
+                                valid = False
+                                error_details.append(
+                                    f"字段[{csv_field}]路径不存在（原始路径：{raw_value}，解析后：{resolved_path}）"
+                                )
                         else:
-                            resolved_path = os.path.join(csv_dir, raw_path)
-                            resolved_path = os.path.abspath(resolved_path)
-
-                        # 4. 检查路径有效性（非空路径必须存在）
-                        current_row[inner_field] = resolved_path
-                        if not os.path.exists(resolved_path):
-                            valid = False
-                            error_details.append(
-                                f"字段[{csv_field}]路径不存在（原始路径：{raw_path}，解析后：{resolved_path}）"
-                            )
+                            # 非路径字段，直接存储原始值，不做验证
+                            current_row[inner_field] = raw_value
 
                     # 5. 处理当前行结果
                     if valid:
@@ -306,6 +317,34 @@ class BaseDataset(Dataset):
             hash_obj.update(str(obj).encode("utf-8"))
 
         return hash_obj.hexdigest()
+    @staticmethod
+    def read_img(img_path: str, img_npy_path: Union[str, None]):
+        if img_npy_path:
+            img = np.load(img_npy_path)
+        else:
+            img = cv2.imread(img_path)
+        return img, img.shape
+    
+    @staticmethod
+    def convert_img_from_numpy_to_tensor(img: np.ndarray) -> torch.Tensor:
+        """
+        将numpy格式的图像转换为RGB格式的tensor，并调整维度从(H, W, C)到(C, H, W)
+        
+        Args:
+            img: 输入的numpy图像数组
+            
+        Returns:
+            转换后的torch.Tensor，格式为(C, H, W)
+        """
+        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        # 转为 torch.Tensor 并调整维度 (H, W, C) -> (C, H, W)
+        img_tensor = torch.from_numpy(img_rgb).permute(2, 0, 1)  # (C, H, W)
+        img_tensor = img_tensor.contiguous()
+        return img_tensor
+    @staticmethod
+    def get_collate_fn_for_dataloader():
+        def collate_fn(x):
+            return list(zip(*x))
 
 
 if __name__ == "__main__":

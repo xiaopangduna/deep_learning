@@ -111,3 +111,14 @@ csv的内容都是，path_img,path_label
 
 # 生成图像分类的数据的csv
 python scripts/generate_classification_dataset_table.py       --data_dir /home/xiaopangdun/project/deep_learning/src/train/datasets/IMAGENETTE/imagenette2-320/train       --base_dir /home/xiaopangdun/project/deep_learning/src/train/datasets/IMAGENETTE       --output_files train.csv       --split_ratio 1.0
+
+
+
+
+python scripts/b.py test.csv --col-name class
+
+
+# 分类任务，制作一个用于训练的csv
+python scripts/create_csv_to_save_path.py datasets/IMAGENETTE/imagenette2-320/train --relative-to datasets/IMAGENETTE  --header path_img -o train.csv 
+python scripts/add_column_from_path.py train.csv --path-col path_img --pos -2 --col-name class_name
+python scripts/add_class_id.py train.csv datasets/IMAGENETTE/info.yaml
