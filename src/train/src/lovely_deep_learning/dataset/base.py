@@ -97,10 +97,18 @@ class BaseDataset(Dataset):
             with open(abs_csv_path, "r", encoding="utf-8", newline="") as f:
                 reader = csv.DictReader(f)
 
-                # 检查CSV是否包含所需字段
+                # 检查CSV是否包含所需字段 - 现在改为记录缺失字段而非报错
                 missing_fields = [f for f in csv_fields if f not in reader.fieldnames]
                 if missing_fields:
-                    raise ValueError(f"❌ CSV {abs_csv_path} 缺少必需字段：{missing_fields}")
+                    print(f"⚠️  CSV {abs_csv_path} 缺少字段：{missing_fields}，将忽略这些列")
+                    
+                    # 找到存在于CSV中的字段
+                    present_fields = {k: v for k, v in self.key_map.items() if v in reader.fieldnames}
+                else:
+                    present_fields = self.key_map
+
+                # 为present_fields创建临时的current_path_table
+                current_path_table = {inner_field: [] for inner_field in present_fields.keys()}
 
                 # 2. 逐行处理路径
                 for row_idx, row in enumerate(reader, start=2):  # 行号从2开始（表头为1）
@@ -109,7 +117,7 @@ class BaseDataset(Dataset):
                     error_details = []
                     has_empty_path = False  # 标记当前行是否包含空路径（负样本）
 
-                    for inner_field, csv_field in self.key_map.items():
+                    for inner_field, csv_field in present_fields.items():
                         # 读取原始值
                         raw_value = row[csv_field].strip()
                         
@@ -148,7 +156,7 @@ class BaseDataset(Dataset):
                     if valid:
                         # 所有非空路径都有效：添加到表格
                         for field, path in current_row.items():
-                            path_table[field].append(path)
+                            current_path_table[field].append(path)
                         # 统计负样本（包含空路径的有效样本）
                         if has_empty_path:
                             self._stats_negative_samples += 1
@@ -157,6 +165,29 @@ class BaseDataset(Dataset):
                         self._stats_invalid_records.append(
                             f"CSV {abs_csv_path} 第{row_idx}行：{'; '.join(error_details)}"
                         )
+                
+                # 合并当前CSV的结果到主path_table，仅对存在的字段进行合并
+                for field in current_path_table:
+                    path_table[field].extend(current_path_table[field])
+        
+        # 删除没有数据的列（即CSV中缺失的字段）
+        fields_to_remove = []
+        for field in path_table:
+            if len(path_table[field]) == 0 and field not in [k for k, v in self.key_map.items() if v in sum([csv.DictReader(open(csv_p)).fieldnames for csv_p in self.csv_paths], [])]:
+                # 检查字段是否在任一CSV中存在
+                field_exists_in_any_csv = False
+                for csv_path in self.csv_paths:
+                    with open(csv_path, "r", encoding="utf-8", newline="") as f:
+                        reader = csv.DictReader(f)
+                        if self.key_map[field] in reader.fieldnames:
+                            field_exists_in_any_csv = True
+                            break
+                
+                if not field_exists_in_any_csv:
+                    fields_to_remove.append(field)
+        
+        for field in fields_to_remove:
+            del path_table[field]
 
         # 打印跳过的样本统计
         total_skipped = len(self._stats_invalid_records)
@@ -341,6 +372,28 @@ class BaseDataset(Dataset):
         img_tensor = torch.from_numpy(img_rgb).permute(2, 0, 1)  # (C, H, W)
         img_tensor = img_tensor.contiguous()
         return img_tensor
+    @staticmethod    
+    def convert_img_from_tensor_to_numpy(img: torch.Tensor) -> np.ndarray:
+        """
+        将RGB格式的tensor转换为numpy格式的图像，并调整维度从(C, H, W)到(H, W, C)
+        
+        Args:
+            img: 输入的torch.Tensor，格式为(C, H, W)
+            
+        Returns:
+            转换后的numpy图像数组，格式为(H, W, C)
+        """                
+        img = img.detach().cpu()
+
+        # tensor -> numpy
+        img_np = img.permute(1,2,0).numpy()   # CHW -> HWC
+
+        # 0~1 -> 0~255
+        img_np = (img_np * 255).clip(0,255).astype(np.uint8)
+
+        # RGB -> BGR (opencv)
+        img_np = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
+        return img_np
     @staticmethod
     def get_collate_fn_for_dataloader():
         def collate_fn(x):

@@ -11,14 +11,15 @@ trainer:
         save_dir: logs
         name: image_classifier  
         version: null
+        
 data:
   class_path: lovely_deep_learning.data_module.image_classifier.ImageClassifierDataModule
   init_args:
     train_csv_paths: [datasets/IMAGENETTE/train.csv]
-    val_csv_paths: [datasets/IMAGENETTE/train.csv]
-    test_csv_paths: [datasets/IMAGENETTE/train.csv]
-    predict_csv_paths: [datasets/IMAGENETTE/train.csv]
-    key_map : {"img_path": "path_image", "class": "class", "class_id": "class_id"}
+    val_csv_paths: [datasets/IMAGENETTE/val.csv]
+    test_csv_paths: [datasets/IMAGENETTE/val.csv]
+    predict_csv_paths: [datasets/IMAGENETTE/predict.csv]
+    key_map : {"img_path": "path_image", "class_name": "class_name", "class_id": "class_id"}
     batch_size: 16
     num_workers: 8
     transform_train:
@@ -45,7 +46,6 @@ data:
             init_args:
               dtype: torch.float32
               scale: true
-
         
 model:
   class_path: lovely_deep_learning.module.image_classifier.ImageClassifierModule

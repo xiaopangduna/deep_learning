@@ -1,10 +1,8 @@
 import os
 from typing import Optional, List
 from pathlib import Path
-import urllib.request
-import tarfile
+
 import lightning.pytorch as pl
-from torchvision.datasets import ImageFolder
 from torch.utils.data import DataLoader
 from lovely_deep_learning.dataset.predict import ImagePredictDataset
 
@@ -39,9 +37,8 @@ class BaseDataModule(pl.LightningDataModule):
 
         self.train_dataset = None
         self.val_dataset = None
-
-    def setup(self, stage=None):
-        pass
+        self.test_dataset = None
+        self.pred_dataset = None
 
     def train_dataloader(self):
         return DataLoader(
@@ -58,11 +55,17 @@ class BaseDataModule(pl.LightningDataModule):
             batch_size=self.batch_size,
             shuffle=False,
             num_workers=self.num_workers,
-            collate_fn=self.train_dataset.get_collate_fn_for_dataloader(),
+            collate_fn=self.val_dataset.get_collate_fn_for_dataloader(),
         )
 
     def test_dataloader(self):
-        pass
+        return DataLoader(
+            self.test_dataset,
+            batch_size=self.batch_size,
+            shuffle=False,
+            num_workers=self.num_workers,
+            collate_fn=self.test_dataset.get_collate_fn_for_dataloader(),
+        )
 
     def predict_dataloader(self):
-        pass
+        return DataLoader(self.pred_dataset, batch_size=self.batch_size, shuffle=False, num_workers=self.num_workers)

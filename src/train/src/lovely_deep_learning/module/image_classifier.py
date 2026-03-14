@@ -20,7 +20,7 @@ class ImageClassifierModule(pl.LightningModule):
     def forward(self, x):
         return self.model(x)
 
-    def training_step(self, batch, batch_idx):
+    def forward_batch(self, batch):
         net_in, net_out = batch
         img = net_in["img_tv_transformed"]
         class_id = net_out["class_id"]
@@ -28,28 +28,44 @@ class ImageClassifierModule(pl.LightningModule):
         loss = F.cross_entropy(logits[0], class_id)
         preds = logits[0].argmax(dim=1)
         acc = (preds == class_id).float().mean()
+        return loss, acc
+
+    def training_step(self, batch, batch_idx):
+        loss, acc = self.forward_batch(batch)
         self.log("train_loss", loss, on_step=False, on_epoch=True, prog_bar=True)
         self.log("train_acc", acc, on_step=False, on_epoch=True, prog_bar=True)
 
-
     def validation_step(self, batch, batch_idx):
-        net_in, net_out = batch
-        img = net_in["img_tv_transformed"]
-        class_id = net_out["class_id"]
-        logits = self([img])
-        loss = F.cross_entropy(logits[0], class_id)
-        preds = logits[0].argmax(dim=1)
-        acc = (preds == class_id).float().mean()
+        loss, acc = self.forward_batch(batch)
         self.log("val_loss", loss, on_step=False, on_epoch=True, prog_bar=True)
         self.log("val_acc", acc, on_step=False, on_epoch=True, prog_bar=True)
 
-    def predict_step(self, batch, batch_idx):
-        x = batch
-        logits = self([x])
-        # 返回预测的类别和相应的概率
+    def test_step(self, batch, batch_idx):
+        net_in, net_out = batch
+        img = net_in["img_tv_transformed"]
+        class_id = net_out["class_id"]
+        
+        logits = self([img])
+        loss = F.cross_entropy(logits[0], class_id)
+        class_id_pred = logits[0].argmax(dim=1)
+        acc = (class_id_pred == class_id).float().mean()
+
+        self.log("test_loss", loss, on_step=False, on_epoch=True, prog_bar=True)
+        self.log("test_acc", acc, on_step=False, on_epoch=True, prog_bar=True)
+
         probabilities = F.softmax(logits[0], dim=1)
-        predictions = logits[0].argmax(dim=1)
-        return {"predictions": predictions, "probabilities": probabilities, "logits": logits[0]}
+        class_id_conf = probabilities.max(dim=1)[0]
+
+        return {"class_id_pred": class_id_pred, "class_id_conf": class_id_conf}
+
+    def predict_step(self, batch, batch_idx):
+        net_in, _ = batch
+        img = net_in["img_tv_transformed"]
+        logits = self([img])
+        probabilities = F.softmax(logits[0], dim=1)
+        class_id_conf = probabilities.max(dim=1)[0]
+        class_id_pred = logits[0].argmax(dim=1)
+        return {"class_id_pred": class_id_pred, "class_id_conf": class_id_conf}
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.learning_rate)

@@ -42,11 +42,13 @@ class ImageClassifierDataset(BaseDataset):
     def __init__(
         self,
         csv_paths: List[str],
-        key_map: Dict[str, str] = {"img_path": "path_image", "class": "class", "class_id": "class_id"},
+        key_map: Dict[str, str] = {"img_path": "path_img", "class_name": "class_name", "class_id": "class_id"},
         transform: Optional[Callable] = None,
+        map_class_id_to_class_name={0: "class_A", 1: "class_B"},
     ):
         super().__init__(csv_paths=csv_paths, key_map=key_map, transform=transform)
-        self.has_label = self.has_label = "class_id" in self.sample_path_table
+        self.has_label = True if "class_id" in self.sample_path_table else False
+        self.map_class_id_to_class_name = map_class_id_to_class_name
 
     def __getitem__(self, index):
         net_in, net_out = {}, {}
@@ -64,74 +66,57 @@ class ImageClassifierDataset(BaseDataset):
         net_in["img_tv_transformed"] = img_tv_transformed
         if self.has_label:
             class_id = self.sample_path_table["class_id"][index]
-            net_out["class_name"] = self.sample_path_table["class"][index]
+            net_out["class_name"] = self.sample_path_table["class_name"][index]
             net_out["class_id"] = int(class_id)
 
         return net_in, net_out
 
-    # def draw_tensor_on_image_with_label(self, image: np.ndarray, output, target=None):
-    #     # 绘制预测结果和真值在同一图像上
-    #     class_to_index = self.cfgs["class_to_index"]
-    #     _, index = torch.max(output, dim=0)
-    #     _, target_index = torch.max(target, dim=0)
-    #     for key in class_to_index.keys():
-    #         if class_to_index[key] == index.item():
-    #             class_perdict = key
-    #         if class_to_index[key] == target_index.item():
-    #             class_target = key
-    #     if class_perdict != class_target:
-    #         color = (0, 0, 255)
-    #     else:
-    #         color = (0, 255, 0)
-    #     image = np.ascontiguousarray(image)
-    #     cv2.putText(image, "pred: " + class_perdict, (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.75, color, 2)
-    #     cv2.putText(image, "true: " + class_target, (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.75, color, 2)
-    #     return image
+    def draw_target_and_predict_label_on_numpy(
+        self,
+        img: np.ndarray,
+        class_name: str = None,
+        class_id: int = None,
+        class_name_pred: str = None,
+        class_id_pred: int = None,
+        class_id_conf: float = None,
+    ):
+        color = (0, 255, 0)
+        bg_color = (255, 255, 255)
+        if class_id != None and class_id_pred != None:
+            # 预测值和真值一致
+            if class_id != class_id_pred:
+                color = (0, 0, 255)
+            cv2.rectangle(img, (0, 0), (img.shape[1], 40), bg_color, -1)
+            # 真值
+            img = self.draw_label_on_numpy(img, class_name, class_id, color=color, pos=(5, 15))
+            # 预测值
+            img = self.draw_label_on_numpy(img, class_name_pred, class_id_pred, class_id_conf, color=color, pos=(5, 35))
+        elif class_id != None:
+            cv2.rectangle(img, (0, 0), (img.shape[1], 20), bg_color, -1)
+            # 真值
+            img = self.draw_label_on_numpy(img, class_name, class_id, color=color, pos=(5, 15))
+        elif class_id_pred != None:
+            cv2.rectangle(img, (0, 0), (img.shape[1], 20), bg_color, -1)
+            # 预测值
+            img = self.draw_label_on_numpy(img, class_name_pred, class_id_pred, class_id_conf, color=color, pos=(5, 15))
+        else:
+            pass
+        return img
 
-    # @staticmethod
-    # def draw_predict_on_image_without_label(image: np.ndarray, output, cfgs: dict):
-    #     # 绘制预测结果和真值在同一图像上
-    #     class_to_index = cfgs["class_to_index"]
-    #     _, index = torch.max(output, dim=0)
-    #     color = (0, 255, 0)
-    #     for key in class_to_index.keys():
-    #         if class_to_index[key] == index.item():
-    #             class_perdict = key
-    #     image = np.ascontiguousarray(image)
-    #     cv2.putText(image, "pred: " + class_perdict, (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.75, color, 2)
-
-    #     return image
-
-    # def get_visual_grid_for_train(self, model):
-    #     visual_indexs = random.sample(range(0, len(self)), self.cfgs["visual_nums"])
-    #     row = col = int(pow(self.cfgs["visual_nums"], 1 / 2))
-    #     images = []
-    #     for i in visual_indexs:
-    #         net_in, net_out = self[i]
-    #         data = net_in["data"]
-    #         data_tensor = net_in["data_tensor"].cuda()
-    #         targer_tesnsor = net_out["label_tensor"]
-    #         model.cuda()
-    #         output = model(data_tensor.unsqueeze(0))
-    #         image = self.draw_tensor_on_image_with_label(data, output.squeeze(), targer_tesnsor)
-    #         image = cv2.resize(image, (300, 300))
-    #         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-    #         images.append(image)
-    #     fig, axs = plt.subplots(row, col)
-    #     for i in range(row):
-    #         for j in range(col):
-    #             axs[i, j].imshow(images[i + j])
-    #             axs[i, j].axis("off")
-    #     # plt.tight_layout()
-    #     # plt.savefig("bb.jpg")
-    #     # for i in range(9):
-    #     #     image = images[i]
-    #     #     cv2.imwrite(r"{}.jpg".format(i),image)
-    #     return fig
-
-    # @staticmethod
-    # def get_collate_fn_for_dataloader():
-    #     def collate_fn(x):
-    #         return list(zip(*x))
-
-    #     return collate_fn
+    def draw_label_on_numpy(
+        self,
+        img: np.ndarray,
+        class_name: str = "",
+        class_id: int = None,
+        class_id_conf: float = None,
+        color=(0, 255, 0),
+        pos=(5, 15),
+        font_scale=0.5,
+        font=cv2.FONT_HERSHEY_SIMPLEX,
+    ):
+        if class_id_conf != None:
+            text = f"pred   id:{class_id:03d} conf:{class_id_conf:.1f} name:{class_name:<15} "
+        else:
+            text = f"target id:{class_id:03d} name:{class_name:<15}"
+        cv2.putText(img, text, pos, font, font_scale, color, 1, cv2.LINE_AA)
+        return img
