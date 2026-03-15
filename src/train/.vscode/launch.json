@@ -57,9 +57,17 @@
             "args": [
                 "fit",
                 "--config",
-                "configs/experiments/image_classifiter_copy.yaml",
+                "configs/experiments/image_classifiter_IMAGE_NETTE.yaml",
+                // "test",
+                // "--config",
+                // "logs/image_classifier/version_0/config.yaml",
                 // "--ckpt_path",
-                // "logs/image_classifiter/version_1/checkpoints/epoch=1-step=1184.ckpt"
+                // "logs/image_classifier/version_0/checkpoints/epoch=17-step=10656.ckpt"
+                // "predict",
+                // "--config",
+                // "logs/image_classifier/version_0/config.yaml",
+                // "--ckpt_path",
+                // "logs/image_classifier/version_0/checkpoints/epoch=17-step=10656.ckpt"
             ],
             "justMyCode": false
         },

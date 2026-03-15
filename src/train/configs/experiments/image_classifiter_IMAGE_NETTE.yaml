@@ -1,25 +1,51 @@
 trainer:
-  max_epochs: 5
+  max_epochs: 100
   accelerator: auto
-  # callbacks:
-  #   - class_path: lovely_deep_learning.callback.image_classifier_save_prediction.SavePredictionCallback
-  #     init_args:
-  #       save_dir: tmp
+  callbacks:
+    - class_path: lovely_deep_learning.callback.image_classifier.ImageClassifierCallback
+      init_args:
+        save_dir: tmp  # 在测试和预测时使用，一般指向logs目录
+        test_only_save_mistake: true
+    - class_path: lightning.pytorch.callbacks.EarlyStopping
+      init_args:
+        monitor: "val_loss"
+        min_delta: 0.00
+        patience: 10
+        verbose: true
+        mode: min
   logger:
     - class_path: lightning.pytorch.loggers.TensorBoardLogger
       init_args:
         save_dir: logs
         name: image_classifier  
         version: null
+  profiler:
+    class_path: lightning.pytorch.profilers.SimpleProfiler
+    init_args:
+      filename: profiler
+      extended: true
+
         
 data:
-  class_path: lovely_deep_learning.data_module.image_classifier.ImageClassifierDataModule
+  class_path: lovely_deep_learning.data_module.image_nette.ImageNetteDataModule
   init_args:
+    dataset_dir: datasets/IMAGENETTE/imagenette2-320
     train_csv_paths: [datasets/IMAGENETTE/train.csv]
     val_csv_paths: [datasets/IMAGENETTE/val.csv]
     test_csv_paths: [datasets/IMAGENETTE/val.csv]
     predict_csv_paths: [datasets/IMAGENETTE/predict.csv]
-    key_map : {"img_path": "path_image", "class_name": "class_name", "class_id": "class_id"}
+    key_map : {"img_path": "path_img", "class_name": "class_name", "class_id": "class_id"}
+    map_class_id_to_class_name:
+      0: "n01440764"
+      1: "n02102040"
+      2: "n02979186"
+      3: "n03000684"
+      4: "n03028079"
+      5: "n03394916"
+      6: "n03417042"
+      7: "n03425413"
+      8: "n03445777"
+      9: "n03888257"
     batch_size: 16
     num_workers: 8
     transform_train:
@@ -29,7 +55,7 @@ data:
           - class_path: torchvision.transforms.v2.Resize
             init_args:
               size: [224,224]
-              interpolation: 2 # bilinear
+              interpolation: 2 # bilinear 枚举类型的变量在构建类时最好用整数，如果用字符串可能无法断点训练
           - class_path: torchvision.transforms.v2.ToDtype
             init_args:
               dtype: torch.float32
@@ -46,6 +72,7 @@ data:
             init_args:
               dtype: torch.float32
               scale: true
+        
         
 model:
   class_path: lovely_deep_learning.module.image_classifier.ImageClassifierModule

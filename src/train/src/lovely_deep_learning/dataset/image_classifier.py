@@ -115,8 +115,8 @@ class ImageClassifierDataset(BaseDataset):
         font=cv2.FONT_HERSHEY_SIMPLEX,
     ):
         if class_id_conf != None:
-            text = f"pred   id:{class_id:03d} conf:{class_id_conf:.1f} name:{class_name:<15} "
+            text = f"pred   id:{class_id:03d} c:{class_id_conf:.1f} n:{class_name:<15} "
         else:
-            text = f"target id:{class_id:03d} name:{class_name:<15}"
+            text = f"target id:{class_id:03d} n:{class_name:<15}"
         cv2.putText(img, text, pos, font, font_scale, color, 1, cv2.LINE_AA)
         return img

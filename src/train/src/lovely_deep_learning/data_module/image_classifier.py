@@ -19,6 +19,7 @@ class ImageClassifierDataModule(BaseDataModule):
                 self.val_csv_paths,
                 key_map=self.key_map,
                 transform=self.transform_val,
+                map_class_id_to_class_name=self.map_class_id_to_class_name,
             )
         if stage == "validate" or stage is None:
             self.val_dataset = ImageClassifierDataset(

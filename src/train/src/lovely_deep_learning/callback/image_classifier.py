@@ -1,7 +1,5 @@
 import os
-import torch
-from PIL import Image
-import numpy as np
+
 import lightning.pytorch as pl
 import cv2
 from pathlib import Path
@@ -50,21 +48,21 @@ class ImageClassifierCallback(pl.Callback):
             img_path = Path(batch[0]["img_path"][i])
             img = img_tv[i]  # [3,H,W]
 
-            class_id = batch[1]["class_id"][i].item()
-            class_name = batch[1]["class_name"][i]
+            cur_class_id = batch[1]["class_id"][i].item()
+            cur_class_name = batch[1]["class_name"][i]
 
-            class_id_pred = class_id_pred[i].item()
-            class_name_pred = dataset.map_class_id_to_class_name[class_id_pred]
-            confidence_pred = class_id_conf[i].item()
+            cur_class_id_pred = class_id_pred[i].item()
+            cur_class_name_pred = dataset.map_class_id_to_class_name[cur_class_id_pred]
+            cur_confidence_pred = class_id_conf[i].item()
 
             img_np = dataset.convert_img_from_tensor_to_numpy(img)
             img_np = dataset.draw_target_and_predict_label_on_numpy(
                 img_np,
-                class_name=class_name,
-                class_id=class_id,
-                class_name_pred=class_name_pred,
-                class_id_pred=class_id_pred,
-                class_id_conf=confidence_pred,
+                class_name=cur_class_name,
+                class_id=cur_class_id,
+                class_name_pred=cur_class_name_pred,
+                class_id_pred=cur_class_id_pred,
+                class_id_conf=cur_confidence_pred,
             )
 
             save_path = self.save_dir_test / (img_path.stem + ".jpg")
@@ -73,15 +71,18 @@ class ImageClassifierCallback(pl.Callback):
             self.csv_table_test.append(
                 {
                     "img_path": str(img_path),
-                    "class_id": class_id,
-                    "class_id_pred": class_id_pred,
-                    "class_name_pred": class_name_pred,
-                    "class_name": class_name,
-                    "confidence_pred": confidence_pred,
+                    "class_id": cur_class_id,
+                    "class_id_pred": cur_class_id_pred,
+                    "class_name_pred": cur_class_name_pred,
+                    "class_name": cur_class_name,
+                    "confidence_pred": cur_confidence_pred,
                     "save_path": str(save_path),
                 }
             )
 
+    def on_test_epoch_start(self, trainer, pl_module):
+        self.csv_table_test = []
+        return super().on_test_epoch_start(trainer, pl_module)
 
     def on_test_end(self, trainer, pl_module):
         if self.csv_table_test:
@@ -89,7 +90,6 @@ class ImageClassifierCallback(pl.Callback):
             csv_save_path = self.save_dir / "test_results.csv"
             df.to_csv(csv_save_path, index=False)
             print(f"预测结果已保存到: {csv_save_path}")
-
 
     def on_predict_batch_end(
         self,
@@ -119,13 +119,13 @@ class ImageClassifierCallback(pl.Callback):
         for i in range(B):
             img_path = Path(batch[0]["img_path"][i])
             img = img_tv[i]  # [3,H,W]
-            class_id_pred = class_id_pred[i].item()
-            class_name_pred = dataset.map_class_id_to_class_name[class_id_pred]
-            confidence_pred = class_id_conf[i].item()
+            cur_class_id_pred = class_id_pred[i].item()
+            cur_class_name_pred = dataset.map_class_id_to_class_name[cur_class_id_pred]
+            cur_confidence_pred = class_id_conf[i].item()
 
             img_np = dataset.convert_img_from_tensor_to_numpy(img)
             img_np = dataset.draw_target_and_predict_label_on_numpy(
-                img_np, class_name_pred=class_name_pred, class_id_pred=class_id_pred, class_id_conf=confidence_pred
+                img_np, class_name_pred=cur_class_name_pred, class_id_pred=cur_class_id_pred, class_id_conf=cur_confidence_pred
             )
 
             save_path = self.save_dir_pred / (img_path.stem + ".jpg")
@@ -134,12 +134,16 @@ class ImageClassifierCallback(pl.Callback):
             self.csv_table_pred.append(
                 {
                     "img_path": str(img_path),
-                    "class_id_pred": class_id_pred,
-                    "class_name_pred": class_name_pred,
-                    "confidence_pred": confidence_pred,
+                    "class_id_pred": cur_class_id_pred,
+                    "class_name_pred": cur_class_name_pred,
+                    "confidence_pred": cur_confidence_pred,
                     "save_path": str(save_path),
                 }
             )
+
+    def on_predict_epoch_start(self, trainer, pl_module):
+        self.csv_table_pred = []
+        return super().on_predict_epoch_start(trainer, pl_module)
 
     def on_predict_end(self, trainer, pl_module):
         if self.csv_table_pred:

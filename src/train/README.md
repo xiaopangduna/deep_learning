@@ -84,35 +84,135 @@ yolo-detection
  
 python scripts/train.py fit --config configs/experiments/mnist.yaml
 
-# image_classifie
 
-# 训练
-python scripts/train.py fit --config configs/experiments/image_classifiter.yaml --trainer.fast_dev_run true
-# 断点训练（pl.LightningModule禁用self.save_hyperparameters()  ）
+# 基础用法
 
-python scripts/train.py fit --config logs/image_classifier/version_8/config.yaml --ckpt_path logs/image_classifier/version_8/checkpoints/epoch=1-step=18938.ckpt  --trainer.logger.init_args.version 8
+所有 configs/experiments 目录下的配置文件都应支持以下指令。
 
-# 验证
-python scripts/train.py validate --config logs/image_classifier/version_0/config.yaml --ckpt_path logs/image_classifier/version_0/checkpoints/epoch\=9-step\=5920.ckpt 
+## 1 训练
 
-# 测试
-python scripts/train.py test --config logs/image_classifier/version_0/config.yaml --ckpt_path logs/image_classifier/version_0/checkpoints/epoch\=9-step\=5920.ckpt 
+```bash
+python scripts/train.py fit --config configs/experiments/image_classifiter.yaml
+```
 
-# 预测
-python scripts/train.py predict --config configs/experiments/image_classifiter.yaml --ckpt_path logs/image_classifier/version_0/checkpoints/epoch\=9-step\=5920.ckpt 
+## 2 快速测试训练流程
 
-枚举类型的变量在构建类时最好用整数，如果用字符串可能无法断点训练
+用于快速验证数据加载、模型结构和训练流程是否正常。
+
+```bash
+python scripts/train.py fit \
+    --config configs/experiments/image_classifiter.yaml \
+    --trainer.fast_dev_run true
+```
+
+## 3 断点训练（Resume Training）
+
+指定 version 可以保证继续在同一日志文件夹下训练，否则会新建新的 version。
+
+```bash
+python scripts/train.py fit \
+    --config logs/image_classifier/version_8/config.yaml \
+    --ckpt_path logs/image_classifier/version_8/checkpoints/epoch=1-step=18938.ckpt \
+    --trainer.logger.init_args.version 8
+```
+
+## 4 验证（Validation）
+
+```bash
+python scripts/train.py validate \
+    --config logs/image_classifier/version_0/config.yaml \
+    --ckpt_path logs/image_classifier/version_0/checkpoints/epoch\=25-step\=15392.ckpt
+```
+
+## 5 测试（Test）
+
+```bash
+python scripts/train.py test \
+    --config logs/image_classifier/version_0/config.yaml \
+    --ckpt_path logs/image_classifier/version_0/checkpoints/epoch\=25-step\=15392.ckpt
+```
+
+## 6 预测（Predict）
+
+```bash
+python scripts/train.py predict \
+    --config logs/image_classifier/version_0/config.yaml \
+    --ckpt_path logs/image_classifier/version_0/checkpoints/epoch\=25-step\=15392.ckpt
+```
+
 # 训练过程查看
+
+使用 TensorBoard 查看训练日志：
+
+```bash
 tensorboard --logdir logs
+```
 
-# 数据结构
-所有数据都用csv保存，train,valid,test,predict
-csv的内容都是，path_img,path_label
+# 图像分类
 
-# 生成图像分类的数据的csv
-python scripts/generate_classification_dataset_table.py       --data_dir /home/xiaopangdun/project/deep_learning/src/train/datasets/IMAGENETTE/imagenette2-320/train       --base_dir /home/xiaopangdun/project/deep_learning/src/train/datasets/IMAGENETTE       --output_files train.csv       --split_ratio 1.0
+## 1 自定义数据集
 
-# 分类任务，制作一个用于训练的csv
-python scripts/create_csv_to_save_path.py datasets/IMAGENETTE/imagenette2-320/train --relative-to datasets/IMAGENETTE  --header path_img -o train.csv 
-python scripts/add_column_from_path.py train.csv --path-col path_img --pos -2 --col-name class_name
+数据集的读取全部依赖 CSV 文件。
+
+用于训练的 CSV 必须包含以下列：
+
+```
+path_img, class_name, class_id
+```
+
+用于预测的 CSV 只需要：
+
+```
+path_img
+```
+
+类别名称可以通过修改以下属性进行映射：
+
+```
+lovely_deep_learning.data_module.image_classifier.ImageClassifierDataModule.map_class_id_to_class_name
+```
+
+也可以直接修改配置文件 yaml。
+
+## 2 生成 CSV 文件
+
+### Step 1 生成图片路径 CSV
+
+```bash
+python scripts/create_csv_to_save_path.py \
+    datasets/IMAGENETTE/imagenette2-320/train \
+    --relative-to datasets/IMAGENETTE \
+    --header path_img \
+    -o train.csv
+```
+
+### Step 2 从路径中提取类别名称
+
+```bash
+python scripts/add_column_from_path.py \
+    train.csv \
+    --path-col path_img \
+    --pos -2 \
+    --col-name class_name
+```
+
+### Step 3 添加 class_id
+
+```bash
 python scripts/add_class_id.py train.csv datasets/IMAGENETTE/info.yaml
+```
+
+### 训练示例
+
+```bash
+python scripts/train.py fit --config configs/experiments/image_classifiter.yaml
+```
+
+# 公开数据集
+
+## Imagenette
+
+```bash
+python scripts/train.py fit \
+    --config configs/experiments/image_classifiter_IMAGE_NETTE.yaml
+```

@@ -53,7 +53,7 @@ class BaseDataModule(pl.LightningDataModule):
         return DataLoader(
             self.val_dataset,
             batch_size=self.batch_size,
-            shuffle=False,
+            shuffle=True,
             num_workers=self.num_workers,
             collate_fn=self.val_dataset.get_collate_fn_for_dataloader(),
         )

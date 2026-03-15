@@ -266,6 +266,8 @@ class BaseDataset(Dataset):
         lines.append("=" * 70)
         return "\n".join(lines)
 
+    def draw_target_and_predict_label_on_numpy(self):
+        pass
     @staticmethod
     def cache_image(img_paths: List[str], cache_dir: str) -> List[str]:
         """
