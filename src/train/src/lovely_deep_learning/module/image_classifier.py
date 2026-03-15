@@ -27,7 +27,8 @@ class ImageClassifierModule(pl.LightningModule):
 
     def training_step(self, batch, batch_idx):
         net_in, net_out = batch
-        img = net_in["img_tv_transformed"]
+        img: torch.Tensor = net_in["img_tv_transformed"]
+        batch_size = img.shape[0]
         class_id = net_out["class_id"]
         logits = self(img)
         loss = F.cross_entropy(logits[0], class_id)
@@ -43,13 +44,14 @@ class ImageClassifierModule(pl.LightningModule):
             except Exception as e:
                 print(f"Warning: failed to log images at step {self.global_step}, {e}")
 
-        self.log("train_loss", loss, on_step=False, on_epoch=True, prog_bar=True)
-        self.log("train_acc", acc, on_step=False, on_epoch=True, prog_bar=True)
+        self.log("train_loss", loss, batch_size=batch_size, on_step=False, on_epoch=True, prog_bar=True)
+        self.log("train_acc", acc, batch_size=batch_size, on_step=False, on_epoch=True, prog_bar=True)
         return loss
 
     def validation_step(self, batch, batch_idx):
         net_in, net_out = batch
         img = net_in["img_tv_transformed"]
+        batch_size = img.shape[0]
         class_id = net_out["class_id"]
         logits = self(img)
         loss = F.cross_entropy(logits[0], class_id)
@@ -65,8 +67,8 @@ class ImageClassifierModule(pl.LightningModule):
             except Exception as e:
                 print(f"Warning: failed to log images at step {self.global_step}, {e}")
 
-        self.log("val_loss", loss, on_step=False, on_epoch=True, prog_bar=True)
-        self.log("val_acc", acc, on_step=False, on_epoch=True, prog_bar=True)
+        self.log("val_loss", loss, batch_size=batch_size,on_step=False, on_epoch=True, prog_bar=True)
+        self.log("val_acc", acc, batch_size=batch_size,on_step=False, on_epoch=True, prog_bar=True)
 
     def test_step(self, batch, batch_idx):
         net_in, net_out = batch
@@ -133,7 +135,7 @@ class ImageClassifierModule(pl.LightningModule):
                 class_id_pred=class_id_pred,
                 class_id_conf=confidence_pred,
             )
-            img_with_label_tensor = dataset.convert_img_from_numpy_to_tensor(img_np)
+            img_with_label_tensor = dataset.convert_img_from_numpy_to_tensor_uint8(img_np)
             imgs_with_label.append(img_with_label_tensor)
         img_grid = make_grid(imgs_with_label, nrow=3)
         self.logger.experiment.add_image(f"{log_prefix}/sample_batch", img_grid, global_step=self.global_step)

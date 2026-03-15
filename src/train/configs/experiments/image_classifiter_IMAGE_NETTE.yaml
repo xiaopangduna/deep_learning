@@ -17,7 +17,7 @@ trainer:
     - class_path: lightning.pytorch.loggers.TensorBoardLogger
       init_args:
         save_dir: logs
-        name: image_classifier  
+        name: image_classifiter_IMAGE_NETTE  
         version: null
   profiler:
     class_path: lightning.pytorch.profilers.SimpleProfiler
@@ -46,6 +46,8 @@ data:
       7: "n03425413"
       8: "n03445777"
       9: "n03888257"
+    norm_mean : [0.485, 0.456, 0.406]
+    norm_std : [0.229, 0.224, 0.225]  
     batch_size: 16
     num_workers: 8
     transform_train:
@@ -55,11 +57,16 @@ data:
           - class_path: torchvision.transforms.v2.Resize
             init_args:
               size: [224,224]
-              interpolation: 2 # bilinear 枚举类型的变量在构建类时最好用整数，如果用字符串可能无法断点训练
+              interpolation: 2 # bilinear
+          - class_path: torchvision.transforms.v2.TrivialAugmentWide
           - class_path: torchvision.transforms.v2.ToDtype
             init_args:
               dtype: torch.float32
               scale: true
+          - class_path: torchvision.transforms.v2.Normalize
+            init_args:
+              mean: [0.485, 0.456, 0.406]
+              std: [0.229, 0.224, 0.225]
     transform_val:
       class_path: torchvision.transforms.v2.Compose
       init_args:
@@ -72,6 +79,10 @@ data:
             init_args:
               dtype: torch.float32
               scale: true
+          - class_path: torchvision.transforms.v2.Normalize
+            init_args:
+              mean: [0.485, 0.456, 0.406]
+              std: [0.229, 0.224, 0.225]
         
         
 model:

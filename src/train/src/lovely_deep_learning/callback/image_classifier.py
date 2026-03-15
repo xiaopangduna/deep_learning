@@ -55,7 +55,7 @@ class ImageClassifierCallback(pl.Callback):
             cur_class_name_pred = dataset.map_class_id_to_class_name[cur_class_id_pred]
             cur_confidence_pred = class_id_conf[i].item()
 
-            img_np = dataset.convert_img_from_tensor_to_numpy(img)
+            img_np = dataset.convert_img_from_tensor_to_numpy_uint8(img)
             img_np = dataset.draw_target_and_predict_label_on_numpy(
                 img_np,
                 class_name=cur_class_name,
@@ -123,7 +123,7 @@ class ImageClassifierCallback(pl.Callback):
             cur_class_name_pred = dataset.map_class_id_to_class_name[cur_class_id_pred]
             cur_confidence_pred = class_id_conf[i].item()
 
-            img_np = dataset.convert_img_from_tensor_to_numpy(img)
+            img_np = dataset.convert_img_from_tensor_to_numpy_uint8(img)
             img_np = dataset.draw_target_and_predict_label_on_numpy(
                 img_np, class_name_pred=cur_class_name_pred, class_id_pred=cur_class_id_pred, class_id_conf=cur_confidence_pred
             )

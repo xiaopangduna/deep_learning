@@ -129,7 +129,7 @@ class YoloDataset(BaseDataset):
         return image
 
     @staticmethod
-    def convert_img_from_numpy_to_tensor(img: np.ndarray) -> torch.Tensor:
+    def convert_img_from_numpy_to_tensor_uint8(img: np.ndarray) -> torch.Tensor:
         """
         将numpy格式的图像转换为RGB格式的tensor，并调整维度从(H, W, C)到(C, H, W)
         
@@ -181,7 +181,7 @@ class YoloDataset(BaseDataset):
         sample = deepcopy(self.samples[index])
 
         img, img_shape = read_img(sample["img_path"],sample["img_npy_path"])
-        img_tensor = self.convert_img_from_numpy_to_tensor(img)
+        img_tensor = self.convert_img_from_numpy_to_tensor_uint8(img)
         img_tv = tv_tensors.Image(img_tensor)
         
         bboxes_np = sample['bboxes']  # 归一化xywh，形状(N,4)

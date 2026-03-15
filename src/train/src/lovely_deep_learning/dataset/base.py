@@ -359,7 +359,7 @@ class BaseDataset(Dataset):
         return img, img.shape
     
     @staticmethod
-    def convert_img_from_numpy_to_tensor(img: np.ndarray) -> torch.Tensor:
+    def convert_img_from_numpy_to_tensor_uint8(img: np.ndarray) -> torch.Tensor:
         """
         将numpy格式的图像转换为RGB格式的tensor，并调整维度从(H, W, C)到(C, H, W)
         
@@ -375,7 +375,7 @@ class BaseDataset(Dataset):
         img_tensor = img_tensor.contiguous()
         return img_tensor
     @staticmethod    
-    def convert_img_from_tensor_to_numpy(img: torch.Tensor) -> np.ndarray:
+    def convert_img_from_tensor_to_numpy_uint8(img: torch.Tensor) -> np.ndarray:
         """
         将RGB格式的tensor转换为numpy格式的图像，并调整维度从(C, H, W)到(H, W, C)
         

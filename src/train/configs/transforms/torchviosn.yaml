@@ -1,4 +1,4 @@
-transforms:
+transforms_v1:
   class_path: torchvision.transforms.Compose
   init_args:
     transforms:
@@ -8,3 +8,77 @@ transforms:
           interpolation: 2 # bilinear
       - class_path: torchvision.transforms.RandomHorizontalFlip
       - class_path: torchvision.transforms.ToTensor
+
+
+transform_v2:
+  class_path: torchvision.transforms.v2.Compose
+  init_args:
+  # 这个是有顺序要求的，相对顺序不能变
+    transforms:
+      # 形状控制
+      - class_path: torchvision.transforms.v2.Resize
+        init_args:
+          size: [224,224]
+          interpolation: 2 # bilinear 枚举类型的变量在构建类时最好用整数，如果用字符串可能无法断点训练
+
+      - class_path: torchvision.transforms.v2.RandomResizedCrop
+        init_args:
+          size: 224
+          scale:
+          - 0.08
+          - 1.0
+          ratio:
+          - 0.75
+          - 1.3333333333333333
+          interpolation: 2
+          antialias: true
+
+      # 几何变换
+      - class_path: torchvision.transforms.v2.RandomHorizontalFlip
+        init_args:
+          p: 0.5
+
+      # 自动变化
+      - class_path: torchvision.transforms.v2.AutoAugment
+        init_args:
+          policy: IMAGENET
+
+      - class_path: torchvision.transforms.v2.RandAugment
+        init_args:
+          num_ops: 2
+          magnitude: 9
+
+      - class_path: torchvision.transforms.v2.TrivialAugmentWide
+
+      # 数据转换
+      - class_path: torchvision.transforms.v2.ToDtype
+        init_args:
+          dtype: torch.float32
+          scale: true
+
+      # 标准化
+      - class_path: torchvision.transforms.v2.Normalize # 这个需要控制dataset在绘图时标准化
+        init_args:
+          mean: [0.485, 0.456, 0.406]
+          std: [0.229, 0.224, 0.225]
+# 标准化的参考依据：https://docs.pytorch.org/vision/0.12/models.html?utm_source=chatgpt.com
+# All pre-trained models expect input images normalized in the same way, i.e. mini-batches of 3-channel RGB images of shape (3 x H x W), where H and W are expected to be at least 224. The images have to be loaded in to a range of [0, 1] and then normalized using mean = [0.485, 0.456, 0.406] and std = [0.229, 0.224, 0.225]. You can use the following transform to normalize:
+# normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+#                                  std=[0.229, 0.224, 0.225])
+
+      # 随机擦除
+      - class_path: torchvision.transforms.v2.RandomErasing
+        init_args:
+          p: 0.25
+          scale:
+          - 0.02
+          - 0.33
+          ratio:
+          - 0.3
+          - 3.3
+          value: 0.0
+          inplace: false
+
+      # Mix up 需要修改代码。先不考虑
+
+

@@ -45,17 +45,21 @@ class ImageClassifierDataset(BaseDataset):
         key_map: Dict[str, str] = {"img_path": "path_img", "class_name": "class_name", "class_id": "class_id"},
         transform: Optional[Callable] = None,
         map_class_id_to_class_name={0: "class_A", 1: "class_B"},
+        norm_mean=None,
+        norm_std=None
     ):
         super().__init__(csv_paths=csv_paths, key_map=key_map, transform=transform)
         self.has_label = True if "class_id" in self.sample_path_table else False
         self.map_class_id_to_class_name = map_class_id_to_class_name
+        self.norm_mean = norm_mean
+        self.norm_std = norm_std
 
     def __getitem__(self, index):
         net_in, net_out = {}, {}
         img_path = self.sample_path_table["img_path"][index]
 
         img_np, img_shape = self.read_img(img_path, None)
-        img_tensor = self.convert_img_from_numpy_to_tensor(img_np)
+        img_tensor = BaseDataset.convert_img_from_numpy_to_tensor_uint8(img_np)
         img_tv = tv_tensors.Image(img_tensor)
         if self.transform:
             img_tv_transformed = self.transform(img_tv)
@@ -70,6 +74,41 @@ class ImageClassifierDataset(BaseDataset):
             net_out["class_id"] = int(class_id)
 
         return net_in, net_out
+
+
+    def convert_img_from_tensor_to_numpy(self, img: torch.Tensor) -> np.ndarray:
+        """
+        将标准化的tensor转换为uint8的numpy数组，并进行反标准化处理
+        
+        Args:
+            img: 输入的标准化tensor，格式为(C, H, W)
+            
+        Returns:
+            反标准化后的numpy数组，格式为(H, W, C)，值域为[0, 255]
+        """
+        # 获取设备信息并复制tensor到CPU
+        img = img.detach().cpu()
+        
+        # 如果设置了归一化参数，则进行反归一化
+        if self.norm_mean is not None and self.norm_std is not None:
+            # 反归一化: img * std + mean
+            mean = torch.tensor(self.norm_mean).view(3, 1, 1)
+            std = torch.tensor(self.norm_std).view(3, 1, 1)
+            img = img * std + mean
+        
+        # 确保值在[0,1]范围内
+        img = torch.clamp(img, 0, 1)
+        
+        # 转换维度从(C, H, W)到(H, W, C)
+        img_np = img.permute(1, 2, 0).numpy()
+        
+        # 转换到uint8格式 (0~1 -> 0~255)
+        img_np = (img_np * 255).astype(np.uint8)
+        
+        # 从RGB转换为BGR（OpenCV格式）
+        img_np = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
+        
+        return img_np
 
     def draw_target_and_predict_label_on_numpy(
         self,

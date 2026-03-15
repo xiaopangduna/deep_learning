@@ -58,6 +58,8 @@
                 "fit",
                 "--config",
                 "configs/experiments/image_classifiter_IMAGE_NETTE.yaml",
+                "--trainer.fast_dev_run","true"
+
                 // "test",
                 // "--config",
                 // "logs/image_classifier/version_0/config.yaml",
