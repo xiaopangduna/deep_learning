@@ -2,6 +2,7 @@ logs/
 lightning_logs/
 tmp/
 data/
+checkpoints/
 
 pretrained_models/
 *.pt

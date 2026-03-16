@@ -4,20 +4,19 @@ import torch
 import torch.nn.functional as F
 
 from torchvision.utils import make_grid
-from lovely_deep_learning.models.DAGNet import DAGNet
+from lovely_deep_learning.model.DAGNet import DAGNet
 from ..dataset.image_classifier import ImageClassifierDataset
 
 
 class ImageClassifierModule(pl.LightningModule):
-    def __init__(self, num_classes=10, learning_rate=1e-3, pretrained=True, model=None):
+    def __init__(self,  learning_rate=1e-3, model=None):
         """
-        num_classes: 数据集类别数量
         lr: 学习率
-        pretrained: 是否使用 ImageNet 预训练权重
+
         """
         super().__init__()
         self.learning_rate = float(learning_rate)
-        self.model = DAGNet(model["structure"], model["weight"], pretrained)
+        self.model = DAGNet(**model)
         self.example_input_array = torch.randn(1, 3, 224, 224)
 
         self._graph_logged = False

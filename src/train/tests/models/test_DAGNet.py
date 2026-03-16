@@ -3,8 +3,8 @@ import torch.nn as nn
 import torchvision.models as models
 from ultralytics import YOLO
 
-from lovely_deep_learning.models.DAGNet import DAGNet
-from lovely_deep_learning.models.DAGWeightLoader import DAGWeightLoader
+from lovely_deep_learning.model.DAGNet import DAGNet
+from lovely_deep_learning.model.DAGWeightLoader import DAGWeightLoader
 from .utils import *
 
 

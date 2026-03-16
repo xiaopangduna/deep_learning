@@ -55,7 +55,7 @@ class ImageClassifierCallback(pl.Callback):
             cur_class_name_pred = dataset.map_class_id_to_class_name[cur_class_id_pred]
             cur_confidence_pred = class_id_conf[i].item()
 
-            img_np = dataset.convert_img_from_tensor_to_numpy_uint8(img)
+            img_np = dataset.convert_img_from_tensor_to_numpy(img)
             img_np = dataset.draw_target_and_predict_label_on_numpy(
                 img_np,
                 class_name=cur_class_name,
@@ -66,7 +66,7 @@ class ImageClassifierCallback(pl.Callback):
             )
 
             save_path = self.save_dir_test / (img_path.stem + ".jpg")
-            cv2.imwrite(save_path, img_np)
+
 
             self.csv_table_test.append(
                 {
@@ -79,6 +79,10 @@ class ImageClassifierCallback(pl.Callback):
                     "save_path": str(save_path),
                 }
             )
+            
+            if self.test_only_save_mistake and cur_class_id == cur_class_id_pred:
+                continue
+            cv2.imwrite(save_path, img_np)
 
     def on_test_epoch_start(self, trainer, pl_module):
         self.csv_table_test = []
@@ -123,7 +127,7 @@ class ImageClassifierCallback(pl.Callback):
             cur_class_name_pred = dataset.map_class_id_to_class_name[cur_class_id_pred]
             cur_confidence_pred = class_id_conf[i].item()
 
-            img_np = dataset.convert_img_from_tensor_to_numpy_uint8(img)
+            img_np = dataset.convert_img_from_tensor_to_numpy(img)
             img_np = dataset.draw_target_and_predict_label_on_numpy(
                 img_np, class_name_pred=cur_class_name_pred, class_id_pred=cur_class_id_pred, class_id_conf=cur_confidence_pred
             )

@@ -2,10 +2,10 @@ import torch
 import torch.nn as nn
 from collections import OrderedDict
 from lovely_deep_learning.utils.factory import dynamic_class_instantiate_from_string
-from lovely_deep_learning.models.DAGWeightLoader import DAGWeightLoader
+from lovely_deep_learning.model.DAGWeightLoader import DAGWeightLoader
 
 class DAGNet(nn.Module):
-    def __init__(self, structure_config,weight_config=None,pretrained=False):
+    def __init__(self, structure,weight=None,pretrained=False,model_name="undefined"):
         """
         config: dict
             inputs: list of dict {"name": str, "shape": tuple}
@@ -19,17 +19,17 @@ class DAGNet(nn.Module):
         """
         super().__init__()
 
-        self._check_config_is_valid(structure_config)
-
-        self.structure_config = structure_config
-        self.inputs = structure_config["inputs"]
-        self.outputs = structure_config["outputs"]
-        self.layers_config = structure_config["layers"]
+        self._check_config_is_valid(structure)
+        self.model_name = model_name
+        self.structure_config = structure
+        self.inputs = structure["inputs"]
+        self.outputs = structure["outputs"]
+        self.layers_config = structure["layers"]
         self.layers = nn.ModuleDict()
         self._init_layers()
         if pretrained:
             loader = DAGWeightLoader()
-            loader.load_weights(self, **weight_config)
+            loader.load_weights(self, **weight)
 
     def forward(self, x:list):
         outputs = {}

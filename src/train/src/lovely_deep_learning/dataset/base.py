@@ -1,7 +1,7 @@
 import csv
 import os
 import hashlib
-from typing import List, Dict, Optional, Callable, Any,Union
+from typing import List, Dict, Optional, Callable, Any, Union
 from torch.utils.data import Dataset
 from tqdm import tqdm  # 直接引入tqdm用于进度显示
 import cv2
@@ -9,6 +9,7 @@ import numpy as np
 import hashlib
 from pathlib import Path
 import torch
+
 
 class BaseDataset(Dataset):
     """
@@ -51,7 +52,7 @@ class BaseDataset(Dataset):
         # 核心配置参数
         self.csv_paths = csv_paths  # CSV文件路径列表
         self.key_map = key_map  # 类内字段→CSV表头字段的映射
-        self.transform = transform  # 
+        self.transform = transform  #
 
         # 核心数据
         self.sample_path_table: Dict[str, List[str]] = {}  # 存储解析后的绝对路径
@@ -101,7 +102,7 @@ class BaseDataset(Dataset):
                 missing_fields = [f for f in csv_fields if f not in reader.fieldnames]
                 if missing_fields:
                     print(f"⚠️  CSV {abs_csv_path} 缺少字段：{missing_fields}，将忽略这些列")
-                    
+
                     # 找到存在于CSV中的字段
                     present_fields = {k: v for k, v in self.key_map.items() if v in reader.fieldnames}
                 else:
@@ -120,20 +121,20 @@ class BaseDataset(Dataset):
                     for inner_field, csv_field in present_fields.items():
                         # 读取原始值
                         raw_value = row[csv_field].strip()
-                        
+
                         # 检查字段名是否包含"path"，决定是否需要路径验证
                         is_path_field = "path" in csv_field.lower()
-                        
+
                         if not raw_value:
                             # 空值：视为负样本特征，保留空字符串
                             current_row[inner_field] = ""
                             if is_path_field:
                                 has_empty_path = True
                             continue  # 空值不影响样本有效性
-                        
+
                         if is_path_field:
                             # 是路径字段，需要解析和验证路径
-                            
+
                             # 3. 路径解析核心逻辑（非空路径）
                             if os.path.isabs(raw_value):
                                 resolved_path = raw_value
@@ -165,15 +166,19 @@ class BaseDataset(Dataset):
                         self._stats_invalid_records.append(
                             f"CSV {abs_csv_path} 第{row_idx}行：{'; '.join(error_details)}"
                         )
-                
+
                 # 合并当前CSV的结果到主path_table，仅对存在的字段进行合并
                 for field in current_path_table:
                     path_table[field].extend(current_path_table[field])
-        
+
         # 删除没有数据的列（即CSV中缺失的字段）
         fields_to_remove = []
         for field in path_table:
-            if len(path_table[field]) == 0 and field not in [k for k, v in self.key_map.items() if v in sum([csv.DictReader(open(csv_p)).fieldnames for csv_p in self.csv_paths], [])]:
+            if len(path_table[field]) == 0 and field not in [
+                k
+                for k, v in self.key_map.items()
+                if v in sum([csv.DictReader(open(csv_p)).fieldnames for csv_p in self.csv_paths], [])
+            ]:
                 # 检查字段是否在任一CSV中存在
                 field_exists_in_any_csv = False
                 for csv_path in self.csv_paths:
@@ -182,10 +187,10 @@ class BaseDataset(Dataset):
                         if self.key_map[field] in reader.fieldnames:
                             field_exists_in_any_csv = True
                             break
-                
+
                 if not field_exists_in_any_csv:
                     fields_to_remove.append(field)
-        
+
         for field in fields_to_remove:
             del path_table[field]
 
@@ -268,6 +273,7 @@ class BaseDataset(Dataset):
 
     def draw_target_and_predict_label_on_numpy(self):
         pass
+
     @staticmethod
     def cache_image(img_paths: List[str], cache_dir: str) -> List[str]:
         """
@@ -350,6 +356,7 @@ class BaseDataset(Dataset):
             hash_obj.update(str(obj).encode("utf-8"))
 
         return hash_obj.hexdigest()
+
     @staticmethod
     def read_img(img_path: str, img_npy_path: Union[str, None]):
         if img_npy_path:
@@ -357,15 +364,21 @@ class BaseDataset(Dataset):
         else:
             img = cv2.imread(img_path)
         return img, img.shape
-    
+
+    def convert_img_from_tensor_to_numpy(img: torch.Tensor) -> np.ndarray:
+        pass
+
+    def convert_img_from_numpy_to_tensor(img: np.ndarray) -> torch.Tensor:
+        pass
+
     @staticmethod
     def convert_img_from_numpy_to_tensor_uint8(img: np.ndarray) -> torch.Tensor:
         """
         将numpy格式的图像转换为RGB格式的tensor，并调整维度从(H, W, C)到(C, H, W)
-        
+
         Args:
             img: 输入的numpy图像数组
-            
+
         Returns:
             转换后的torch.Tensor，格式为(C, H, W)
         """
@@ -373,29 +386,31 @@ class BaseDataset(Dataset):
         # 转为 torch.Tensor 并调整维度 (H, W, C) -> (C, H, W)
         img_tensor = torch.from_numpy(img_rgb).permute(2, 0, 1)  # (C, H, W)
         img_tensor = img_tensor.contiguous()
+
         return img_tensor
-    @staticmethod    
+
+    @staticmethod
     def convert_img_from_tensor_to_numpy_uint8(img: torch.Tensor) -> np.ndarray:
         """
         将RGB格式的tensor转换为numpy格式的图像，并调整维度从(C, H, W)到(H, W, C)
-        
+
         Args:
             img: 输入的torch.Tensor，格式为(C, H, W)
-            
+
         Returns:
             转换后的numpy图像数组，格式为(H, W, C)
-        """                
+        """
+        assert img.dtype == torch.uint8
+
         img = img.detach().cpu()
-
-        # tensor -> numpy
-        img_np = img.permute(1,2,0).numpy()   # CHW -> HWC
-
-        # 0~1 -> 0~255
-        img_np = (img_np * 255).clip(0,255).astype(np.uint8)
+        img_np = img.permute(1, 2, 0).numpy()  # CHW -> HWC
+        img_np = img_np.astype(np.uint8)
 
         # RGB -> BGR (opencv)
         img_np = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
+
         return img_np
+
     @staticmethod
     def get_collate_fn_for_dataloader():
         def collate_fn(x):

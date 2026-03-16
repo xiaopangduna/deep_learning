@@ -53,6 +53,60 @@ class ImageClassifierDataset(BaseDataset):
         self.map_class_id_to_class_name = map_class_id_to_class_name
         self.norm_mean = norm_mean
         self.norm_std = norm_std
+        
+        # 验证map_class_id_to_class_name与实际数据中class_name和class_id的对应关系
+        if self.has_label:
+            self._validate_class_mapping()
+
+    def _validate_class_mapping(self):
+        """验证map_class_id_to_class_name与实际数据中class_name和class_id对应关系的一致性"""
+        # 获取实际数据中的class_id和class_name
+        actual_class_ids = set()
+        class_id_name_pairs = set()
+        
+        for i in range(len(self.sample_path_table["class_id"])):
+            class_id_str = self.sample_path_table["class_id"][i]
+            class_name = self.sample_path_table["class_name"][i]
+            
+            try:
+                class_id = int(class_id_str)
+                actual_class_ids.add(class_id)
+                class_id_name_pairs.add((class_id, class_name))
+            except ValueError:
+                print(f"⚠️  发现无法转换为整数的class_id: {class_id_str}")
+                continue
+        
+        # 检查map_class_id_to_class_name与实际数据的一致性
+        mismatch_found = False
+        for class_id, class_name in class_id_name_pairs:
+            if class_id in self.map_class_id_to_class_name:
+                expected_class_name = self.map_class_id_to_class_name[class_id]
+                if expected_class_name != class_name:
+                    print(f"⚠️  map_class_id_to_class_name与实际数据不一致: ID {class_id}, "
+                          f"映射中为 '{expected_class_name}', 但实际数据为 '{class_name}'")
+                    mismatch_found = True
+        
+        if not mismatch_found:
+            print(f"✅ map_class_id_to_class_name与实际数据一致")
+        
+        # 检查ID是否连续
+        if actual_class_ids:
+            sorted_ids = sorted(list(actual_class_ids))
+            min_id, max_id = min(sorted_ids), max(sorted_ids)
+            expected_range = set(range(min_id, max_id + 1))
+            missing_ids = expected_range - actual_class_ids
+            
+            if missing_ids:
+                print(f"⚠️  class_id不连续，缺少ID: {sorted(list(missing_ids))}")
+            elif len(expected_range) != len(actual_class_ids):
+                print(f"⚠️  class_id可能不连续或存在重复")
+            else:
+                print(f"✅ class_id是连续的: {sorted_ids}")
+                
+        # 检查映射中是否有在数据中未出现的ID
+        unused_mapping_ids = set(self.map_class_id_to_class_name.keys()) - actual_class_ids
+        if unused_mapping_ids:
+            print(f"⚠️  映射中存在数据中未使用的ID: {sorted(list(unused_mapping_ids))}")
 
     def __getitem__(self, index):
         net_in, net_out = {}, {}
@@ -89,26 +143,32 @@ class ImageClassifierDataset(BaseDataset):
         # 获取设备信息并复制tensor到CPU
         img = img.detach().cpu()
         
-        # 如果设置了归一化参数，则进行反归一化
-        if self.norm_mean is not None and self.norm_std is not None:
-            # 反归一化: img * std + mean
-            mean = torch.tensor(self.norm_mean).view(3, 1, 1)
-            std = torch.tensor(self.norm_std).view(3, 1, 1)
-            img = img * std + mean
+        # 获取tensor的值范围
+        img_min = img.min().item()
+        img_max = img.max().item()
         
-        # 确保值在[0,1]范围内
-        img = torch.clamp(img, 0, 1)
+        # 根据值的范围判断tensor类型并进行相应处理
+        if img_min >= 0 and img_max <= 1.0:
+            # 情况1: [0, 1] 范围的tensor
+            img_clamped = torch.clamp(img, 0, 1)
+        elif img_min >= 0 and img_max <= 255:
+            # 情况2: [0, 255] 范围的tensor
+            img_clamped = torch.clamp(img, 0, 255) / 255.0  # 归一化到[0,1]
+        else:
+            # 情况3: 标准化的tensor，需要反标准化
+            if self.norm_mean is not None and self.norm_std is not None:
+                # 反归一化: img * std + mean
+                mean = torch.tensor(self.norm_mean).view(3, 1, 1)
+                std = torch.tensor(self.norm_std).view(3, 1, 1)
+                img = img * std + mean
+            # 确保值在合理范围内
+            img_clamped = torch.clamp(img, 0, 1)
         
-        # 转换维度从(C, H, W)到(H, W, C)
-        img_np = img.permute(1, 2, 0).numpy()
+        # 将[0,1]范围的值转换为uint8格式 (0~1 -> 0~255)
+        img_uint8 = (img_clamped * 255).to(torch.uint8)
         
-        # 转换到uint8格式 (0~1 -> 0~255)
-        img_np = (img_np * 255).astype(np.uint8)
-        
-        # 从RGB转换为BGR（OpenCV格式）
-        img_np = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
-        
-        return img_np
+        # 调用基类的转换函数
+        return BaseDataset.convert_img_from_tensor_to_numpy_uint8(img_uint8)
 
     def draw_target_and_predict_label_on_numpy(
         self,
