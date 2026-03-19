@@ -1,5 +1,6 @@
 import lightning.pytorch as pl
 import torch
+import torch.nn as nn
 
 import torch.nn.functional as F
 
@@ -7,9 +8,8 @@ from torchvision.utils import make_grid
 from lovely_deep_learning.model.DAGNet import DAGNet
 from ..dataset.image_classifier import ImageClassifierDataset
 
-
 class ImageClassifierModule(pl.LightningModule):
-    def __init__(self,  learning_rate=1e-3, model=None):
+    def __init__(self,  learning_rate=1e-3, model=None, init_type: str | None = None):
         """
         lr: 学习率
 
@@ -20,6 +20,10 @@ class ImageClassifierModule(pl.LightningModule):
         self.example_input_array = torch.randn(1, 3, 224, 224)
 
         self._graph_logged = False
+
+        # 根据 init_type 对模型进行自定义初始化；为 None 时使用默认初始化
+        if init_type is not None:
+            self._initialize_weights(init_type)
 
     def forward(self, x):
         return self.model([x])
@@ -100,6 +104,41 @@ class ImageClassifierModule(pl.LightningModule):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.learning_rate)
         scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.1)
         return [optimizer], [scheduler]
+
+    def _initialize_weights(self, init_type: str):
+        """
+        根据 init_type 对可训练层进行权重初始化。
+
+        支持的 init_type 示例：
+        - "kaiming_normal"
+        - "kaiming_uniform"
+        - "xavier_normal"
+        - "xavier_uniform"
+        - "normal"
+        - "uniform"
+        - "orthogonal"
+        """
+        init_type = init_type.lower()
+
+        for m in self.model.modules():
+            if isinstance(m, (nn.Conv1d, nn.Conv2d, nn.Conv3d, nn.Linear)):
+                if init_type == "kaiming_normal":
+                    nn.init.kaiming_normal_(m.weight, mode="fan_in", nonlinearity="relu")
+                elif init_type == "kaiming_uniform":
+                    nn.init.kaiming_uniform_(m.weight, mode="fan_in", nonlinearity="relu")
+                elif init_type == "xavier_normal":
+                    nn.init.xavier_normal_(m.weight)
+                elif init_type == "xavier_uniform":
+                    nn.init.xavier_uniform_(m.weight)
+                elif init_type == "normal":
+                    nn.init.normal_(m.weight, mean=0.0, std=0.02)
+                elif init_type == "uniform":
+                    nn.init.uniform_(m.weight, a=-0.1, b=0.1)
+                elif init_type == "orthogonal":
+                    nn.init.orthogonal_(m.weight)
+
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
 
     def on_fit_start(self):
         hparams = {"lr": 0.001, "batch_size": 32}

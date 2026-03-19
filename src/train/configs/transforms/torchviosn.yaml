@@ -24,14 +24,8 @@ transform_v2:
       - class_path: torchvision.transforms.v2.RandomResizedCrop
         init_args:
           size: 224
-          scale:
-          - 0.08
-          - 1.0
-          ratio:
-          - 0.75
-          - 1.3333333333333333
           interpolation: 2
-          antialias: true
+
 
       # 几何变换
       - class_path: torchvision.transforms.v2.RandomHorizontalFlip
