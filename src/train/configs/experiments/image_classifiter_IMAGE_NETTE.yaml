@@ -61,9 +61,9 @@ data:
       class_path: torchvision.transforms.v2.Compose
       init_args:
         transforms:
-          - class_path: torchvision.transforms.v2.RandomResizedCrop
+          - class_path: torchvision.transforms.v2.Resize
             init_args:
-              size: 224
+              size: [224,224]
               interpolation: 2 # bilinear
           - class_path: torchvision.transforms.v2.TrivialAugmentWide
           - class_path: torchvision.transforms.v2.ToDtype
@@ -96,10 +96,20 @@ model:
   class_path: lovely_deep_learning.module.image_classifier.ImageClassifierModule
   init_args:
     learning_rate: 2e-4
-    init_type: kaiming_normal
+    init_type: null
+    optimizer:
+      class_path: torch.optim.Adam
+      init_args:
+        lr: 2e-4
+    lr_scheduler:
+      class_path: torch.optim.lr_scheduler.StepLR
+      init_args:
+        step_size: 5
+        gamma: 0.1
     model:
       model_name: resnet18
       pretrained: false
+
       structure:
         inputs: [{name: input, shape: [3, 224, 224]}]
         outputs: [{name: classification, from: [fc]}]

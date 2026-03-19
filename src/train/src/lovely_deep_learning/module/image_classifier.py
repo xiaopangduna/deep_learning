@@ -3,27 +3,42 @@ import torch
 import torch.nn as nn
 
 import torch.nn.functional as F
+from lightning.pytorch.cli import instantiate_class
+from typing import Any
 
 from torchvision.utils import make_grid
 from lovely_deep_learning.model.DAGNet import DAGNet
 from ..dataset.image_classifier import ImageClassifierDataset
 
 class ImageClassifierModule(pl.LightningModule):
-    def __init__(self,  learning_rate=1e-3, model=None, init_type: str | None = None):
+    def __init__(
+        self,
+        learning_rate=1e-3,
+        model=None,
+        init_type: str | None = None,
+        optimizer: dict[str, Any] | None = None,
+        lr_scheduler: dict[str, Any] | None = None,
+    ):
         """
         lr: 学习率
 
         """
         super().__init__()
         self.learning_rate = float(learning_rate)
+        self.optimizer_cfg = optimizer
+        self.lr_scheduler_cfg = lr_scheduler
+        if self.optimizer_cfg is None:
+            raise ValueError("`optimizer` config is required in YAML (model.init_args.optimizer).")
+        if self.lr_scheduler_cfg is None:
+            raise ValueError("`lr_scheduler` config is required in YAML (model.init_args.lr_scheduler).")
         self.model = DAGNet(**model)
         self.example_input_array = torch.randn(1, 3, 224, 224)
 
         self._graph_logged = False
 
         # 根据 init_type 对模型进行自定义初始化；为 None 时使用默认初始化
-        if init_type is not None:
-            self._initialize_weights(init_type)
+        # if init_type is not None:
+        #     self._initialize_weights(init_type)
 
     def forward(self, x):
         return self.model([x])
@@ -101,9 +116,9 @@ class ImageClassifierModule(pl.LightningModule):
         return {"class_id_pred": class_id_pred, "class_id_conf": class_id_conf}
 
     def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.parameters(), lr=self.learning_rate)
-        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.1)
-        return [optimizer], [scheduler]
+        optimizer = instantiate_class(self.parameters(), self.optimizer_cfg)
+        scheduler = instantiate_class(optimizer, self.lr_scheduler_cfg)
+        return {"optimizer": optimizer, "lr_scheduler": scheduler}
 
     def _initialize_weights(self, init_type: str):
         """

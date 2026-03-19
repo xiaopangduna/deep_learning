@@ -1,6 +1,7 @@
 from ultralytics import YOLO
 import torch
 # Load a COCO-pretrained YOLOv8n model
+torch.optim.Adam()
 
 
 

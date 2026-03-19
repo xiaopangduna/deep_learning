@@ -1,0 +1,68 @@
+class_path: torch.optim.Adam
+init_args:
+  lr: 2e-4
+
+class_path: torch.optim.AdamW
+init_args:
+  lr: 2e-4
+
+class_path: torch.optim.SGD
+init_args:
+  lr: 2e-4
+
+class_path: torch.optim.RMSprop
+init_args:
+  lr: 2e-4
+
+class_path: torch.optim.RAdam
+init_args:
+  lr: 2e-4
+
+class_path: torch.optim.NAdam
+init_args:
+  lr: 2e-4
+
+class_path: torch.optim.Adamax
+init_args:
+  lr: 2e-3
+
+class_path: torch.optim.Adagrad
+init_args:
+  lr: 2e-3
+
+class_path: torch.optim.Adadelta
+init_args:
+  lr: 0.5
+
+class_path: torch.optim.ASGD
+init_args:
+  lr: 1e-2
+  lambd: 1e-4
+  alpha: 0.75
+  t0: 1e6
+  weight_decay: 0.0
+
+class_path: torch.optim.Rprop
+init_args:
+  lr: 1e-2
+  etas: [0.5, 1.2]
+  step_sizes: [1e-6, 50]
+
+class_path: torch.optim.SparseAdam
+init_args:
+  lr: 1e-3
+  betas: [0.9, 0.999]
+  eps: 1e-8
+
+  class_path: torch.optim.LBFGS
+init_args:
+  lr: 1.0
+  max_iter: 20
+  history_size: 100
+
+class_path: torch.optim.Adafactor
+init_args:
+  lr: null   # 通常使用相对学习率
+  scale_parameter: true
+  relative_step: true
+  warmup_init: true
