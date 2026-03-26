@@ -1,0 +1,49 @@
+structure:
+  inputs: [{name: input, shape: [3, 224, 224]}]
+  outputs: [{name: classification, from: [fc]}]
+  layers:
+    - name: stem
+      from: [input]
+      module: lovely_deep_learning.nn.regnet.SimpleStemIN
+      args: {width_in: 3, width_out: 32}
+
+    - name: trunk_output
+      from: [stem]
+      module: torch.nn.Sequential
+      children:
+        - name: block1
+          module: lovely_deep_learning.nn.regnet.AnyStage
+          args: {width_in: 32, width_out: 232, stride: 2, depth: 2, group_width: 232, bottleneck_multiplier: 1.0, se_ratio: 0.25, stage_index: 1}
+        - name: block2
+          module: lovely_deep_learning.nn.regnet.AnyStage
+          args: {width_in: 232, width_out: 696, stride: 2, depth: 5, group_width: 232, bottleneck_multiplier: 1.0, se_ratio: 0.25, stage_index: 2}
+        - name: block3
+          module: lovely_deep_learning.nn.regnet.AnyStage
+          args: {width_in: 696, width_out: 1392, stride: 2, depth: 12, group_width: 232, bottleneck_multiplier: 1.0, se_ratio: 0.25, stage_index: 3}
+        - name: block4
+          module: lovely_deep_learning.nn.regnet.AnyStage
+          args: {width_in: 1392, width_out: 3712, stride: 2, depth: 1, group_width: 232, bottleneck_multiplier: 1.0, se_ratio: 0.25, stage_index: 4}
+
+    - name: avgpool
+      from: [trunk_output]
+      module: torch.nn.AdaptiveAvgPool2d
+      args: {output_size: [1, 1]}
+
+    - name: flatten
+      from: [avgpool]
+      module: torch.nn.Flatten
+      args: {start_dim: 1}
+
+    - name: fc
+      from: [flatten]
+      module: torch.nn.Linear
+      args: {in_features: 3712, out_features: 1000}
+
+weight:
+  path: pretrained_models/regnet_y_32gf-8db6d4b5.pth
+  url: https://download.pytorch.org/models/regnet_y_32gf-8db6d4b5.pth
+  map_location: cpu
+  strict: false
+  src_key_prefix: layers.
+  src_key_slice_start: 0
+

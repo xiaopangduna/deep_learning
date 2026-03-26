@@ -679,6 +679,185 @@ swin_v2_t_config = {
     },
 }
 
+
+regnet_y_32gf_config = {
+    "structure": {
+        "inputs": [{"name": "input", "shape": [3, 224, 224]}],
+        "outputs": [{"name": "classification", "from": ["fc"]}],
+        "layers": [
+            {
+                "name": "stem",
+                "from": ["input"],
+                "module": "lovely_deep_learning.nn.regnet.SimpleStemIN",
+                "args": {"width_in": 3, "width_out": 32},
+            },
+            {
+                "name": "trunk_output",
+                "from": ["stem"],
+                "module": "torch.nn.Sequential",
+                "children": [
+                    {
+                        "name": "block1",
+                        "module": "lovely_deep_learning.nn.regnet.AnyStage",
+                        "args": {
+                            "width_in": 32,
+                            "width_out": 232,
+                            "stride": 2,
+                            "depth": 2,
+                            "group_width": 232,
+                            "bottleneck_multiplier": 1.0,
+                            "se_ratio": 0.25,
+                            "stage_index": 1,
+                        },
+                    },
+                    {
+                        "name": "block2",
+                        "module": "lovely_deep_learning.nn.regnet.AnyStage",
+                        "args": {
+                            "width_in": 232,
+                            "width_out": 696,
+                            "stride": 2,
+                            "depth": 5,
+                            "group_width": 232,
+                            "bottleneck_multiplier": 1.0,
+                            "se_ratio": 0.25,
+                            "stage_index": 2,
+                        },
+                    },
+                    {
+                        "name": "block3",
+                        "module": "lovely_deep_learning.nn.regnet.AnyStage",
+                        "args": {
+                            "width_in": 696,
+                            "width_out": 1392,
+                            "stride": 2,
+                            "depth": 12,
+                            "group_width": 232,
+                            "bottleneck_multiplier": 1.0,
+                            "se_ratio": 0.25,
+                            "stage_index": 3,
+                        },
+                    },
+                    {
+                        "name": "block4",
+                        "module": "lovely_deep_learning.nn.regnet.AnyStage",
+                        "args": {
+                            "width_in": 1392,
+                            "width_out": 3712,
+                            "stride": 2,
+                            "depth": 1,
+                            "group_width": 232,
+                            "bottleneck_multiplier": 1.0,
+                            "se_ratio": 0.25,
+                            "stage_index": 4,
+                        },
+                    },
+                ],
+            },
+            {
+                "name": "avgpool",
+                "from": ["trunk_output"],
+                "module": "torch.nn.AdaptiveAvgPool2d",
+                "args": {"output_size": [1, 1]},
+            },
+            {"name": "flatten", "from": ["avgpool"], "module": "torch.nn.Flatten", "args": {"start_dim": 1}},
+            {
+                "name": "fc",
+                "from": ["flatten"],
+                "module": "torch.nn.Linear",
+                "args": {"in_features": 3712, "out_features": 1000},
+            },
+        ],
+    },
+    "weight": {
+        "path": "pretrained_models/regnet_y_32gf-8db6d4b5.pth",
+        "url": "https://download.pytorch.org/models/regnet_y_32gf-8db6d4b5.pth",
+        "map_location": "cpu",
+        "strict": False,
+        "src_key_prefix": "layers.",
+        "src_key_slice_start": 0,
+    },
+}
+
+
+mobilenet_v3_large_config = {
+    "structure": {
+        "inputs": [{"name": "input", "shape": [3, 224, 224]}],
+        "outputs": [{"name": "classification", "from": ["classifier"]}],
+        "layers": [
+            {
+                "name": "features",
+                "from": ["input"],
+                "module": "torch.nn.Sequential",
+                "children": [
+                    {"name": "0", "module": "lovely_deep_learning.nn.mobilenet_v3.Conv2dNormActivation", "args": {"in_channels": 3, "out_channels": 16, "kernel_size": 3, "stride": 2, "bn_eps": 0.001, "bn_momentum": 0.01, "activation_layer": "hswish"}},
+                    {"name": "1", "module": "lovely_deep_learning.nn.mobilenet_v3.InvertedResidual", "args": {"input_channels": 16, "kernel": 3, "expanded_channels": 16, "out_channels": 16, "use_se": False, "use_hs": False, "stride": 1, "dilation": 1}},
+                    {"name": "2", "module": "lovely_deep_learning.nn.mobilenet_v3.InvertedResidual", "args": {"input_channels": 16, "kernel": 3, "expanded_channels": 64, "out_channels": 24, "use_se": False, "use_hs": False, "stride": 2, "dilation": 1}},
+                    {"name": "3", "module": "lovely_deep_learning.nn.mobilenet_v3.InvertedResidual", "args": {"input_channels": 24, "kernel": 3, "expanded_channels": 72, "out_channels": 24, "use_se": False, "use_hs": False, "stride": 1, "dilation": 1}},
+                    {"name": "4", "module": "lovely_deep_learning.nn.mobilenet_v3.InvertedResidual", "args": {"input_channels": 24, "kernel": 5, "expanded_channels": 72, "out_channels": 40, "use_se": True, "use_hs": False, "stride": 2, "dilation": 1}},
+                    {"name": "5", "module": "lovely_deep_learning.nn.mobilenet_v3.InvertedResidual", "args": {"input_channels": 40, "kernel": 5, "expanded_channels": 120, "out_channels": 40, "use_se": True, "use_hs": False, "stride": 1, "dilation": 1}},
+                    {"name": "6", "module": "lovely_deep_learning.nn.mobilenet_v3.InvertedResidual", "args": {"input_channels": 40, "kernel": 5, "expanded_channels": 120, "out_channels": 40, "use_se": True, "use_hs": False, "stride": 1, "dilation": 1}},
+                    {"name": "7", "module": "lovely_deep_learning.nn.mobilenet_v3.InvertedResidual", "args": {"input_channels": 40, "kernel": 3, "expanded_channels": 240, "out_channels": 80, "use_se": False, "use_hs": True, "stride": 2, "dilation": 1}},
+                    {"name": "8", "module": "lovely_deep_learning.nn.mobilenet_v3.InvertedResidual", "args": {"input_channels": 80, "kernel": 3, "expanded_channels": 200, "out_channels": 80, "use_se": False, "use_hs": True, "stride": 1, "dilation": 1}},
+                    {"name": "9", "module": "lovely_deep_learning.nn.mobilenet_v3.InvertedResidual", "args": {"input_channels": 80, "kernel": 3, "expanded_channels": 184, "out_channels": 80, "use_se": False, "use_hs": True, "stride": 1, "dilation": 1}},
+                    {"name": "10", "module": "lovely_deep_learning.nn.mobilenet_v3.InvertedResidual", "args": {"input_channels": 80, "kernel": 3, "expanded_channels": 184, "out_channels": 80, "use_se": False, "use_hs": True, "stride": 1, "dilation": 1}},
+                    {"name": "11", "module": "lovely_deep_learning.nn.mobilenet_v3.InvertedResidual", "args": {"input_channels": 80, "kernel": 3, "expanded_channels": 480, "out_channels": 112, "use_se": True, "use_hs": True, "stride": 1, "dilation": 1}},
+                    {"name": "12", "module": "lovely_deep_learning.nn.mobilenet_v3.InvertedResidual", "args": {"input_channels": 112, "kernel": 3, "expanded_channels": 672, "out_channels": 112, "use_se": True, "use_hs": True, "stride": 1, "dilation": 1}},
+                    {"name": "13", "module": "lovely_deep_learning.nn.mobilenet_v3.InvertedResidual", "args": {"input_channels": 112, "kernel": 5, "expanded_channels": 672, "out_channels": 160, "use_se": True, "use_hs": True, "stride": 2, "dilation": 1}},
+                    {"name": "14", "module": "lovely_deep_learning.nn.mobilenet_v3.InvertedResidual", "args": {"input_channels": 160, "kernel": 5, "expanded_channels": 960, "out_channels": 160, "use_se": True, "use_hs": True, "stride": 1, "dilation": 1}},
+                    {"name": "15", "module": "lovely_deep_learning.nn.mobilenet_v3.InvertedResidual", "args": {"input_channels": 160, "kernel": 5, "expanded_channels": 960, "out_channels": 160, "use_se": True, "use_hs": True, "stride": 1, "dilation": 1}},
+                    {"name": "16", "module": "lovely_deep_learning.nn.mobilenet_v3.Conv2dNormActivation", "args": {"in_channels": 160, "out_channels": 960, "kernel_size": 1, "stride": 1, "bn_eps": 0.001, "bn_momentum": 0.01, "activation_layer": "hswish"}},
+                ],
+            },
+            {"name": "avgpool", "from": ["features"], "module": "torch.nn.AdaptiveAvgPool2d", "args": {"output_size": 1}},
+            {"name": "flatten", "from": ["avgpool"], "module": "torch.nn.Flatten", "args": {"start_dim": 1}},
+            {
+                "name": "classifier",
+                "from": ["flatten"],
+                "module": "torch.nn.Sequential",
+                "children": [
+                    {"name": "0", "module": "torch.nn.Linear", "args": {"in_features": 960, "out_features": 1280}},
+                    {"name": "1", "module": "torch.nn.Hardswish", "args": {"inplace": True}},
+                    {"name": "2", "module": "torch.nn.Dropout", "args": {"p": 0.2, "inplace": True}},
+                    {"name": "3", "module": "torch.nn.Linear", "args": {"in_features": 1280, "out_features": 1000}},
+                ],
+            },
+        ],
+    },
+    "weight": {
+        "path": "pretrained_models/mobilenet_v3_large-5c1a4163.pth",
+        "url": "https://download.pytorch.org/models/mobilenet_v3_large-5c1a4163.pth",
+        "map_location": "cpu",
+        "strict": False,
+        "src_key_prefix": "layers.",
+        "src_key_slice_start": 0,
+    },
+}
+
+
+maxvit_t_config = {
+    "structure": {
+        "inputs": [{"name": "input", "shape": [3, 224, 224]}],
+        "outputs": [{"name": "classification", "from": ["maxvit"]}],
+        "layers": [
+            {
+                "name": "maxvit",
+                "from": ["input"],
+                "module": "lovely_deep_learning.nn.maxvit.MaxVitT",
+                "args": {},
+            }
+        ],
+    },
+    "weight": {
+        "path": "pretrained_models/maxvit_t-bc5ab103.pth",
+        "url": "https://download.pytorch.org/models/maxvit_t-bc5ab103.pth",
+        "map_location": "cpu",
+        "strict": False,
+        "src_key_prefix": "layers.maxvit.",
+        "src_key_slice_start": 0,
+    },
+}
+
 demo_config_two_inputs_one_outputs = {
     "structure": {
         "inputs": [
