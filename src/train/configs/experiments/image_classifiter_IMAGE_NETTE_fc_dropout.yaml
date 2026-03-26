@@ -108,7 +108,7 @@ model:
         gamma: 0.1
     model:
       model_name: resnet18
-      pretrained: true
+      pretrained: false
 
       structure:
         inputs: [{name: input, shape: [3, 224, 224]}]
@@ -159,7 +159,6 @@ model:
             children:
               - {name: "0", module: lovely_deep_learning.nn.conv.BasicBlock, args: {in_channels: 256, out_channels: 512, stride: 2}}
               - {name: "1", module: lovely_deep_learning.nn.conv.BasicBlock, args: {in_channels: 512, out_channels: 512, stride: 1}}
-            
           # Head
           - name: avgpool
             from: [layer4]
@@ -169,8 +168,12 @@ model:
             from: [avgpool]
             module: torch.nn.Flatten
             args: {}
-          - name: fc
+          - name: dropout
             from: [flatten]
+            module: torch.nn.Dropout
+            args: {p: 0.5}
+          - name: fc
+            from: [dropout]
             module: torch.nn.Linear
             args: {in_features: 512, out_features: 10}  #类别的数量
       weight:

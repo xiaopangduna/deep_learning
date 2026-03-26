@@ -1,0 +1,109 @@
+structure:
+  inputs: [{name: input, shape: [3, 256, 256]}]
+  outputs: [{name: classification, from: [head]}]
+  layers:
+    - name: features
+      from: [input]
+      module: torch.nn.Sequential
+      children:
+        - name: "0"
+          module: lovely_deep_learning.nn.swin_v2.PatchEmbed
+          args: {embed_dim: 96, patch_size: [4, 4], norm_eps: 1.0e-05}
+
+        - name: "1"
+          module: torch.nn.Sequential
+          children:
+            - name: "0"
+              module: lovely_deep_learning.nn.swin_v2.SwinTransformerBlockV2
+              args: {dim: 96, num_heads: 3, window_size: [8, 8], shift_size: [0, 0], mlp_ratio: 4.0, dropout: 0.0, attention_dropout: 0.0, stochastic_depth_prob: 0.0, norm_eps: 1.0e-05}
+            - name: "1"
+              module: lovely_deep_learning.nn.swin_v2.SwinTransformerBlockV2
+              args: {dim: 96, num_heads: 3, window_size: [8, 8], shift_size: [4, 4], mlp_ratio: 4.0, dropout: 0.0, attention_dropout: 0.0, stochastic_depth_prob: 0.018181818181818184, norm_eps: 1.0e-05}
+
+        - name: "2"
+          module: lovely_deep_learning.nn.swin_v2.PatchMergingV2
+          args: {dim: 96, norm_eps: 1.0e-05}
+
+        - name: "3"
+          module: torch.nn.Sequential
+          children:
+            - name: "0"
+              module: lovely_deep_learning.nn.swin_v2.SwinTransformerBlockV2
+              args: {dim: 192, num_heads: 6, window_size: [8, 8], shift_size: [0, 0], mlp_ratio: 4.0, dropout: 0.0, attention_dropout: 0.0, stochastic_depth_prob: 0.03636363636363637, norm_eps: 1.0e-05}
+            - name: "1"
+              module: lovely_deep_learning.nn.swin_v2.SwinTransformerBlockV2
+              args: {dim: 192, num_heads: 6, window_size: [8, 8], shift_size: [4, 4], mlp_ratio: 4.0, dropout: 0.0, attention_dropout: 0.0, stochastic_depth_prob: 0.05454545454545455, norm_eps: 1.0e-05}
+
+        - name: "4"
+          module: lovely_deep_learning.nn.swin_v2.PatchMergingV2
+          args: {dim: 192, norm_eps: 1.0e-05}
+
+        - name: "5"
+          module: torch.nn.Sequential
+          children:
+            - name: "0"
+              module: lovely_deep_learning.nn.swin_v2.SwinTransformerBlockV2
+              args: {dim: 384, num_heads: 12, window_size: [8, 8], shift_size: [0, 0], mlp_ratio: 4.0, dropout: 0.0, attention_dropout: 0.0, stochastic_depth_prob: 0.07272727272727274, norm_eps: 1.0e-05}
+            - name: "1"
+              module: lovely_deep_learning.nn.swin_v2.SwinTransformerBlockV2
+              args: {dim: 384, num_heads: 12, window_size: [8, 8], shift_size: [4, 4], mlp_ratio: 4.0, dropout: 0.0, attention_dropout: 0.0, stochastic_depth_prob: 0.09090909090909091, norm_eps: 1.0e-05}
+            - name: "2"
+              module: lovely_deep_learning.nn.swin_v2.SwinTransformerBlockV2
+              args: {dim: 384, num_heads: 12, window_size: [8, 8], shift_size: [0, 0], mlp_ratio: 4.0, dropout: 0.0, attention_dropout: 0.0, stochastic_depth_prob: 0.1090909090909091, norm_eps: 1.0e-05}
+            - name: "3"
+              module: lovely_deep_learning.nn.swin_v2.SwinTransformerBlockV2
+              args: {dim: 384, num_heads: 12, window_size: [8, 8], shift_size: [4, 4], mlp_ratio: 4.0, dropout: 0.0, attention_dropout: 0.0, stochastic_depth_prob: 0.1272727272727273, norm_eps: 1.0e-05}
+            - name: "4"
+              module: lovely_deep_learning.nn.swin_v2.SwinTransformerBlockV2
+              args: {dim: 384, num_heads: 12, window_size: [8, 8], shift_size: [0, 0], mlp_ratio: 4.0, dropout: 0.0, attention_dropout: 0.0, stochastic_depth_prob: 0.14545454545454548, norm_eps: 1.0e-05}
+            - name: "5"
+              module: lovely_deep_learning.nn.swin_v2.SwinTransformerBlockV2
+              args: {dim: 384, num_heads: 12, window_size: [8, 8], shift_size: [4, 4], mlp_ratio: 4.0, dropout: 0.0, attention_dropout: 0.0, stochastic_depth_prob: 0.16363636363636364, norm_eps: 1.0e-05}
+
+        - name: "6"
+          module: lovely_deep_learning.nn.swin_v2.PatchMergingV2
+          args: {dim: 384, norm_eps: 1.0e-05}
+
+        - name: "7"
+          module: torch.nn.Sequential
+          children:
+            - name: "0"
+              module: lovely_deep_learning.nn.swin_v2.SwinTransformerBlockV2
+              args: {dim: 768, num_heads: 24, window_size: [8, 8], shift_size: [0, 0], mlp_ratio: 4.0, dropout: 0.0, attention_dropout: 0.0, stochastic_depth_prob: 0.18181818181818182, norm_eps: 1.0e-05}
+            - name: "1"
+              module: lovely_deep_learning.nn.swin_v2.SwinTransformerBlockV2
+              args: {dim: 768, num_heads: 24, window_size: [8, 8], shift_size: [4, 4], mlp_ratio: 4.0, dropout: 0.0, attention_dropout: 0.0, stochastic_depth_prob: 0.2, norm_eps: 1.0e-05}
+
+    - name: norm
+      from: [features]
+      module: torch.nn.LayerNorm
+      args: {normalized_shape: 768, eps: 1.0e-05}
+
+    - name: permute
+      from: [norm]
+      module: torchvision.ops.misc.Permute
+      args: {dims: [0, 3, 1, 2]}
+
+    - name: avgpool
+      from: [permute]
+      module: torch.nn.AdaptiveAvgPool2d
+      args: {output_size: 1}
+
+    - name: flatten
+      from: [avgpool]
+      module: torch.nn.Flatten
+      args: {start_dim: 1}
+
+    - name: head
+      from: [flatten]
+      module: torch.nn.Linear
+      args: {in_features: 768, out_features: 1000}
+
+weight:
+  path: pretrained_models/swin_v2_t-b137f0e2.pth
+  url: https://download.pytorch.org/models/swin_v2_t-b137f0e2.pth
+  map_location: cpu
+  strict: false
+  src_key_prefix: layers.
+  src_key_slice_start: 0
+

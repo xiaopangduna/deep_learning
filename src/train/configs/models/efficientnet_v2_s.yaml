@@ -1,0 +1,203 @@
+structure:
+  inputs: [{name: input, shape: [3, 384, 384]}]
+  outputs: [{name: classification, from: [classifier]}]
+  layers:
+    - name: features
+      from: [input]
+      module: torch.nn.Sequential
+      children:
+        - name: "0"
+          module: torch.nn.Sequential
+          children:
+            - name: "0"
+              module: torch.nn.Conv2d
+              args: {in_channels: 3, out_channels: 24, kernel_size: 3, stride: 2, padding: 1, bias: false}
+            - name: "1"
+              module: torch.nn.BatchNorm2d
+              args: {num_features: 24, eps: 0.001}
+            - name: "2"
+              module: torch.nn.SiLU
+              args: {inplace: true}
+
+        - name: "1"
+          module: torch.nn.Sequential
+          children:
+            - name: "0"
+              module: lovely_deep_learning.nn.efficientnet_v2.FusedMBConv
+              args: {input_channels: 24, out_channels: 24, expand_ratio: 1, kernel: 3, stride: 1, stochastic_depth_prob: 0.0, bn_eps: 0.001}
+            - name: "1"
+              module: lovely_deep_learning.nn.efficientnet_v2.FusedMBConv
+              args: {input_channels: 24, out_channels: 24, expand_ratio: 1, kernel: 3, stride: 1, stochastic_depth_prob: 0.005555555555555556, bn_eps: 0.001}
+
+        - name: "2"
+          module: torch.nn.Sequential
+          children:
+            - name: "0"
+              module: lovely_deep_learning.nn.efficientnet_v2.FusedMBConv
+              args: {input_channels: 24, out_channels: 48, expand_ratio: 4, kernel: 3, stride: 2, stochastic_depth_prob: 0.011111111111111112, bn_eps: 0.001}
+            - name: "1"
+              module: lovely_deep_learning.nn.efficientnet_v2.FusedMBConv
+              args: {input_channels: 48, out_channels: 48, expand_ratio: 4, kernel: 3, stride: 1, stochastic_depth_prob: 0.016666666666666666, bn_eps: 0.001}
+            - name: "2"
+              module: lovely_deep_learning.nn.efficientnet_v2.FusedMBConv
+              args: {input_channels: 48, out_channels: 48, expand_ratio: 4, kernel: 3, stride: 1, stochastic_depth_prob: 0.022222222222222223, bn_eps: 0.001}
+            - name: "3"
+              module: lovely_deep_learning.nn.efficientnet_v2.FusedMBConv
+              args: {input_channels: 48, out_channels: 48, expand_ratio: 4, kernel: 3, stride: 1, stochastic_depth_prob: 0.027777777777777776, bn_eps: 0.001}
+
+        - name: "3"
+          module: torch.nn.Sequential
+          children:
+            - name: "0"
+              module: lovely_deep_learning.nn.efficientnet_v2.FusedMBConv
+              args: {input_channels: 48, out_channels: 64, expand_ratio: 4, kernel: 3, stride: 2, stochastic_depth_prob: 0.03333333333333333, bn_eps: 0.001}
+            - name: "1"
+              module: lovely_deep_learning.nn.efficientnet_v2.FusedMBConv
+              args: {input_channels: 64, out_channels: 64, expand_ratio: 4, kernel: 3, stride: 1, stochastic_depth_prob: 0.03888888888888889, bn_eps: 0.001}
+            - name: "2"
+              module: lovely_deep_learning.nn.efficientnet_v2.FusedMBConv
+              args: {input_channels: 64, out_channels: 64, expand_ratio: 4, kernel: 3, stride: 1, stochastic_depth_prob: 0.044444444444444446, bn_eps: 0.001}
+            - name: "3"
+              module: lovely_deep_learning.nn.efficientnet_v2.FusedMBConv
+              args: {input_channels: 64, out_channels: 64, expand_ratio: 4, kernel: 3, stride: 1, stochastic_depth_prob: 0.05, bn_eps: 0.001}
+
+        - name: "4"
+          module: torch.nn.Sequential
+          children:
+            - name: "0"
+              module: lovely_deep_learning.nn.efficientnet_v2.MBConv
+              args: {input_channels: 64, out_channels: 128, expand_ratio: 4, kernel: 3, stride: 2, stochastic_depth_prob: 0.05555555555555555, bn_eps: 0.001}
+            - name: "1"
+              module: lovely_deep_learning.nn.efficientnet_v2.MBConv
+              args: {input_channels: 128, out_channels: 128, expand_ratio: 4, kernel: 3, stride: 1, stochastic_depth_prob: 0.06111111111111111, bn_eps: 0.001}
+            - name: "2"
+              module: lovely_deep_learning.nn.efficientnet_v2.MBConv
+              args: {input_channels: 128, out_channels: 128, expand_ratio: 4, kernel: 3, stride: 1, stochastic_depth_prob: 0.06666666666666667, bn_eps: 0.001}
+            - name: "3"
+              module: lovely_deep_learning.nn.efficientnet_v2.MBConv
+              args: {input_channels: 128, out_channels: 128, expand_ratio: 4, kernel: 3, stride: 1, stochastic_depth_prob: 0.07222222222222222, bn_eps: 0.001}
+            - name: "4"
+              module: lovely_deep_learning.nn.efficientnet_v2.MBConv
+              args: {input_channels: 128, out_channels: 128, expand_ratio: 4, kernel: 3, stride: 1, stochastic_depth_prob: 0.07777777777777778, bn_eps: 0.001}
+            - name: "5"
+              module: lovely_deep_learning.nn.efficientnet_v2.MBConv
+              args: {input_channels: 128, out_channels: 128, expand_ratio: 4, kernel: 3, stride: 1, stochastic_depth_prob: 0.08333333333333333, bn_eps: 0.001}
+
+        - name: "5"
+          module: torch.nn.Sequential
+          children:
+            - name: "0"
+              module: lovely_deep_learning.nn.efficientnet_v2.MBConv
+              args: {input_channels: 128, out_channels: 160, expand_ratio: 6, kernel: 3, stride: 1, stochastic_depth_prob: 0.08888888888888889, bn_eps: 0.001}
+            - name: "1"
+              module: lovely_deep_learning.nn.efficientnet_v2.MBConv
+              args: {input_channels: 160, out_channels: 160, expand_ratio: 6, kernel: 3, stride: 1, stochastic_depth_prob: 0.09444444444444444, bn_eps: 0.001}
+            - name: "2"
+              module: lovely_deep_learning.nn.efficientnet_v2.MBConv
+              args: {input_channels: 160, out_channels: 160, expand_ratio: 6, kernel: 3, stride: 1, stochastic_depth_prob: 0.1, bn_eps: 0.001}
+            - name: "3"
+              module: lovely_deep_learning.nn.efficientnet_v2.MBConv
+              args: {input_channels: 160, out_channels: 160, expand_ratio: 6, kernel: 3, stride: 1, stochastic_depth_prob: 0.10555555555555556, bn_eps: 0.001}
+            - name: "4"
+              module: lovely_deep_learning.nn.efficientnet_v2.MBConv
+              args: {input_channels: 160, out_channels: 160, expand_ratio: 6, kernel: 3, stride: 1, stochastic_depth_prob: 0.1111111111111111, bn_eps: 0.001}
+            - name: "5"
+              module: lovely_deep_learning.nn.efficientnet_v2.MBConv
+              args: {input_channels: 160, out_channels: 160, expand_ratio: 6, kernel: 3, stride: 1, stochastic_depth_prob: 0.11666666666666667, bn_eps: 0.001}
+            - name: "6"
+              module: lovely_deep_learning.nn.efficientnet_v2.MBConv
+              args: {input_channels: 160, out_channels: 160, expand_ratio: 6, kernel: 3, stride: 1, stochastic_depth_prob: 0.12222222222222222, bn_eps: 0.001}
+            - name: "7"
+              module: lovely_deep_learning.nn.efficientnet_v2.MBConv
+              args: {input_channels: 160, out_channels: 160, expand_ratio: 6, kernel: 3, stride: 1, stochastic_depth_prob: 0.12777777777777777, bn_eps: 0.001}
+            - name: "8"
+              module: lovely_deep_learning.nn.efficientnet_v2.MBConv
+              args: {input_channels: 160, out_channels: 160, expand_ratio: 6, kernel: 3, stride: 1, stochastic_depth_prob: 0.13333333333333333, bn_eps: 0.001}
+
+        - name: "6"
+          module: torch.nn.Sequential
+          children:
+            - name: "0"
+              module: lovely_deep_learning.nn.efficientnet_v2.MBConv
+              args: {input_channels: 160, out_channels: 256, expand_ratio: 6, kernel: 3, stride: 2, stochastic_depth_prob: 0.1388888888888889, bn_eps: 0.001}
+            - name: "1"
+              module: lovely_deep_learning.nn.efficientnet_v2.MBConv
+              args: {input_channels: 256, out_channels: 256, expand_ratio: 6, kernel: 3, stride: 1, stochastic_depth_prob: 0.14444444444444446, bn_eps: 0.001}
+            - name: "2"
+              module: lovely_deep_learning.nn.efficientnet_v2.MBConv
+              args: {input_channels: 256, out_channels: 256, expand_ratio: 6, kernel: 3, stride: 1, stochastic_depth_prob: 0.15, bn_eps: 0.001}
+            - name: "3"
+              module: lovely_deep_learning.nn.efficientnet_v2.MBConv
+              args: {input_channels: 256, out_channels: 256, expand_ratio: 6, kernel: 3, stride: 1, stochastic_depth_prob: 0.15555555555555556, bn_eps: 0.001}
+            - name: "4"
+              module: lovely_deep_learning.nn.efficientnet_v2.MBConv
+              args: {input_channels: 256, out_channels: 256, expand_ratio: 6, kernel: 3, stride: 1, stochastic_depth_prob: 0.16111111111111112, bn_eps: 0.001}
+            - name: "5"
+              module: lovely_deep_learning.nn.efficientnet_v2.MBConv
+              args: {input_channels: 256, out_channels: 256, expand_ratio: 6, kernel: 3, stride: 1, stochastic_depth_prob: 0.16666666666666666, bn_eps: 0.001}
+            - name: "6"
+              module: lovely_deep_learning.nn.efficientnet_v2.MBConv
+              args: {input_channels: 256, out_channels: 256, expand_ratio: 6, kernel: 3, stride: 1, stochastic_depth_prob: 0.17222222222222222, bn_eps: 0.001}
+            - name: "7"
+              module: lovely_deep_learning.nn.efficientnet_v2.MBConv
+              args: {input_channels: 256, out_channels: 256, expand_ratio: 6, kernel: 3, stride: 1, stochastic_depth_prob: 0.17777777777777778, bn_eps: 0.001}
+            - name: "8"
+              module: lovely_deep_learning.nn.efficientnet_v2.MBConv
+              args: {input_channels: 256, out_channels: 256, expand_ratio: 6, kernel: 3, stride: 1, stochastic_depth_prob: 0.18333333333333332, bn_eps: 0.001}
+            - name: "9"
+              module: lovely_deep_learning.nn.efficientnet_v2.MBConv
+              args: {input_channels: 256, out_channels: 256, expand_ratio: 6, kernel: 3, stride: 1, stochastic_depth_prob: 0.18888888888888888, bn_eps: 0.001}
+            - name: "10"
+              module: lovely_deep_learning.nn.efficientnet_v2.MBConv
+              args: {input_channels: 256, out_channels: 256, expand_ratio: 6, kernel: 3, stride: 1, stochastic_depth_prob: 0.19444444444444445, bn_eps: 0.001}
+            - name: "11"
+              module: lovely_deep_learning.nn.efficientnet_v2.MBConv
+              args: {input_channels: 256, out_channels: 256, expand_ratio: 6, kernel: 3, stride: 1, stochastic_depth_prob: 0.2, bn_eps: 0.001}
+            - name: "12"
+              module: lovely_deep_learning.nn.efficientnet_v2.MBConv
+              args: {input_channels: 256, out_channels: 256, expand_ratio: 6, kernel: 3, stride: 1, stochastic_depth_prob: 0.20555555555555555, bn_eps: 0.001}
+            - name: "13"
+              module: lovely_deep_learning.nn.efficientnet_v2.MBConv
+              args: {input_channels: 256, out_channels: 256, expand_ratio: 6, kernel: 3, stride: 1, stochastic_depth_prob: 0.2111111111111111, bn_eps: 0.001}
+            - name: "14"
+              module: lovely_deep_learning.nn.efficientnet_v2.MBConv
+              args: {input_channels: 256, out_channels: 256, expand_ratio: 6, kernel: 3, stride: 1, stochastic_depth_prob: 0.21666666666666667, bn_eps: 0.001}
+
+        - name: "7"
+          module: torch.nn.Sequential
+          children:
+            - name: "0"
+              module: torch.nn.Conv2d
+              args: {in_channels: 256, out_channels: 1280, kernel_size: 1, stride: 1, padding: 0, bias: false}
+            - name: "1"
+              module: torch.nn.BatchNorm2d
+              args: {num_features: 1280, eps: 0.001}
+            - name: "2"
+              module: torch.nn.SiLU
+              args: {inplace: true}
+
+    - name: avgpool
+      from: [features]
+      module: torch.nn.AdaptiveAvgPool2d
+      args: {output_size: 1}
+
+    - name: flatten
+      from: [avgpool]
+      module: torch.nn.Flatten
+      args: {start_dim: 1}
+
+    - name: classifier
+      from: [flatten]
+      module: torch.nn.Sequential
+      children:
+        - {name: "0", module: torch.nn.Dropout, args: {p: 0.2, inplace: true}}
+        - {name: "1", module: torch.nn.Linear, args: {in_features: 1280, out_features: 1000}}
+
+weight:
+  path: pretrained_models/efficientnet_v2_s-dd5fe13b.pth
+  url: https://download.pytorch.org/models/efficientnet_v2_s-dd5fe13b.pth
+  map_location: cpu
+  strict: false
+  src_key_prefix: layers.
+  src_key_slice_start: 0
+

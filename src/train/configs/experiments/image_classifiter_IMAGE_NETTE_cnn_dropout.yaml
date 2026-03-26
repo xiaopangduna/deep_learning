@@ -31,7 +31,6 @@ trainer:
     init_args:
       filename: profiler
       extended: true
-
         
 data:
   class_path: lovely_deep_learning.data_module.image_nette.ImageNetteDataModule
@@ -108,7 +107,7 @@ model:
         gamma: 0.1
     model:
       model_name: resnet18
-      pretrained: true
+      pretrained: false
 
       structure:
         inputs: [{name: input, shape: [3, 224, 224]}]
@@ -159,10 +158,13 @@ model:
             children:
               - {name: "0", module: lovely_deep_learning.nn.conv.BasicBlock, args: {in_channels: 256, out_channels: 512, stride: 2}}
               - {name: "1", module: lovely_deep_learning.nn.conv.BasicBlock, args: {in_channels: 512, out_channels: 512, stride: 1}}
-            
+          - name: dropout
+            from: [layer4]
+            module: torch.nn.Dropout2d
+            args: {p: 0.5}
           # Head
           - name: avgpool
-            from: [layer4]
+            from: [dropout]
             module: torch.nn.AdaptiveAvgPool2d
             args: {output_size: [1, 1]}
           - name: flatten
