@@ -89,6 +89,8 @@ python scripts/train.py fit --config configs/experiments/mnist.yaml
 
 所有 configs/experiments 目录下的配置文件都应支持以下指令。
 
+bash ./scripts/run_batch_train.sh 
+
 ## 1 训练
 
 ```bash

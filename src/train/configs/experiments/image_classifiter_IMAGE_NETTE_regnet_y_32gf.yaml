@@ -149,7 +149,7 @@ model:
           - name: fc
             from: [flatten]
             module: torch.nn.Linear
-            args: {in_features: 3712, out_features: 1000}
+            args: {in_features: 3712, out_features: 10}
 
       weight:
         path: pretrained_models/regnet_y_32gf-8db6d4b5.pth
