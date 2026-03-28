@@ -24,6 +24,3 @@ def test_prepare_data():
     assert train_path.exists(), "train 目录不存在，下载可能失败"
     assert val_path.exists(), "val 目录不存在，下载可能失败"
 
-
-def test_setup():
-    pass

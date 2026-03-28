@@ -1,22 +1,15 @@
 import pytest
-import csv
-import os
-import numpy as np
-import shutil
-import cv2
-from pathlib import Path
 
 from torchvision.transforms import v2
-from torchvision.io import decode_image
-from torchvision.utils import save_image
 import torch
 
 from lovely_deep_learning.data_module.image_classifier import ImageClassifierDataModule
 
-PATH_TRAIN_CSV_PATHS = ["./datasets/IMAGENETTE/train.csv"]
-PATH_PREDICT_CSV_PATHS = ["./datasets/IMAGENETTE/predict.csv"]
+PATH_TRAIN_CSV_PATHS = ["tests/test_data/dataset/test_image_classifier_train.csv"]
+PATH_PREDICT_CSV_PATHS = ["tests/test_data/dataset/test_image_classifier_predict.csv"]
 
 KEY_MAP = {"img_path": "path_img", "class_name": "class_name", "class_id": "class_id"}
+PREDICT_KEY_MAP = {"img_path": "path_img"}
 BATCH_SIZE = 1
 NUM_WORKERS = 1
 TRANSFORM_TRAIN = v2.Compose([v2.Resize(size=(224, 224)), v2.ToDtype(dtype=torch.float32, scale=True)])
@@ -24,14 +17,6 @@ TRANSFORM_TRAIN = v2.Compose([v2.Resize(size=(224, 224)), v2.ToDtype(dtype=torch
 map_class_id_to_class_name = {
     0: "n01440764",
     1: "n02102040",
-    2: "n02979186",
-    3: "n03000684",
-    4: "n03028079",
-    5: "n03394916",
-    6: "n03417042",
-    7: "n03425413",
-    8: "n03445777",
-    9: "n03888257",
 }
 
 
@@ -42,13 +27,15 @@ def test_ImageClassifierDataModule_init():
         val_csv_paths=PATH_TRAIN_CSV_PATHS,
         test_csv_paths=PATH_TRAIN_CSV_PATHS,
         predict_csv_paths=PATH_PREDICT_CSV_PATHS,
-        key_map=KEY_MAP,
-        batch_size=BATCH_SIZE,
-        num_workers=NUM_WORKERS,
         transform_train=TRANSFORM_TRAIN,
         transform_val=TRANSFORM_TRAIN,
         transform_test=TRANSFORM_TRAIN,
         transform_predict=TRANSFORM_TRAIN,
+        batch_size=BATCH_SIZE,
+        num_workers=NUM_WORKERS,
+        
+        key_map=KEY_MAP,
+        predict_key_map=PREDICT_KEY_MAP,
         map_class_id_to_class_name=map_class_id_to_class_name,
     )
 
@@ -65,9 +52,10 @@ def test_ImageClassifierDataModule_setup():
         transform_val=TRANSFORM_TRAIN,
         transform_test=TRANSFORM_TRAIN,
         transform_predict=TRANSFORM_TRAIN,
-        key_map=KEY_MAP,
         batch_size=BATCH_SIZE,
         num_workers=NUM_WORKERS,
+        key_map=KEY_MAP,
+        predict_key_map=PREDICT_KEY_MAP,
         map_class_id_to_class_name=map_class_id_to_class_name,
     )
     data_module.setup("fit")
@@ -94,9 +82,10 @@ def test_ImageClassifierDataModule_train_dataloader():
         transform_val=TRANSFORM_TRAIN,
         transform_test=TRANSFORM_TRAIN,
         transform_predict=TRANSFORM_TRAIN,
-        key_map=KEY_MAP,
         batch_size=BATCH_SIZE,
         num_workers=NUM_WORKERS,
+        key_map=KEY_MAP,
+        predict_key_map=PREDICT_KEY_MAP,
         map_class_id_to_class_name=map_class_id_to_class_name,
     )
     data_module.setup("fit")
@@ -120,9 +109,10 @@ def test_ImageClassifierDataModule_predict_dataloader():
         transform_val=TRANSFORM_TRAIN,
         transform_test=TRANSFORM_TRAIN,
         transform_predict=TRANSFORM_TRAIN,
-        key_map=KEY_MAP,
         batch_size=BATCH_SIZE,
         num_workers=NUM_WORKERS,
+        key_map=KEY_MAP,
+        predict_key_map=PREDICT_KEY_MAP,
         map_class_id_to_class_name=map_class_id_to_class_name,
     )
     data_module.setup("predict")

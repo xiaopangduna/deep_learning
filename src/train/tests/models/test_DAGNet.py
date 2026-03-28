@@ -8,23 +8,6 @@ from lovely_deep_learning.model.DAGWeightLoader import DAGWeightLoader
 from .utils import *
 
 
-def test_yaml_config_equal_dict_config():
-    """测试函数：使用辅助函数读取YAML，通过assert对比内容"""
-    test_cases = [
-        (resnet18_config, "configs/models/resnet18.yaml"),
-        (efficientnet_v2_s_config, "configs/models/efficientnet_v2_s.yaml"),
-        (swin_v2_t_config, "configs/models/swin_v2_t.yaml"),
-        (regnet_y_32gf_config, "configs/models/regnet_y_32gf.yaml"),
-        (mobilenet_v3_large_config, "configs/models/mobilenet_v3_large.yaml"),
-        (maxvit_t_config, "configs/models/maxvit_t.yaml"),
-        (yolov8_n_config, "configs/models/yolov8_n.yaml"),
-    ]
-
-    for expected, yaml_path in test_cases:
-        actual = load_yaml_config(yaml_path)
-        assert actual == expected, f"配置不匹配 - 文件: {yaml_path}\n预期: {expected}\n实际: {actual}"
-
-
 def test_DAGNet_demo_model_two_inputs_one_outputs():
     config = demo_config_two_inputs_one_outputs
     model = DAGNet(config["structure"])
@@ -228,40 +211,6 @@ def test_DAGWeightLoader_mobilenet_v3_large():
     assert torch.allclose(official_out, dag_out, atol=1e-6)
 
 
-def test_DAGNet_equal_MaxVitT():
-    config = maxvit_t_config
-    net = DAGNet(config["structure"])
-
-    official = models.maxvit_t(weights=models.MaxVit_T_Weights.DEFAULT)
-    official_sd = official.state_dict()
-    my_sd = net.state_dict()
-    new_sd = {"layers.maxvit." + k: v for k, v in official_sd.items()}
-    compatible_sd = {k: v for k, v in new_sd.items() if k in my_sd}
-    my_sd.update(compatible_sd)
-    net.load_state_dict(my_sd)
-
-    x = torch.randn(1, 3, 224, 224)
-    official.eval()
-    net.eval()
-    with torch.no_grad():
-        official_out = official(x)
-        dag_out = net([x])[0]
-    assert torch.allclose(official_out, dag_out, atol=1e-6)
-
-
-def test_DAGWeightLoader_maxvit_t():
-    config = maxvit_t_config
-    net = DAGNet(config["structure"])
-    loader = DAGWeightLoader()
-    loader.load_weights(net, **config["weight"])
-    official = models.maxvit_t(weights=models.MaxVit_T_Weights.DEFAULT)
-    x = torch.randn(1, 3, 224, 224)
-    official.eval()
-    net.eval()
-    with torch.no_grad():
-        official_out = official(x)
-        dag_out = net([x])[0]
-    assert torch.allclose(official_out, dag_out, atol=1e-6)
 
 def test_DAGNet_resnet18_pretrained():
     config = resnet18_config

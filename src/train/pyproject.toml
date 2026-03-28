@@ -40,12 +40,13 @@ priority = "explicit"
 
 [dependency-groups]
 dev = [
-    "pytest (>=9.0.2,<10.0.0)"
+    "pytest (>=9.0.2,<10.0.0)",
+    "PyYAML (>=6.0,<7.0)"
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-
 markers = [
     "download: tests that download datasets",
+    "cli: tests that run cli commands",
 ]

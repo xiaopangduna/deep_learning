@@ -1,22 +1,114 @@
-import os
-from typing import Optional
 from pathlib import Path
+from typing import List
+
 import urllib.request
 import tarfile
 import pandas as pd
-import lightning.pytorch as pl
-from torchvision.datasets import ImageFolder
-from torch.utils.data import DataLoader
-from lovely_deep_learning.dataset.predict import ImagePredictDataset
-from .base import BaseDataModule
 from .image_classifier import ImageClassifierDataModule
 
 
 class ImageNetteDataModule(ImageClassifierDataModule):
-    def __init__(self, dataset_dir="datasets/IMAGENETTE/imagenette2-320", map_class_id_to_class_name={}, **kwargs):
-        super().__init__(**kwargs)
+    """ImageNette 2-320：下载数据、生成 CSV，并沿用图像分类 DataModule 的训练 / 验证 / 测试 / 预测流程。
+
+    使用顺序
+    --------
+    1. 构造时传入 ``dataset_dir`` 以及各阶段 CSV 路径、``transform_*``、``key_map`` 等（见下方参数）。
+    2. ``trainer.fit`` 之前 Lightning 会调用 ``prepare_data``：若 ``dataset_dir`` 不存在则下载并解压，
+       然后在 ``dataset_dir.parent`` 下写入三个 CSV（若已存在则跳过）。
+    3. ``setup`` 由父类完成，按 CSV 构建 ``ImageClassifierDataset``。
+
+    路径约定
+    --------
+    - ``dataset_dir`` 默认为 ``datasets/IMAGENETTE/imagenette2-320``，即内含 ``train/``、``val/``
+      类别子目录的根目录（与 fast.ai 发布的目录结构一致）。
+    - 生成的 CSV 中 ``path_img`` 为相对路径（如 ``imagenette2-320/train/...``），相对 **CSV 文件所在目录**
+      解析；因此 YAML 里 ``train_csv_paths`` 等应列为 ``datasets/IMAGENETTE/train.csv`` 这类与解压布局
+      一致的路径。
+
+    构造参数见 ``__init__``（显式列出 ``BaseDataModule`` / ``ImageClassifierDataModule`` 的全部字段，
+    便于类型检查与 IDE 补全）。若提供 ``map_class_id_to_class_name``，生成 CSV 时的类别顺序与 id
+    以该映射为准；否则按 ``train`` 下类别文件夹名字典序分配 id。
+    """
+
+    def __init__(
+        self,
+        train_csv_paths: List[str],
+        val_csv_paths: List[str],
+        test_csv_paths: List[str],
+        predict_csv_paths: List[str],
+        transform_train,
+        transform_val,
+        transform_test=None,
+        transform_predict=None,
+        batch_size: int = 32,
+        num_workers: int = 4,
+        key_map=None,
+        predict_key_map=None,
+        map_class_id_to_class_name=None,
+        norm_mean=None,
+        norm_std=None,
+        dataset_dir="datasets/IMAGENETTE/imagenette2-320",
+    ):
+        """
+        Parameters
+        ----------
+        train_csv_paths, val_csv_paths, test_csv_paths, predict_csv_paths
+            各阶段 CSV 路径列表；须与 ``prepare_data`` 生成文件位置一致。详见 ``BaseDataModule``。
+        transform_train, transform_val
+            训练、验证集变换。详见 ``BaseDataModule``。
+        transform_test, transform_predict
+            测试、预测变换；默认 ``None`` 时父类回退为 ``transform_val``。
+        batch_size, num_workers
+            各 ``DataLoader`` 批量与 worker 数。
+        key_map, predict_key_map, map_class_id_to_class_name, norm_mean, norm_std
+            图像分类 DataModule 与 Dataset 共用配置；语义见 ``ImageClassifierDataModule``。
+        dataset_dir : str or pathlib.Path
+            ImageNette 解压后的根目录（含 ``train/``、``val/``）。tar 下载至其父目录，CSV 亦写在父目录下。
+        """
+        super().__init__(
+            key_map=key_map,
+            predict_key_map=predict_key_map,
+            map_class_id_to_class_name=map_class_id_to_class_name,
+            norm_mean=norm_mean,
+            norm_std=norm_std,
+            train_csv_paths=train_csv_paths,
+            val_csv_paths=val_csv_paths,
+            test_csv_paths=test_csv_paths,
+            predict_csv_paths=predict_csv_paths,
+            transform_train=transform_train,
+            transform_val=transform_val,
+            transform_test=transform_test,
+            transform_predict=transform_predict,
+            batch_size=batch_size,
+            num_workers=num_workers,
+        )
         self.dataset_dir = Path(dataset_dir)
-        self.map_class_id_to_class_name = map_class_id_to_class_name
+
+    def prepare_data(self):
+        """下载并解压 ImageNette 2-320（若 ``dataset_dir`` 尚不存在），再生成或跳过已存在的 CSV。
+
+        解压目录为 ``dataset_dir`` 的父目录；``self.dataset_dir`` 指向含 ``train``/``val`` 的数据根。
+        """
+        parent_dir = self.dataset_dir.parent
+        parent_dir.mkdir(parents=True, exist_ok=True)
+
+        imagenette_url = "https://s3.amazonaws.com/fast-ai-imageclas/imagenette2-320.tgz"
+        imagenette_tar = parent_dir / "imagenette2-320.tgz"
+
+        if not self.dataset_dir.exists():
+            print(f"Downloading ImageNette dataset to {imagenette_tar} ...")
+            urllib.request.urlretrieve(imagenette_url, str(imagenette_tar))
+
+            print(f"Extracting {imagenette_tar} ...")
+            with tarfile.open(imagenette_tar, "r:gz") as tar:
+                tar.extractall(path=str(parent_dir))  # 解压到父目录
+
+            print("Download and extraction complete.")
+        else:
+            print("ImageNette dataset already exists, skipping download.")
+
+        # 生成CSV文件
+        self._generate_csv_files(self.dataset_dir)
 
     def _generate_csv_files(self, dataset_dir: Path):
         """
@@ -103,29 +195,3 @@ class ImageNetteDataModule(ImageClassifierDataModule):
         print(f"Generated {str(val_csv_path)} with {len(val_df)} entries")
         print(f"Generated {str(predict_csv_path)} with {len(predict_rows)} entries")
         print("============================================================================")
-
-    def prepare_data(self):
-        """
-        下载并解压 ImageNette 320px版本。
-        self.data_dir 指向解压后的目录
-        """
-        parent_dir = self.dataset_dir.parent
-        parent_dir.mkdir(parents=True, exist_ok=True)
-
-        imagenette_url = "https://s3.amazonaws.com/fast-ai-imageclas/imagenette2-320.tgz"
-        imagenette_tar = parent_dir / "imagenette2-320.tgz"
-
-        if not self.dataset_dir.exists():
-            print(f"Downloading ImageNette dataset to {imagenette_tar} ...")
-            urllib.request.urlretrieve(imagenette_url, str(imagenette_tar))
-
-            print(f"Extracting {imagenette_tar} ...")
-            with tarfile.open(imagenette_tar, "r:gz") as tar:
-                tar.extractall(path=str(parent_dir))  # 解压到父目录
-
-            print("Download and extraction complete.")
-        else:
-            print("ImageNette dataset already exists, skipping download.")
-
-        # 生成CSV文件
-        self._generate_csv_files(self.dataset_dir)
