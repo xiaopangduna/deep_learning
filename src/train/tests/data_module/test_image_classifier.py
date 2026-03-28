@@ -39,7 +39,9 @@ def test_ImageClassifierDataModule_init():
         map_class_id_to_class_name=map_class_id_to_class_name,
     )
 
-    pass
+    assert data_module.map_class_id_to_class_name == {}
+    data_module.setup("fit")
+    assert data_module.map_class_id_to_class_name == map_class_id_to_class_name
 
 
 def test_ImageClassifierDataModule_setup():

@@ -1,26 +1,13 @@
 # -*- encoding: utf-8 -*-
-"""
-@File    :   classify.py
-@Python  :   python3.8
-@version :   0.0
-@Time    :   2024/09/12 21:51:43
-@Author  :   xiaopangdun
-@Email   :   18675381281@163.com
-@Desc    :   This is a simple example
-"""
-from typing import List, Dict, Optional, Callable, Any, Tuple, Union, Mapping, Sequence
+
+import csv
+from typing import List, Dict, Optional, Callable, Any, Union, Sequence
 from pathlib import Path
-import json
-import warnings
-from copy import deepcopy
-import lightning as L
+
 import torch
 from torchvision.transforms import transforms as T
-
 import numpy as np
-import random
 import cv2
-import matplotlib.pyplot as plt
 from torchvision import tv_tensors
 
 from .base import BaseDataset
@@ -38,11 +25,62 @@ class ImageClassifierDataset(BaseDataset):
         paths_label (list[str]):A list of paths of label.
         transfroms (str): One of train,val,test and  none.Default none
         cfgs (dict): A dictionary holds parameters in data processing.
-        map_class_id_to_class_name: 若显式传入 dict/Mapping，则用于校验与可视化；若为 None 且 CSV 同时含
-            class_id 与 class_name，则从表中自动推断 id→name（同一 id 对应多个 name 会报错）。
+        map_class_id_to_class_name: ``None`` 表示不使用映射（空 dict）。若为 ``dict``（键可为 str，会转为 int），
+            则直接作为 id→类别名；若为 ``str``，则视为 CSV 文件路径，表头须含 ``class_id``、``class_name``。
         key_map 会先与首个 CSV 的表头取交集再交给 BaseDataset（例如 predict 仅含 path_img 时自动去掉标签列映射）；
         被忽略的项会触发 UserWarning。
     """
+
+    @staticmethod
+    def load_map_class_id_to_class_name_from_csv(path: Union[str, Path]) -> Dict[int, str]:
+        """读取表头为 class_id, class_name 的 CSV，返回 ``{int: str}``。"""
+        p = Path(path).expanduser().resolve()
+        if not p.is_file():
+            raise FileNotFoundError(f"类别映射 CSV 不存在：{p}")
+        with p.open(encoding="utf-8", newline="") as f:
+            reader = csv.DictReader(f)
+            if not reader.fieldnames:
+                raise ValueError(f"CSV 无表头：{p}")
+            lower = {name.lower(): name for name in reader.fieldnames}
+            if "class_id" not in lower or "class_name" not in lower:
+                raise ValueError(
+                    f"CSV 须包含 class_id、class_name 列（表头不区分大小写）：{p}"
+                )
+            id_col, name_col = lower["class_id"], lower["class_name"]
+            out: Dict[int, str] = {}
+            for row in reader:
+                raw_id = row.get(id_col)
+                if raw_id is None or str(raw_id).strip() == "":
+                    continue
+                cid = int(str(raw_id).strip())
+                name = str(row.get(name_col, "")).strip()
+                if cid in out and out[cid] != name:
+                    raise ValueError(
+                        f"同一 class_id 在映射 CSV 中对应多个 class_name：id={cid} "
+                        f"{out[cid]!r} vs {name!r}（{p}）"
+                    )
+                out[cid] = name
+            return out
+
+    @staticmethod
+    def _normalize_map_class_id_to_class_name(
+        map_class_id_to_class_name: Optional[Union[Dict[Any, str], str]],
+    ) -> Dict[int, str]:
+        if map_class_id_to_class_name is None:
+            return {}
+        if isinstance(map_class_id_to_class_name, str):
+            return ImageClassifierDataset.load_map_class_id_to_class_name_from_csv(
+                map_class_id_to_class_name
+            )
+        if isinstance(map_class_id_to_class_name, dict):
+            return {
+                int(k): str(v)
+                for k, v in map_class_id_to_class_name.items()
+            }
+        raise TypeError(
+            "map_class_id_to_class_name 须为 None、dict 或 str（CSV 路径），"
+            f"收到 {type(map_class_id_to_class_name)!r}"
+        )
 
     def __init__(
         self,
@@ -50,83 +88,37 @@ class ImageClassifierDataset(BaseDataset):
         key_map: Dict[str, str] = {
             "img_path": "path_img", "class_name": "class_name", "class_id": "class_id"},
         transform: Optional[Callable] = None,
-        map_class_id_to_class_name: Optional[Dict[int, str]] = None,
+        map_class_id_to_class_name: Optional[Union[Dict[Any, str], str]] = None,
         norm_mean: list[float] = [0.485, 0.456, 0.406],
         norm_std: list[float] = [0.229, 0.224, 0.225]
     ):
         super().__init__(csv_paths=csv_paths, key_map=key_map, transform=transform)
+
+        self.norm_mean = norm_mean
+        self.norm_std = norm_std
+        self.map_class_id_to_class_name = self._normalize_map_class_id_to_class_name(
+            map_class_id_to_class_name
+        )
+
         self._has_label = (
             "class_id" in self.sample_path_table.columns
             and len(self.sample_path_table) > 0
             and not self.sample_path_table["class_id"].astype(str).str.strip().eq("").all()
         )
-        self.norm_mean = norm_mean
-        self.norm_std = norm_std
-
-        if map_class_id_to_class_name is not None:
-            self.map_class_id_to_class_name = dict(map_class_id_to_class_name)
-        elif self._has_label and "class_name" in self.sample_path_table.columns:
-            self.map_class_id_to_class_name = self._infer_class_mapping_from_table()
-        else:
-            self.map_class_id_to_class_name = {}
-
-        # 验证map_class_id_to_class_name与实际数据中class_name和class_id的对应关系
         if self._has_label:
             self._validate_class_mapping()
 
-    @staticmethod
-    def _key_map_intersect_csv_headers(
-        csv_paths: Sequence[Union[str, Path]], key_map: Dict[str, str]
-    ) -> Dict[str, str]:
-        paths = [Path(p).expanduser().resolve() for p in csv_paths]
-        if not paths:
-            raise ValueError("csv_paths 不能为空")
-        for p in paths:
-            if not p.is_file():
-                raise FileNotFoundError(f"CSV 文件不存在：{p}")
-        hdr = frozenset(BaseDataset.read_csv_fieldnames(paths[0]))
-        filtered = {k: v for k, v in key_map.items() if v in hdr}
-        if not filtered:
-            raise ValueError(
-                f"key_map 与 CSV 表头无交集：表头={sorted(hdr)}，key_map 的值={list(key_map.values())}"
-            )
-        dropped = {k: v for k, v in key_map.items() if v not in hdr}
-        if dropped:
-            warnings.warn(
-                f"以下 key_map 项在 CSV 中无对应表头，已忽略：{dropped}",
-                UserWarning,
-                stacklevel=2,
-            )
-        return filtered
-
-    def _infer_class_mapping_from_table(self) -> Dict[int, str]:
-        """从 sample_path_table 的 class_id、class_name 列构建 id→name；冲突时抛错。"""
-        mapping: Dict[int, str] = {}
-        conflicts: List[Tuple[int, str, str]] = []
-        n = len(self.sample_path_table)
-        for i in range(n):
-            class_id_str = self.sample_path_table["class_id"].iloc[i]
-            class_name = self.sample_path_table["class_name"].iloc[i]
-            try:
-                class_id = int(class_id_str)
-            except ValueError:
-                continue
-            if class_id in mapping:
-                if mapping[class_id] != class_name:
-                    conflicts.append((class_id, mapping[class_id], class_name))
-            else:
-                mapping[class_id] = class_name
-        if conflicts:
-            shown = conflicts[:5]
-            more = f" ... (+{len(conflicts) - 5} more)" if len(conflicts) > 5 else ""
-            raise ValueError(
-                "同一 class_id 在 CSV 中对应多个 class_name，无法自动生成 map_class_id_to_class_name: "
-                f"{shown}{more}"
-            )
-        return mapping
-
     def _validate_class_mapping(self):
         """验证map_class_id_to_class_name与实际数据中class_name和class_id对应关系的一致性"""
+        if not self.map_class_id_to_class_name:
+            print(
+                "============================================================================\n"
+                "ℹ️  map_class_id_to_class_name 为空，跳过与映射表的校验\n"
+                "============================================================================"
+            )
+            return
+        print(
+            f"============================================================================")
         # 获取实际数据中的class_id和class_name
         actual_class_ids = set()
         class_id_name_pairs = set()
@@ -158,8 +150,7 @@ class ImageClassifierDataset(BaseDataset):
 
         # 检查ID是否连续
         if actual_class_ids:
-            sorted_ids = sorted(list(actual_class_ids))
-            min_id, max_id = min(sorted_ids), max(sorted_ids)
+            min_id, max_id = min(actual_class_ids), max(actual_class_ids)
             expected_range = set(range(min_id, max_id + 1))
             missing_ids = expected_range - actual_class_ids
 
@@ -168,13 +159,18 @@ class ImageClassifierDataset(BaseDataset):
             elif len(expected_range) != len(actual_class_ids):
                 print(f"⚠️  class_id可能不连续或存在重复")
             else:
-                print(f"✅ class_id是连续的: {sorted_ids}")
+                span = f"{min_id}-{max_id}" if min_id != max_id else str(
+                    min_id)
+                print(f"✅ class_id是连续的: {span}")
 
         # 检查映射中是否有在数据中未出现的ID
         unused_mapping_ids = set(
             self.map_class_id_to_class_name.keys()) - actual_class_ids
         if unused_mapping_ids:
             print(f"⚠️  映射中存在数据中未使用的ID: {sorted(list(unused_mapping_ids))}")
+
+        print(
+            f"============================================================================")
 
     def __getitem__(self, index):
         net_in, net_out = {}, {}

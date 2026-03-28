@@ -18,8 +18,6 @@ def load_model_config(stem: str) -> dict:
         raise ValueError(f"Empty or invalid YAML: {path}")
     return data
 
-
-demo_config_two_inputs_one_outputs = load_model_config("demo_two_inputs_one_outputs")
 resnet18_config = load_model_config("resnet18")
 efficientnet_v2_s_config = load_model_config("efficientnet_v2_s")
 swin_v2_t_config = load_model_config("swin_v2_t")

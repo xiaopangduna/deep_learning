@@ -96,8 +96,6 @@ data:
 model:
   class_path: lovely_deep_learning.module.image_classifier.ImageClassifierModule
   init_args:
-    learning_rate: 2e-4
-    init_type: null
     optimizer:
       class_path: torch.optim.Adam
       init_args:

@@ -14,7 +14,8 @@ class ImageNetteDataModule(ImageClassifierDataModule):
     --------
     1. 构造时传入 ``dataset_dir`` 以及各阶段 CSV 路径、``transform_*``、``key_map`` 等（见下方参数）。
     2. ``trainer.fit`` 之前 Lightning 会调用 ``prepare_data``：若 ``dataset_dir`` 不存在则下载并解压，
-       然后在 ``dataset_dir.parent`` 下写入三个 CSV（若已存在则跳过）。
+       然后在 ``dataset_dir.parent`` 下写入 train/val/predict 三个 CSV 及 ``map_class_id_to_class_name.csv``
+       （若主 CSV 已存在则跳过整批生成；仅缺映射文件时会补写映射）。
     3. ``setup`` 由父类完成，按 CSV 构建 ``ImageClassifierDataset``。
 
     路径约定
@@ -84,8 +85,19 @@ class ImageNetteDataModule(ImageClassifierDataModule):
         )
         self.dataset_dir = Path(dataset_dir)
 
+    def _class_name_to_idx(self, dataset_dir: Path) -> dict[str, int]:
+        m = self._map_spec_effective_for_csv_generation(
+            self._map_class_id_to_class_name_spec
+        )
+        if m:
+            return {name: idx for idx, name in m.items()}
+        classes = sorted(
+            d.name for d in (dataset_dir / "train").iterdir() if d.is_dir()
+        )
+        return {cls_name: idx for idx, cls_name in enumerate(classes)}
+
     def prepare_data(self):
-        """下载并解压 ImageNette 2-320（若 ``dataset_dir`` 尚不存在），再生成或跳过已存在的 CSV。
+        """下载并解压 ImageNette 2-320（若 ``dataset_dir`` 尚不存在），再生成或跳过已存在的 CSV 与映射文件。
 
         解压目录为 ``dataset_dir`` 的父目录；``self.dataset_dir`` 指向含 ``train``/``val`` 的数据根。
         """
@@ -112,7 +124,7 @@ class ImageNetteDataModule(ImageClassifierDataModule):
 
     def _generate_csv_files(self, dataset_dir: Path):
         """
-        生成三个CSV文件：train.csv、val.csv和predict.csv
+        生成 train.csv、val.csv、predict.csv 及 map_class_id_to_class_name.csv。
         Args:
             dataset_dir: 包含图像数据的目录路径
         """
@@ -120,29 +132,31 @@ class ImageNetteDataModule(ImageClassifierDataModule):
         output_dir = dataset_dir.parent  # 修改输出目录路径
         output_dir.mkdir(exist_ok=True)
 
-        # 检查文件是否存在，如果存在则跳过生成
         train_csv_path = output_dir / "train.csv"
         val_csv_path = output_dir / "val.csv"
         predict_csv_path = output_dir / "predict.csv"
+        map_csv_path = output_dir / "map_class_id_to_class_name.csv"
+        train_split_dir = dataset_dir / "train"
 
-        if train_csv_path.exists() and val_csv_path.exists() and predict_csv_path.exists():
+        if (
+            train_csv_path.exists()
+            and val_csv_path.exists()
+            and predict_csv_path.exists()
+        ):
+            if train_split_dir.is_dir() and not map_csv_path.exists():
+                class_to_idx = self._class_name_to_idx(dataset_dir)
+                self._write_map_class_id_to_class_name_csv(map_csv_path, class_to_idx)
+                print(f"ImageNetteDataModule: wrote missing {map_csv_path}")
             print("============================================================================")
-            print(f"CSV files already exist, skipping generation:")
+            print("ImageNetteDataModule: CSV files already exist, skipping generation")
             print(f"  - {train_csv_path}")
             print(f"  - {val_csv_path}")
             print(f"  - {predict_csv_path}")
+            print(f"  - {map_csv_path}")
             print("============================================================================")
             return
 
-        # 获取类别名称到ID的映射
-        # 如果提供了map_class_id_to_class_name，则使用它来构建class_to_idx映射
-        if self.map_class_id_to_class_name:
-            # 从map_class_id_to_class_name反向构建class_to_idx
-            class_to_idx = {name: idx for idx, name in self.map_class_id_to_class_name.items()}
-        else:
-            # 否则按原有方式自动构建
-            classes = sorted([d.name for d in (dataset_dir / "train").iterdir() if d.is_dir()])
-            class_to_idx = {cls_name: idx for idx, cls_name in enumerate(classes)}
+        class_to_idx = self._class_name_to_idx(dataset_dir)
 
         # 生成训练集CSV
         train_rows = []
@@ -189,9 +203,11 @@ class ImageNetteDataModule(ImageClassifierDataModule):
 
         predict_df = pd.DataFrame(predict_rows, columns=['path_img'])
         predict_df.to_csv(predict_csv_path, index=False)
-        
+        self._write_map_class_id_to_class_name_csv(map_csv_path, class_to_idx)
+
         print("============================================================================")
         print(f"Generated {str(train_csv_path)} with {len(train_df)} entries")
         print(f"Generated {str(val_csv_path)} with {len(val_df)} entries")
         print(f"Generated {str(predict_csv_path)} with {len(predict_rows)} entries")
+        print(f"Generated {str(map_csv_path)} with {len(class_to_idx)} classes")
         print("============================================================================")

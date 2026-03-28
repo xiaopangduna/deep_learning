@@ -24,6 +24,20 @@ MAP_CLASS_ID_TO_CLASS_NAME = {
     1: "n02102040",
 }
 
+MAP_CSV_PATH = "tests/test_data/dataset/map_class_id_to_class_name.csv"
+
+
+def test_load_map_class_id_to_class_name_from_csv():
+    m = ImageClassifierDataset.load_map_class_id_to_class_name_from_csv(MAP_CSV_PATH)
+    assert m == MAP_CLASS_ID_TO_CLASS_NAME
+
+
+def test_ImageClassifierDataset_init_with_map_csv_path():
+    path_csv = PATH_CSV
+    dataset = ImageClassifierDataset(
+        path_csv, KEY_MAP, None, MAP_CSV_PATH, None, None)
+    assert dataset.map_class_id_to_class_name == MAP_CLASS_ID_TO_CLASS_NAME
+
 
 def test_ImageClassifierDataset_init():
     path_csv = PATH_CSV

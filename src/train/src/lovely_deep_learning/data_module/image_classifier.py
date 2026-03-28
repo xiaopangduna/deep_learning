@@ -1,3 +1,8 @@
+from pathlib import Path
+from typing import Any
+
+import pandas as pd
+
 from .base import BaseDataModule
 from ..dataset.image_classifier import ImageClassifierDataset
 
@@ -30,7 +35,10 @@ class ImageClassifierDataModule(BaseDataModule):
         predict_key_map
             预测 CSV 的列名映射；常比 ``key_map`` 少标签相关项。
         map_class_id_to_class_name
-            显式 id→类别名表；``None`` 且表中含 ``class_id``/``class_name`` 时由 Dataset 从表推断。
+            ``None`` / ``dict`` / 指向 CSV 的 ``str``（表头须含 ``class_id``、``class_name``）。
+            原始值保存在 ``_map_class_id_to_class_name_spec``；在 ``setup`` 中解析为 ``dict`` 并写入
+            ``map_class_id_to_class_name`` 后传给各 Dataset（``str`` 路径须已存在，通常由子类
+            ``prepare_data`` 生成）。构造后、``setup`` 前请勿依赖 ``map_class_id_to_class_name``。
         norm_mean, norm_std
             与训练时 Normalize 一致的均值、方差，用于 tensor→numpy 可视化时的反标准化。
         **kwargs
@@ -40,9 +48,55 @@ class ImageClassifierDataModule(BaseDataModule):
         super().__init__(**kwargs)
         self.key_map = key_map
         self.predict_key_map = predict_key_map
-        self.map_class_id_to_class_name = map_class_id_to_class_name
+        self._map_class_id_to_class_name_spec = map_class_id_to_class_name
+        self.map_class_id_to_class_name: dict[int, str] = {}
         self.norm_mean = norm_mean
         self.norm_std = norm_std
+
+    @staticmethod
+    def _resolve_map_class_id_spec(spec: Any) -> dict[int, str]:
+        """``setup`` 使用：``None`` / ``dict`` / 已存在的 CSV 路径 → id→类别名；路径不存在则报错。"""
+        if spec is None:
+            return {}
+        if isinstance(spec, dict):
+            return {int(k): str(v) for k, v in spec.items()}
+        if isinstance(spec, str):
+            p = Path(spec).expanduser()
+            if not p.is_file():
+                raise FileNotFoundError(
+                    "map_class_id_to_class_name 指定的 CSV 不存在（须先成功执行 prepare_data 或修正路径）："
+                    f" {p}"
+                )
+            return ImageClassifierDataset.load_map_class_id_to_class_name_from_csv(p)
+        raise TypeError(
+            "map_class_id_to_class_name 须为 None、dict 或 str（CSV 路径），"
+            f"收到 {type(spec)!r}"
+        )
+
+    @staticmethod
+    def _map_spec_effective_for_csv_generation(spec: Any) -> dict[int, str]:
+        """仅 ``prepare_data`` 内生成 CSV 时用：路径上文件尚未写出时当作无映射 ``{}``。"""
+        if spec is None:
+            return {}
+        if isinstance(spec, dict):
+            return {int(k): str(v) for k, v in spec.items()}
+        if isinstance(spec, str):
+            p = Path(spec).expanduser()
+            if p.is_file():
+                return ImageClassifierDataset.load_map_class_id_to_class_name_from_csv(p)
+            return {}
+        raise TypeError(
+            "map_class_id_to_class_name 须为 None、dict 或 str（CSV 路径），"
+            f"收到 {type(spec)!r}"
+        )
+
+    @staticmethod
+    def _write_map_class_id_to_class_name_csv(
+        path: Path, class_name_to_idx: dict[str, int]
+    ) -> None:
+        """将 ``{class_name: class_id}`` 写成表头为 ``class_id``, ``class_name`` 的 CSV。"""
+        rows = sorted((idx, name) for name, idx in class_name_to_idx.items())
+        pd.DataFrame(rows, columns=["class_id", "class_name"]).to_csv(path, index=False)
 
     def setup(self, stage=None):
         """按 Lightning ``stage`` 创建对应 Dataset；``stage is None`` 时构建全部阶段所用数据集。
@@ -51,6 +105,9 @@ class ImageClassifierDataModule(BaseDataModule):
         单独 ``trainer.validate`` 时走 ``validate``）。``stage is None``（如部分 CLI 流程）下各 ``if``
         均可能执行，验证集会被构造两次，结果等价。
         """
+        self.map_class_id_to_class_name = self._resolve_map_class_id_spec(
+            self._map_class_id_to_class_name_spec
+        )
         if stage == "fit" or stage is None:
             self.train_dataset = ImageClassifierDataset(
                 self.train_csv_paths,
