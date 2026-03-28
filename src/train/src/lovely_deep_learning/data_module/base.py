@@ -4,7 +4,6 @@ from pathlib import Path
 
 import lightning.pytorch as pl
 from torch.utils.data import DataLoader
-from lovely_deep_learning.dataset.predict import ImagePredictDataset
 
 
 class BaseDataModule(pl.LightningDataModule):

@@ -44,6 +44,36 @@ class ImageClassifierDataset(BaseDataset):
         被忽略的项会触发 UserWarning。
     """
 
+    def __init__(
+        self,
+        csv_paths: Sequence[Union[str, Path]],
+        key_map: Dict[str, str] = {
+            "img_path": "path_img", "class_name": "class_name", "class_id": "class_id"},
+        transform: Optional[Callable] = None,
+        map_class_id_to_class_name: Optional[Dict[int, str]] = None,
+        norm_mean: list[float] = [0.485, 0.456, 0.406],
+        norm_std: list[float] = [0.229, 0.224, 0.225]
+    ):
+        super().__init__(csv_paths=csv_paths, key_map=key_map, transform=transform)
+        self._has_label = (
+            "class_id" in self.sample_path_table.columns
+            and len(self.sample_path_table) > 0
+            and not self.sample_path_table["class_id"].astype(str).str.strip().eq("").all()
+        )
+        self.norm_mean = norm_mean
+        self.norm_std = norm_std
+
+        if map_class_id_to_class_name is not None:
+            self.map_class_id_to_class_name = dict(map_class_id_to_class_name)
+        elif self._has_label and "class_name" in self.sample_path_table.columns:
+            self.map_class_id_to_class_name = self._infer_class_mapping_from_table()
+        else:
+            self.map_class_id_to_class_name = {}
+
+        # 验证map_class_id_to_class_name与实际数据中class_name和class_id的对应关系
+        if self._has_label:
+            self._validate_class_mapping()
+
     @staticmethod
     def _key_map_intersect_csv_headers(
         csv_paths: Sequence[Union[str, Path]], key_map: Dict[str, str]
@@ -68,36 +98,6 @@ class ImageClassifierDataset(BaseDataset):
                 stacklevel=2,
             )
         return filtered
-
-    def __init__(
-        self,
-        csv_paths: Sequence[Union[str, Path]],
-        key_map: Dict[str, str] = {"img_path": "path_img", "class_name": "class_name", "class_id": "class_id"},
-        transform: Optional[Callable] = None,
-        map_class_id_to_class_name: Optional[Union[Dict[int, str], Mapping[int, str]]] = None,
-        norm_mean=None,
-        norm_std=None
-    ):
-        key_map_eff = self._key_map_intersect_csv_headers(csv_paths, key_map)
-        super().__init__(csv_paths=csv_paths, key_map=key_map_eff, transform=transform)
-        self.has_label = (
-            "class_id" in self.sample_path_table.columns
-            and len(self.sample_path_table) > 0
-            and not self.sample_path_table["class_id"].astype(str).str.strip().eq("").all()
-        )
-        self.norm_mean = norm_mean
-        self.norm_std = norm_std
-
-        if map_class_id_to_class_name is not None:
-            self.map_class_id_to_class_name = dict(map_class_id_to_class_name)
-        elif self.has_label and "class_name" in self.sample_path_table.columns:
-            self.map_class_id_to_class_name = self._infer_class_mapping_from_table()
-        else:
-            self.map_class_id_to_class_name = {}
-
-        # 验证map_class_id_to_class_name与实际数据中class_name和class_id的对应关系
-        if self.has_label:
-            self._validate_class_mapping()
 
     def _infer_class_mapping_from_table(self) -> Dict[int, str]:
         """从 sample_path_table 的 class_id、class_name 列构建 id→name；冲突时抛错。"""
@@ -130,11 +130,11 @@ class ImageClassifierDataset(BaseDataset):
         # 获取实际数据中的class_id和class_name
         actual_class_ids = set()
         class_id_name_pairs = set()
-        
+
         for i in range(len(self.sample_path_table)):
             class_id_str = self.sample_path_table["class_id"].iloc[i]
             class_name = self.sample_path_table["class_name"].iloc[i]
-            
+
             try:
                 class_id = int(class_id_str)
                 actual_class_ids.add(class_id)
@@ -142,7 +142,7 @@ class ImageClassifierDataset(BaseDataset):
             except ValueError:
                 print(f"⚠️  发现无法转换为整数的class_id: {class_id_str}")
                 continue
-        
+
         # 检查map_class_id_to_class_name与实际数据的一致性
         mismatch_found = False
         for class_id, class_name in class_id_name_pairs:
@@ -152,26 +152,27 @@ class ImageClassifierDataset(BaseDataset):
                     print(f"⚠️  map_class_id_to_class_name与实际数据不一致: ID {class_id}, "
                           f"映射中为 '{expected_class_name}', 但实际数据为 '{class_name}'")
                     mismatch_found = True
-        
+
         if not mismatch_found:
             print(f"✅ map_class_id_to_class_name与实际数据一致")
-        
+
         # 检查ID是否连续
         if actual_class_ids:
             sorted_ids = sorted(list(actual_class_ids))
             min_id, max_id = min(sorted_ids), max(sorted_ids)
             expected_range = set(range(min_id, max_id + 1))
             missing_ids = expected_range - actual_class_ids
-            
+
             if missing_ids:
                 print(f"⚠️  class_id不连续，缺少ID: {sorted(list(missing_ids))}")
             elif len(expected_range) != len(actual_class_ids):
                 print(f"⚠️  class_id可能不连续或存在重复")
             else:
                 print(f"✅ class_id是连续的: {sorted_ids}")
-                
+
         # 检查映射中是否有在数据中未出现的ID
-        unused_mapping_ids = set(self.map_class_id_to_class_name.keys()) - actual_class_ids
+        unused_mapping_ids = set(
+            self.map_class_id_to_class_name.keys()) - actual_class_ids
         if unused_mapping_ids:
             print(f"⚠️  映射中存在数据中未使用的ID: {sorted(list(unused_mapping_ids))}")
 
@@ -189,31 +190,30 @@ class ImageClassifierDataset(BaseDataset):
         net_in["img_path"] = img_path
         net_in["img_shape"] = img_shape
         net_in["img_tv_transformed"] = img_tv_transformed
-        if self.has_label:
+        if self._has_label:
             class_id = self.sample_path_table["class_id"].iloc[index]
             net_out["class_name"] = self.sample_path_table["class_name"].iloc[index]
             net_out["class_id"] = int(class_id)
 
         return net_in, net_out
 
-
     def convert_img_from_tensor_to_numpy(self, img: torch.Tensor) -> np.ndarray:
         """
         将标准化的tensor转换为uint8的numpy数组，并进行反标准化处理
-        
+
         Args:
             img: 输入的标准化tensor，格式为(C, H, W)
-            
+
         Returns:
             反标准化后的numpy数组，格式为(H, W, C)，值域为[0, 255]
         """
         # 获取设备信息并复制tensor到CPU
         img = img.detach().cpu()
-        
+
         # 获取tensor的值范围
         img_min = img.min().item()
         img_max = img.max().item()
-        
+
         # 根据值的范围判断tensor类型并进行相应处理
         if img_min >= 0 and img_max <= 1.0:
             # 情况1: [0, 1] 范围的tensor
@@ -230,10 +230,10 @@ class ImageClassifierDataset(BaseDataset):
                 img = img * std + mean
             # 确保值在合理范围内
             img_clamped = torch.clamp(img, 0, 1)
-        
+
         # 将[0,1]范围的值转换为uint8格式 (0~1 -> 0~255)
         img_uint8 = (img_clamped * 255).to(torch.uint8)
-        
+
         # 调用基类的转换函数
         return BaseDataset.convert_img_from_tensor_to_numpy_uint8(img_uint8)
 
@@ -254,17 +254,21 @@ class ImageClassifierDataset(BaseDataset):
                 color = (0, 0, 255)
             cv2.rectangle(img, (0, 0), (img.shape[1], 40), bg_color, -1)
             # 真值
-            img = self.draw_label_on_numpy(img, class_name, class_id, color=color, pos=(5, 15))
+            img = self.draw_label_on_numpy(
+                img, class_name, class_id, color=color, pos=(5, 15))
             # 预测值
-            img = self.draw_label_on_numpy(img, class_name_pred, class_id_pred, class_id_conf, color=color, pos=(5, 35))
+            img = self.draw_label_on_numpy(
+                img, class_name_pred, class_id_pred, class_id_conf, color=color, pos=(5, 35))
         elif class_id != None:
             cv2.rectangle(img, (0, 0), (img.shape[1], 20), bg_color, -1)
             # 真值
-            img = self.draw_label_on_numpy(img, class_name, class_id, color=color, pos=(5, 15))
+            img = self.draw_label_on_numpy(
+                img, class_name, class_id, color=color, pos=(5, 15))
         elif class_id_pred != None:
             cv2.rectangle(img, (0, 0), (img.shape[1], 20), bg_color, -1)
             # 预测值
-            img = self.draw_label_on_numpy(img, class_name_pred, class_id_pred, class_id_conf, color=color, pos=(5, 15))
+            img = self.draw_label_on_numpy(
+                img, class_name_pred, class_id_pred, class_id_conf, color=color, pos=(5, 15))
         else:
             pass
         return img
