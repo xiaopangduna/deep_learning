@@ -107,77 +107,93 @@ model:
         step_size: 5
         gamma: 0.1
     model:
-      model_name: resnet18
+      model_name: mobilenet_v3_large
       pretrained: true
-
       structure:
         inputs: [{name: input, shape: [3, 224, 224]}]
-        outputs: [{name: classification, from: [fc]}]
+        outputs: [{name: classification, from: [classifier]}]
         layers:
-          # Stem
-          - name: conv1
+          - name: features
             from: [input]
-            module: torch.nn.Conv2d
-            args: {in_channels: 3, out_channels: 64, kernel_size: 7, stride: 2, padding: 3, bias: false}
-          - name: bn1
-            from: [conv1]
-            module: torch.nn.BatchNorm2d
-            args: {num_features: 64}
-          - name: relu
-            from: [bn1]
-            module: torch.nn.ReLU
-            args: {inplace: true}
-          - name: maxpool
-            from: [relu]
-            module: torch.nn.MaxPool2d
-            args: {kernel_size: 3, stride: 2, padding: 1}
-          # Layer1
-          - name: layer1
-            from: [maxpool]
             module: torch.nn.Sequential
             children:
-              - {name: "0", module: lovely_deep_learning.nn.conv.BasicBlock, args: {in_channels: 64, out_channels: 64, stride: 1}}
-              - {name: "1", module: lovely_deep_learning.nn.conv.BasicBlock, args: {in_channels: 64, out_channels: 64, stride: 1}}
-          # Layer2
-          - name: layer2
-            from: [layer1]
-            module: torch.nn.Sequential
-            children:
-              - {name: "0", module: lovely_deep_learning.nn.conv.BasicBlock, args: {in_channels: 64, out_channels: 128, stride: 2}}
-              - {name: "1", module: lovely_deep_learning.nn.conv.BasicBlock, args: {in_channels: 128, out_channels: 128, stride: 1}}
-          # Layer3
-          - name: layer3
-            from: [layer2]
-            module: torch.nn.Sequential
-            children:
-              - {name: "0", module: lovely_deep_learning.nn.conv.BasicBlock, args: {in_channels: 128, out_channels: 256, stride: 2}}
-              - {name: "1", module: lovely_deep_learning.nn.conv.BasicBlock, args: {in_channels: 256, out_channels: 256, stride: 1}}
-          # Layer4
-          - name: layer4
-            from: [layer3]
-            module: torch.nn.Sequential
-            children:
-              - {name: "0", module: lovely_deep_learning.nn.conv.BasicBlock, args: {in_channels: 256, out_channels: 512, stride: 2}}
-              - {name: "1", module: lovely_deep_learning.nn.conv.BasicBlock, args: {in_channels: 512, out_channels: 512, stride: 1}}
-            
-          # Head
+              - name: "0"
+                module: lovely_deep_learning.nn.mobilenet_v3.Conv2dNormActivation
+                args: {in_channels: 3, out_channels: 16, kernel_size: 3, stride: 2, bn_eps: 0.001, bn_momentum: 0.01, activation_layer: hswish}
+              - name: "1"
+                module: lovely_deep_learning.nn.mobilenet_v3.InvertedResidual
+                args: {input_channels: 16, kernel: 3, expanded_channels: 16, out_channels: 16, use_se: false, use_hs: false, stride: 1, dilation: 1}
+              - name: "2"
+                module: lovely_deep_learning.nn.mobilenet_v3.InvertedResidual
+                args: {input_channels: 16, kernel: 3, expanded_channels: 64, out_channels: 24, use_se: false, use_hs: false, stride: 2, dilation: 1}
+              - name: "3"
+                module: lovely_deep_learning.nn.mobilenet_v3.InvertedResidual
+                args: {input_channels: 24, kernel: 3, expanded_channels: 72, out_channels: 24, use_se: false, use_hs: false, stride: 1, dilation: 1}
+              - name: "4"
+                module: lovely_deep_learning.nn.mobilenet_v3.InvertedResidual
+                args: {input_channels: 24, kernel: 5, expanded_channels: 72, out_channels: 40, use_se: true, use_hs: false, stride: 2, dilation: 1}
+              - name: "5"
+                module: lovely_deep_learning.nn.mobilenet_v3.InvertedResidual
+                args: {input_channels: 40, kernel: 5, expanded_channels: 120, out_channels: 40, use_se: true, use_hs: false, stride: 1, dilation: 1}
+              - name: "6"
+                module: lovely_deep_learning.nn.mobilenet_v3.InvertedResidual
+                args: {input_channels: 40, kernel: 5, expanded_channels: 120, out_channels: 40, use_se: true, use_hs: false, stride: 1, dilation: 1}
+              - name: "7"
+                module: lovely_deep_learning.nn.mobilenet_v3.InvertedResidual
+                args: {input_channels: 40, kernel: 3, expanded_channels: 240, out_channels: 80, use_se: false, use_hs: true, stride: 2, dilation: 1}
+              - name: "8"
+                module: lovely_deep_learning.nn.mobilenet_v3.InvertedResidual
+                args: {input_channels: 80, kernel: 3, expanded_channels: 200, out_channels: 80, use_se: false, use_hs: true, stride: 1, dilation: 1}
+              - name: "9"
+                module: lovely_deep_learning.nn.mobilenet_v3.InvertedResidual
+                args: {input_channels: 80, kernel: 3, expanded_channels: 184, out_channels: 80, use_se: false, use_hs: true, stride: 1, dilation: 1}
+              - name: "10"
+                module: lovely_deep_learning.nn.mobilenet_v3.InvertedResidual
+                args: {input_channels: 80, kernel: 3, expanded_channels: 184, out_channels: 80, use_se: false, use_hs: true, stride: 1, dilation: 1}
+              - name: "11"
+                module: lovely_deep_learning.nn.mobilenet_v3.InvertedResidual
+                args: {input_channels: 80, kernel: 3, expanded_channels: 480, out_channels: 112, use_se: true, use_hs: true, stride: 1, dilation: 1}
+              - name: "12"
+                module: lovely_deep_learning.nn.mobilenet_v3.InvertedResidual
+                args: {input_channels: 112, kernel: 3, expanded_channels: 672, out_channels: 112, use_se: true, use_hs: true, stride: 1, dilation: 1}
+              - name: "13"
+                module: lovely_deep_learning.nn.mobilenet_v3.InvertedResidual
+                args: {input_channels: 112, kernel: 5, expanded_channels: 672, out_channels: 160, use_se: true, use_hs: true, stride: 2, dilation: 1}
+              - name: "14"
+                module: lovely_deep_learning.nn.mobilenet_v3.InvertedResidual
+                args: {input_channels: 160, kernel: 5, expanded_channels: 960, out_channels: 160, use_se: true, use_hs: true, stride: 1, dilation: 1}
+              - name: "15"
+                module: lovely_deep_learning.nn.mobilenet_v3.InvertedResidual
+                args: {input_channels: 160, kernel: 5, expanded_channels: 960, out_channels: 160, use_se: true, use_hs: true, stride: 1, dilation: 1}
+              - name: "16"
+                module: lovely_deep_learning.nn.mobilenet_v3.Conv2dNormActivation
+                args: {in_channels: 160, out_channels: 960, kernel_size: 1, stride: 1, bn_eps: 0.001, bn_momentum: 0.01, activation_layer: hswish}
+
           - name: avgpool
-            from: [layer4]
+            from: [features]
             module: torch.nn.AdaptiveAvgPool2d
-            args: {output_size: [1, 1]}
+            args: {output_size: 1}
           - name: flatten
             from: [avgpool]
             module: torch.nn.Flatten
-            args: {}
-          - name: fc
+            args: {start_dim: 1}
+          - name: classifier
             from: [flatten]
-            module: torch.nn.Linear
-            args: {in_features: 512, out_features: 10}  #类别的数量
+            module: torch.nn.Sequential
+            children:
+              - {name: "0", module: torch.nn.Linear, args: {in_features: 960, out_features: 1280}}
+              - {name: "1", module: torch.nn.Hardswish, args: {inplace: true}}
+              - {name: "2", module: torch.nn.Dropout, args: {p: 0.2, inplace: true}}
+              - {name: "3", module: torch.nn.Linear, args: {in_features: 1280, out_features: 10}}
+
       weight:
-        path: pretrained_models/resnet18-f37072fd.pth
-        url: https://download.pytorch.org/models/resnet18-f37072fd.pth
+        path: pretrained_models/mobilenet_v3_large-5c1a4163.pth
+        url: https://download.pytorch.org/models/mobilenet_v3_large-5c1a4163.pth
         map_location: cpu
         strict: false
+        src_key_prefix: layers.
+        src_key_slice_start: 0
+
 
 
 

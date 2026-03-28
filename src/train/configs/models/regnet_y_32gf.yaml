@@ -1,3 +1,13 @@
+model_name: regnet_y_32gf
+pretrained: true
+weight:
+  path: pretrained_models/regnet_y_32gf-8db6d4b5.pth
+  url: https://download.pytorch.org/models/regnet_y_32gf-8db6d4b5.pth
+  map_location: cpu
+  strict: false
+  src_key_prefix: layers.
+  src_key_slice_start: 0
+
 structure:
   inputs: [{name: input, shape: [3, 224, 224]}]
   outputs: [{name: classification, from: [fc]}]
@@ -39,11 +49,4 @@ structure:
       module: torch.nn.Linear
       args: {in_features: 3712, out_features: 1000}
 
-weight:
-  path: pretrained_models/regnet_y_32gf-8db6d4b5.pth
-  url: https://download.pytorch.org/models/regnet_y_32gf-8db6d4b5.pth
-  map_location: cpu
-  strict: false
-  src_key_prefix: layers.
-  src_key_slice_start: 0
 

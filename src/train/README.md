@@ -218,3 +218,9 @@ python scripts/train.py fit --config configs/experiments/image_classifiter.yaml
 python scripts/train.py fit \
     --config configs/experiments/image_classifiter_IMAGE_NETTE.yaml
 ```
+## ImageNet
+查看大型csv中的内容
+cd datasets/IMAGENET
+head -n 10 train.csv
+# 复制少量文件验证
+mkdir -p tmp/preview && tail -n +2 train.csv | awk -v k=5 'BEGIN{srand()} NR<=k{pool[NR]=$0;next} {j=int(rand()*NR)+1;if(j<=k)pool[j]=$0} END{for(i=1;i<=k;i++)print pool[i]}' | while IFS= read -r line; do echo "$line"; cp -- "${line%%,*}" tmp/preview/; done

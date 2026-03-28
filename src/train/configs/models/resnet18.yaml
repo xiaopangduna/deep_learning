@@ -1,3 +1,13 @@
+model_name: resnet18
+pretrained: true
+weight:
+  path: pretrained_models/resnet18-f37072fd.pth
+  url: https://download.pytorch.org/models/resnet18-f37072fd.pth
+  map_location: cpu
+  strict: false
+  src_key_prefix: layers.
+  src_key_slice_start: 0
+
 structure:
   inputs: [{name: input, shape: [3, 224, 224]}]
   outputs: [{name: classification, from: [fc]}]
@@ -60,9 +70,5 @@ structure:
       from: [flatten]
       module: torch.nn.Linear
       args: {in_features: 512, out_features: 1000}
-weight:
-  path: pretrained_models/resnet18-f37072fd.pth
-  url: https://download.pytorch.org/models/resnet18-f37072fd.pth
-  map_location: cpu
-  strict: false
+
   

@@ -7,6 +7,8 @@ transforms_v1:
           size: [224,224]
           interpolation: 2 # bilinear
       - class_path: torchvision.transforms.RandomHorizontalFlip
+        init_args:
+          p: 0.5
       - class_path: torchvision.transforms.ToTensor
 
 
@@ -25,6 +27,9 @@ transform_v2:
         init_args:
           size: 224
           interpolation: 2
+      - class_path: torchvision.transforms.v2.CenterCrop
+        init_args:
+          size: [224,224]
 
 
       # 几何变换

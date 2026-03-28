@@ -1,5 +1,5 @@
 trainer:
-  max_epochs: 100
+  max_epochs: 100 # 600
   accelerator: auto
   callbacks:
     - class_path: lovely_deep_learning.callback.image_classifier.ImageClassifierCallback
@@ -24,7 +24,7 @@ trainer:
     - class_path: lightning.pytorch.loggers.TensorBoardLogger
       init_args:
         save_dir: logs
-        name: image_classifiter_IMAGE_NETTE  
+        name: image_classifiter_IMAGE_NET 
         version: null
   profiler:
     class_path: lightning.pytorch.profilers.SimpleProfiler
@@ -34,25 +34,16 @@ trainer:
 
         
 data:
-  class_path: lovely_deep_learning.data_module.image_nette.ImageNetteDataModule
+  class_path: lovely_deep_learning.data_module.image_net.ImageNetDataModule
   init_args:
-    dataset_dir: datasets/IMAGENETTE/imagenette2-320
-    train_csv_paths: [datasets/IMAGENETTE/train.csv]
-    val_csv_paths: [datasets/IMAGENETTE/val.csv]
-    test_csv_paths: [datasets/IMAGENETTE/val.csv]
-    predict_csv_paths: [datasets/IMAGENETTE/predict.csv]
+    dataset_dir: datasets/IMAGENET
+    train_csv_paths: [datasets/IMAGENET/train.csv]
+    val_csv_paths: [datasets/IMAGENET/val.csv]
+    test_csv_paths: [datasets/IMAGENET/test.csv]
+    predict_csv_paths: [datasets/IMAGENET/predict.csv]
     key_map : {"img_path": "path_img", "class_name": "class_name", "class_id": "class_id"}
-    map_class_id_to_class_name:
-      0: "n01440764"
-      1: "n02102040"
-      2: "n02979186"
-      3: "n03000684"
-      4: "n03028079"
-      5: "n03394916"
-      6: "n03417042"
-      7: "n03425413"
-      8: "n03445777"
-      9: "n03888257"
+    map_class_id_to_class_name: null
+
     norm_mean : [0.485, 0.456, 0.406]
     norm_std : [0.229, 0.224, 0.225]  
     batch_size: 16
@@ -61,36 +52,46 @@ data:
       class_path: torchvision.transforms.v2.Compose
       init_args:
         transforms:
-          - class_path: torchvision.transforms.v2.Resize
+          - class_path: torchvision.transforms.v2.RandomResizedCrop
             init_args:
               size: [224,224]
               interpolation: 2 # bilinear
-          - class_path: torchvision.transforms.v2.TrivialAugmentWide
+          - class_path: torchvision.transforms.v2.RandomHorizontalFlip
+            init_args:
+              p: 0.5
+          - class_path: torchvision.transforms.v2.AutoAugment
+            init_args:
+              policy: IMAGENET
           - class_path: torchvision.transforms.v2.ToDtype
             init_args:
-              dtype: torch.float32
+              dtype: torch.float
               scale: true
           - class_path: torchvision.transforms.v2.Normalize
             init_args:
               mean: [0.485, 0.456, 0.406]
               std: [0.229, 0.224, 0.225]
+          - class_path: torchvision.transforms.v2.RandomErasing
+            init_args:
+              p: 0.2
     transform_val:
       class_path: torchvision.transforms.v2.Compose
       init_args:
         transforms:
           - class_path: torchvision.transforms.v2.Resize
             init_args:
-              size: [224,224]
+              size: [256,256]
               interpolation: 2 # bilinear
+          - class_path: torchvision.transforms.v2.CenterCrop
+            init_args:
+              size: [224,224]
           - class_path: torchvision.transforms.v2.ToDtype
             init_args:
-              dtype: torch.float32
+              dtype: torch.float
               scale: true
           - class_path: torchvision.transforms.v2.Normalize
             init_args:
               mean: [0.485, 0.456, 0.406]
               std: [0.229, 0.224, 0.225]
-        
         
 model:
   class_path: lovely_deep_learning.module.image_classifier.ImageClassifierModule
@@ -98,18 +99,21 @@ model:
     learning_rate: 2e-4
     init_type: null
     optimizer:
-      class_path: torch.optim.Adam
+      class_path: torch.optim.RMSprop
       init_args:
-        lr: 2e-4
+        lr: 0.064
+        momentum: 0.9
+        weight_decay: 0.00001
+        eps: 0.0316
+        alpha: 0.9
     lr_scheduler:
       class_path: torch.optim.lr_scheduler.StepLR
       init_args:
-        step_size: 5
-        gamma: 0.1
+        step_size: 2
+        gamma: 0.973
     model:
       model_name: mobilenet_v3_large
       pretrained: true
-
       structure:
         inputs: [{name: input, shape: [3, 224, 224]}]
         outputs: [{name: classification, from: [classifier]}]
@@ -185,7 +189,7 @@ model:
               - {name: "0", module: torch.nn.Linear, args: {in_features: 960, out_features: 1280}}
               - {name: "1", module: torch.nn.Hardswish, args: {inplace: true}}
               - {name: "2", module: torch.nn.Dropout, args: {p: 0.2, inplace: true}}
-              - {name: "3", module: torch.nn.Linear, args: {in_features: 1280, out_features: 10}}
+              - {name: "3", module: torch.nn.Linear, args: {in_features: 1280, out_features: 1000}}
 
       weight:
         path: pretrained_models/mobilenet_v3_large-5c1a4163.pth

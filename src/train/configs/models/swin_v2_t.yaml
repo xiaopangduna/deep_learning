@@ -1,3 +1,13 @@
+model_name: swin_v2_t
+pretrained: true
+weight:
+  path: pretrained_models/swin_v2_t-b137f0e2.pth
+  url: https://download.pytorch.org/models/swin_v2_t-b137f0e2.pth
+  map_location: cpu
+  strict: false
+  src_key_prefix: layers.
+  src_key_slice_start: 0
+
 structure:
   inputs: [{name: input, shape: [3, 256, 256]}]
   outputs: [{name: classification, from: [head]}]
@@ -99,11 +109,4 @@ structure:
       module: torch.nn.Linear
       args: {in_features: 768, out_features: 1000}
 
-weight:
-  path: pretrained_models/swin_v2_t-b137f0e2.pth
-  url: https://download.pytorch.org/models/swin_v2_t-b137f0e2.pth
-  map_location: cpu
-  strict: false
-  src_key_prefix: layers.
-  src_key_slice_start: 0
 

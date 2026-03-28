@@ -8,7 +8,7 @@
 @Email   :   18675381281@163.com
 @Desc    :   This is a simple example
 """
-from typing import List, Dict, Optional, Callable, Any, Tuple, Union
+from typing import List, Dict, Optional, Callable, Any, Tuple, Union, Mapping
 import json
 import warnings
 from copy import deepcopy
@@ -37,6 +37,8 @@ class ImageClassifierDataset(BaseDataset):
         paths_label (list[str]):A list of paths of label.
         transfroms (str): One of train,val,test and  none.Default none
         cfgs (dict): A dictionary holds parameters in data processing.
+        map_class_id_to_class_name: 若显式传入 dict/Mapping，则用于校验与可视化；若为 None 且 CSV 同时含
+            class_id 与 class_name，则从表中自动推断 id→name（同一 id 对应多个 name 会报错）。
     """
 
     def __init__(
@@ -44,19 +46,54 @@ class ImageClassifierDataset(BaseDataset):
         csv_paths: List[str],
         key_map: Dict[str, str] = {"img_path": "path_img", "class_name": "class_name", "class_id": "class_id"},
         transform: Optional[Callable] = None,
-        map_class_id_to_class_name={0: "class_A", 1: "class_B"},
+        map_class_id_to_class_name: Optional[Union[Dict[int, str], Mapping[int, str]]] = None,
         norm_mean=None,
         norm_std=None
     ):
         super().__init__(csv_paths=csv_paths, key_map=key_map, transform=transform)
         self.has_label = True if "class_id" in self.sample_path_table else False
-        self.map_class_id_to_class_name = map_class_id_to_class_name
         self.norm_mean = norm_mean
         self.norm_std = norm_std
-        
+
+        if map_class_id_to_class_name is not None:
+            self.map_class_id_to_class_name = dict(map_class_id_to_class_name)
+        elif (
+            self.has_label
+            and "class_name" in self.sample_path_table
+        ):
+            self.map_class_id_to_class_name = self._infer_class_mapping_from_table()
+        else:
+            self.map_class_id_to_class_name = {}
+
         # 验证map_class_id_to_class_name与实际数据中class_name和class_id的对应关系
         if self.has_label:
             self._validate_class_mapping()
+
+    def _infer_class_mapping_from_table(self) -> Dict[int, str]:
+        """从 sample_path_table 的 class_id、class_name 列构建 id→name；冲突时抛错。"""
+        mapping: Dict[int, str] = {}
+        conflicts: List[Tuple[int, str, str]] = []
+        n = len(self.sample_path_table["class_id"])
+        for i in range(n):
+            class_id_str = self.sample_path_table["class_id"][i]
+            class_name = self.sample_path_table["class_name"][i]
+            try:
+                class_id = int(class_id_str)
+            except ValueError:
+                continue
+            if class_id in mapping:
+                if mapping[class_id] != class_name:
+                    conflicts.append((class_id, mapping[class_id], class_name))
+            else:
+                mapping[class_id] = class_name
+        if conflicts:
+            shown = conflicts[:5]
+            more = f" ... (+{len(conflicts) - 5} more)" if len(conflicts) > 5 else ""
+            raise ValueError(
+                "同一 class_id 在 CSV 中对应多个 class_name，无法自动生成 map_class_id_to_class_name: "
+                f"{shown}{more}"
+            )
+        return mapping
 
     def _validate_class_mapping(self):
         """验证map_class_id_to_class_name与实际数据中class_name和class_id对应关系的一致性"""

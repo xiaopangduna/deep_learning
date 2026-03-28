@@ -3,7 +3,7 @@ from ..dataset.image_classifier import ImageClassifierDataset
 
 
 class ImageClassifierDataModule(BaseDataModule):
-    def __init__(self, map_class_id_to_class_name={}, norm_mean=None, norm_std=None, **kwargs):
+    def __init__(self, map_class_id_to_class_name=None, norm_mean=None, norm_std=None, **kwargs):
         super().__init__(**kwargs)
         self.map_class_id_to_class_name = map_class_id_to_class_name
         self.norm_mean = norm_mean
