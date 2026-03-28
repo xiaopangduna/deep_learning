@@ -6,18 +6,54 @@ from torch.utils.data import Dataset
 from tqdm import tqdm  # 直接引入tqdm用于进度显示
 import cv2
 import numpy as np
+import pandas as pd
 from pathlib import Path
 import torch
 
 
 class BaseDataset(Dataset):
     """
-    基础数据集类，继承自 PyTorch 的 Dataset，用于从 CSV 加载多列路径/标量字段。
+    基于 CSV 的 PyTorch Dataset：将一张或多张表读入为 ``sample_path_table``（pandas DataFrame），
+    按索引取出整行字典供训练代码使用；另提供若干与图像/缓存相关的静态工具方法。
 
-    - 相对路径相对于该 CSV 文件所在目录解析；空单元格记为 ""（列名含 path 时计入负样本统计）。
-    - 列名包含子串 path 的列按路径解析为绝对路径，不做磁盘存在性检查。
-    - CSV 缺少 key_map 中的表头时，该列对该文件各行填 ""。
-    - csv_paths 入参可为 str 或 Path；self.csv_paths 恒为已 expanduser+resolve 的 List[Path]。
+    主要属性
+    --------
+    csv_paths : List[Path]
+        构造时传入的路径经 ``expanduser().resolve()`` 后的绝对路径列表。
+    key_map : Dict[str, str]
+        列重映射：键为输出列名（类内字段名），值为 CSV 原始表头名。
+    transform : Optional[Callable]
+        预留的数据增强/变换，本类 ``__getitem__`` 中未调用，由子类使用。
+    sample_path_table : pd.DataFrame
+        合并后的样本表；列名为重映射后的名字，行为全部数据行（多 CSV 纵向拼接）。
+    num_samples : int
+        行数，与 ``len(dataset)`` 一致。
+
+    CSV 与 key_map 约定
+    -------------------
+    - ``csv_paths`` 非空；每个元素须为已存在的 CSV 文件。
+    - 首张 CSV 的第一行决定列名及列顺序；其余文件的列名集合须与首张相同（顺序可不同），
+      不一致时在步骤 2 中 ``assert`` 失败（使用 ``python -O`` 时断言会被关闭，不建议在生产依赖）。
+    - 首行表头不得重复；否则无法与列一一对应。
+    - ``key_map`` 中每一个「值」必须出现在表头中；未出现在 ``key_map`` 值里的列保留原表头名。
+    - 重命名规则：仅 ``DataFrame.rename``，即 CSV 列名 → ``key_map`` 的键；若重命名后列名冲突，本类不处理。
+    - 读入使用 ``pd.read_csv(..., dtype=str, keep_default_na=False)``，空单元格一般为 ``""``。
+
+    路径列（表头以 ``path`` 开头，不区分大小写）
+    -------------------------------------------
+    仅针对**重命名前**的 CSV 列名判断。对每一列：若第一个非空单元为相对路径，则该列整列按
+    **当前 CSV 文件所在目录**补全为绝对路径；若首个非空为绝对路径或列全空，则该列保持 read_csv 结果不变。
+    列内若混有相对/绝对，在「整列参与补全」的前提下仍对每格单独判断 ``os.path.isabs``。
+
+    Dataset 接口
+    ------------
+    - ``__len__``：返回 ``num_samples``。
+    - ``__getitem__(i)``：返回第 ``i`` 行所有列组成的 ``Dict[str, str]``（含未出现在 ``key_map`` 中的列）。
+
+    静态工具方法（节选）
+    --------------------
+    ``cache_image``、``get_hash``、``read_img``、``convert_img_*_uint8`` 等，供子类或训练流程复用，
+    与 CSV 加载逻辑相互独立。
     """
 
     def __init__(
@@ -26,78 +62,149 @@ class BaseDataset(Dataset):
         key_map: Dict[str, str],
         transform: Optional[Callable] = None,
     ):
-        self.csv_paths: List[Path] = [Path(p).expanduser().resolve() for p in csv_paths]
+        if not csv_paths:
+            raise ValueError("csv_paths 不能为空")
+        self.csv_paths: List[Path] = [
+            Path(p).expanduser().resolve() for p in csv_paths]
         self.key_map = key_map
         self.transform = transform
 
-        self.sample_path_table: Dict[str, List[str]] = {}
+        self.sample_path_table: pd.DataFrame = pd.DataFrame()
         self.num_samples: int = 0
-        self._stats_negative_samples: int = 0
 
         self.sample_path_table = self._generate_sample_path_table()
         self.num_samples = self._count_samples()
 
-    def _generate_sample_path_table(self) -> Dict[str, List[str]]:
-        path_table = {inner_field: [] for inner_field in self.key_map.keys()}
+    def _generate_sample_path_table(self) -> pd.DataFrame:
+        # 1. 校验路径列表非空，且每个 CSV 文件存在。
+        # 1.1 无路径则无法确定读哪些表。
+        if not self.csv_paths:
+            raise ValueError("csv_paths 不能为空")
 
+        # 1.2 路径须解析为已存在的普通文件（非目录）。
+        for p in self.csv_paths:
+            if not p.is_file():
+                raise FileNotFoundError(f"CSV 文件不存在：{p}")
+
+        # 2. 以首张 CSV 的表头顺序为基准；其余文件的列名集合须与首张一致（顺序可不同）。
+        # 2.1 首张表第一行即列名，顺序贯穿后续 df[fieldnames] / col_order。
+        ref_headers = self.read_csv_fieldnames(self.csv_paths[0])
+        # 2.2 其余文件只比「列名集合」，顺序可与首张不同。
+        for p in self.csv_paths[1:]:
+            h = self.read_csv_fieldnames(p)
+            assert frozenset(ref_headers) == frozenset(h), (
+                f"CSV 列名不一致（忽略顺序后与首张表须相同）：首张 {self.csv_paths[0]} 为 {sorted(frozenset(ref_headers))!r}，"
+                f"{p} 为 {sorted(frozenset(h))!r}"
+            )
+        # 2.3 统一成 list；禁止首行重复列名，否则与 key_map / DataFrame 无法一一对应。
+        fieldnames = list(ref_headers)
+        if len(fieldnames) != len(set(fieldnames)):
+            raise ValueError(
+                "CSV 首行表头存在重复列名：无法与 key_map、DataFrame 列一一对应（"
+                "csv.DictReader 对同名列会覆盖、pandas 可能改名或产生多列）。请先修正表头。"
+                f" 当前表头：{fieldnames!r}"
+            )
+
+        # 3. 校验 key_map 中每个「值」均为合法表头名。
+        # 3.1 「值」= CSV 原始列名，必须出现在 fieldnames 中，否则无法重命名。
+        for inner_field, csv_col in self.key_map.items():
+            if csv_col not in fieldnames:
+                raise ValueError(
+                    f"key_map 中的 CSV 表头 {csv_col!r}（类内字段 {inner_field!r}）不在 CSV 表头中；"
+                    f"当前表头：{fieldnames}"
+                )
+
+        # 4. 仅按 key_map 做列重命名（值→键），其余列名不变；输出列顺序与 fieldnames 一致（映射后）。
+        # 4.1 pandas.rename 用：旧列名（CSV）-> 新列名（类内字段）。
+        rename_columns = {csv_col: inner for inner,
+                          csv_col in self.key_map.items()}
+        # 4.2 按首张表列顺序，写出重命名后的列名列表（未映射的列保持原名）。
+        col_order = [rename_columns.get(o, o) for o in fieldnames]
+
+        # 5. 逐文件 read_csv、按 fieldnames 对齐；path 前缀列按需补全相对路径；重命名、按 col_order 排布后纵向 concat。
+        frames: List[pd.DataFrame] = []
         for csv_path in self.csv_paths:
             csv_dir = csv_path.parent
+            # 5.1 全文本读入，避免空单元变 NaN，便于与 strip / 路径判断一致。
+            df = pd.read_csv(csv_path, encoding="utf-8",
+                             dtype=str, keep_default_na=False)
+            # 5.2 按首张表列顺序取列（步骤 2 已用 csv 校验各文件列名集合一致，与 read_csv 表头一致）。
+            df = df[fieldnames].copy()
 
-            with csv_path.open("r", encoding="utf-8", newline="") as f:
-                reader = csv.DictReader(f)
-                fieldnames = reader.fieldnames or []
+            # 5.3 表头以 path 开头的列：若首行非空样本为相对路径，则整列按本 CSV 所在目录补全为绝对路径。
+            self.resolve_relative_path_columns_if_needed(
+                df, csv_dir, fieldnames)
 
-                for row in reader:
-                    has_empty_path = False
-                    current_row: Dict[str, str] = {}
+            # 5.4 应用 key_map 列重命名。
+            df.rename(columns=rename_columns, inplace=True)
+            # 5.5 列顺序与 col_order 一致（与 4.2 相同语义）。
+            df = df.reindex(columns=col_order)
+            frames.append(df)
 
-                    for inner_field, csv_field in self.key_map.items():
-                        if csv_field not in fieldnames:
-                            raw_value = ""
-                        else:
-                            raw_value = (row.get(csv_field) or "").strip()
+        # 5.6 无任何文件时返回空表结构；否则纵向合并所有行。
+        if not frames:
+            return pd.DataFrame(columns=col_order)
+        return pd.concat(frames, ignore_index=True)
 
-                        is_path_field = "path" in csv_field.lower()
+    @staticmethod
+    def read_csv_fieldnames(csv_path: Path) -> tuple:
+        with csv_path.open("r", encoding="utf-8", newline="") as f:
+            reader = csv.DictReader(f)
+            fieldnames = reader.fieldnames or []
+            return tuple(fieldnames)
 
-                        if not raw_value:
-                            current_row[inner_field] = ""
-                            if is_path_field:
-                                has_empty_path = True
-                            continue
+    @staticmethod
+    def resolve_relative_path_columns_if_needed(
+        df: pd.DataFrame, csv_dir: Path, fieldnames: Sequence[str]
+    ) -> None:
+        """
+        就地处理 df：对 fieldnames 中「表头以 path 开头」且存在于 df 的列，
+        若该列第一个非空单元格为相对路径，则整列按 csv_dir 补全为绝对路径；
+        若首个非空为绝对路径或列全空，则不修改该列。
+        """
+        for col in fieldnames:
+            if col not in df.columns:
+                continue
+            if not col.lower().startswith("path"):
+                continue
+            s = df[col].fillna("").astype(str)
+            nonempty = s[s.str.strip() != ""]
+            if nonempty.empty:
+                continue
+            first = nonempty.iloc[0].strip()
+            if os.path.isabs(first):
+                continue
 
-                        if is_path_field:
-                            if os.path.isabs(raw_value):
-                                resolved_path = raw_value
-                            else:
-                                resolved_path = str((csv_dir / raw_value).resolve())
-                            current_row[inner_field] = resolved_path
-                        else:
-                            current_row[inner_field] = raw_value
+            def abs_one(v: Any) -> str:
+                t = str(v).strip() if v is not None else ""
+                if t == "" or t.lower() == "nan":
+                    return ""
+                if os.path.isabs(t):
+                    return t
+                return str((csv_dir / t).resolve())
 
-                    for field, value in current_row.items():
-                        path_table[field].append(value)
-
-                    if has_empty_path:
-                        self._stats_negative_samples += 1
-
-        return path_table
+            df[col] = df[col].apply(abs_one)
 
     def _count_samples(self) -> int:
-        if not self.sample_path_table:
+        if self.sample_path_table.empty:
             return 0
-        return len(next(iter(self.sample_path_table.values())))
+        return len(self.sample_path_table)
 
     def __len__(self) -> int:
         return self.num_samples
 
     def __getitem__(self, index: int) -> Dict[str, str]:
-        return {
-            inner_field: self.sample_path_table[inner_field][index] for inner_field in self.key_map.keys()
-        }
+        row = self.sample_path_table.iloc[index]
+        out: Dict[str, str] = {}
+        for col in self.sample_path_table.columns:
+            v = row[col]
+            if pd.isna(v):
+                out[str(col)] = ""
+            else:
+                out[str(col)] = str(v)
+        return out
 
     def __str__(self) -> str:
-        negative_ratio = (self._stats_negative_samples / self.num_samples * 100) if self.num_samples > 0 else 0
-
         lines = [
             "=" * 70,
             "📊 BaseDataset 统计",
@@ -114,7 +221,6 @@ class BaseDataset(Dataset):
         lines.extend(
             [
                 f"\n3. 样本数：{self.num_samples}",
-                f"   负样本行（含空 path 列）：{self._stats_negative_samples}（{negative_ratio:.1f}%）",
                 "=" * 70,
             ]
         )
@@ -183,6 +289,8 @@ class BaseDataset(Dataset):
         """生成任意对象的MD5哈希值，用于缓存校验"""
         hash_obj = hashlib.md5()
 
+        if isinstance(obj, pd.Series):
+            obj = obj.tolist()
         if isinstance(obj, (list, tuple)):
             # 对列表/元组，排序后序列化（确保顺序不影响哈希）
             for item in sorted(obj):
@@ -264,28 +372,3 @@ class BaseDataset(Dataset):
             return list(zip(*x))
 
 
-if __name__ == "__main__":
-    # 示例用法
-
-    # 假设CSV文件和数据文件夹结构如下：
-    # dataset/
-    #   ├─ data.csv
-    #   ├─ images/
-    #   │   ├─ 001.jpg
-    #   │   └─ 002.jpg
-    #   └─ labels/
-    #       ├─ 001.txt
-    #       └─ 002.txt
-
-    CSV_FILES = [
-        Path("/home/xiaopangdun/project/deep_learning/src/train/datasets/coco8/train.csv")
-    ]
-    FIELD_MAP = {
-        "img_path": "data_img",  # 类内字段img对应CSV中的image_path列
-        "label_path": "label_detect_yolo",  # 类内字段label对应CSV中的label_path列
-    }
-
-    dataset = BaseDataset(csv_paths=CSV_FILES, key_map=FIELD_MAP)
-
-    dataset.cache_image(dataset.sample_path_table["img_path"], "cache")
-    print(dataset)

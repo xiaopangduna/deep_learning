@@ -30,15 +30,12 @@ class YoloDataset(BaseDataset):
         self.cfgs = cfgs
         self.cache_label_path = Path(cache_label_path) if cache_label_path else None
         self.cache_image_dir = Path(cache_image_dir) if cache_image_dir else None
-        self.sample_path_table["img_npy_paths"] = None  # 所有图像npy的路径，默认None
         self.samples = None  # 缓存训练需要的所有样本，包括除图像数组外从所有信息，比如，图像路径，标签路径，标签内容，原始图像尺寸，标签类别，标签框，是否归一化，标签框格式等
-        # 检查是否需要缓存
         if self._should_cache_image():
             img_npy_paths = self._cache_image()
-        if cache_image_dir:
             self.sample_path_table["img_npy_paths"] = img_npy_paths
         else:
-            self.sample_path_table["img_npy_paths"] = [None for _ in range(len(self))]
+            self.sample_path_table["img_npy_paths"] = [None] * len(self)
 
         if self._should_cache_label():
             self._cache_label()
@@ -209,7 +206,9 @@ class YoloDataset(BaseDataset):
 
     def _cache_image(self) -> List[str]:
         """缓存图像并返回缓存路径列表"""
-        img_npy_paths = self.cache_image(self.sample_path_table["img_paths"], cache_dir=str(self.cache_image_dir))
+        img_npy_paths = self.cache_image(
+            self.sample_path_table["img_paths"].tolist(), cache_dir=str(self.cache_image_dir)
+        )
 
         return img_npy_paths
 
@@ -273,9 +272,9 @@ class YoloDataset(BaseDataset):
             results_label = pool.imap(
                 func=lambda x: read_img_and_yolo_detection_labels(*x),
                 iterable=zip(
-                    self.sample_path_table["img_paths"],
-                    self.sample_path_table["img_npy_paths"],
-                    self.sample_path_table["label_paths"],
+                    self.sample_path_table["img_paths"].tolist(),
+                    self.sample_path_table["img_npy_paths"].tolist(),
+                    self.sample_path_table["label_paths"].tolist(),
                 ),
             )
             pbar = tqdm(results_label, total=len(self), desc="处理标签")

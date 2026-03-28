@@ -40,7 +40,34 @@ class ImageClassifierDataset(BaseDataset):
         cfgs (dict): A dictionary holds parameters in data processing.
         map_class_id_to_class_name: 若显式传入 dict/Mapping，则用于校验与可视化；若为 None 且 CSV 同时含
             class_id 与 class_name，则从表中自动推断 id→name（同一 id 对应多个 name 会报错）。
+        key_map 会先与首个 CSV 的表头取交集再交给 BaseDataset（例如 predict 仅含 path_img 时自动去掉标签列映射）；
+        被忽略的项会触发 UserWarning。
     """
+
+    @staticmethod
+    def _key_map_intersect_csv_headers(
+        csv_paths: Sequence[Union[str, Path]], key_map: Dict[str, str]
+    ) -> Dict[str, str]:
+        paths = [Path(p).expanduser().resolve() for p in csv_paths]
+        if not paths:
+            raise ValueError("csv_paths 不能为空")
+        for p in paths:
+            if not p.is_file():
+                raise FileNotFoundError(f"CSV 文件不存在：{p}")
+        hdr = frozenset(BaseDataset.read_csv_fieldnames(paths[0]))
+        filtered = {k: v for k, v in key_map.items() if v in hdr}
+        if not filtered:
+            raise ValueError(
+                f"key_map 与 CSV 表头无交集：表头={sorted(hdr)}，key_map 的值={list(key_map.values())}"
+            )
+        dropped = {k: v for k, v in key_map.items() if v not in hdr}
+        if dropped:
+            warnings.warn(
+                f"以下 key_map 项在 CSV 中无对应表头，已忽略：{dropped}",
+                UserWarning,
+                stacklevel=2,
+            )
+        return filtered
 
     def __init__(
         self,
@@ -51,17 +78,19 @@ class ImageClassifierDataset(BaseDataset):
         norm_mean=None,
         norm_std=None
     ):
-        super().__init__(csv_paths=csv_paths, key_map=key_map, transform=transform)
-        self.has_label = True if "class_id" in self.sample_path_table else False
+        key_map_eff = self._key_map_intersect_csv_headers(csv_paths, key_map)
+        super().__init__(csv_paths=csv_paths, key_map=key_map_eff, transform=transform)
+        self.has_label = (
+            "class_id" in self.sample_path_table.columns
+            and len(self.sample_path_table) > 0
+            and not self.sample_path_table["class_id"].astype(str).str.strip().eq("").all()
+        )
         self.norm_mean = norm_mean
         self.norm_std = norm_std
 
         if map_class_id_to_class_name is not None:
             self.map_class_id_to_class_name = dict(map_class_id_to_class_name)
-        elif (
-            self.has_label
-            and "class_name" in self.sample_path_table
-        ):
+        elif self.has_label and "class_name" in self.sample_path_table.columns:
             self.map_class_id_to_class_name = self._infer_class_mapping_from_table()
         else:
             self.map_class_id_to_class_name = {}
@@ -74,10 +103,10 @@ class ImageClassifierDataset(BaseDataset):
         """从 sample_path_table 的 class_id、class_name 列构建 id→name；冲突时抛错。"""
         mapping: Dict[int, str] = {}
         conflicts: List[Tuple[int, str, str]] = []
-        n = len(self.sample_path_table["class_id"])
+        n = len(self.sample_path_table)
         for i in range(n):
-            class_id_str = self.sample_path_table["class_id"][i]
-            class_name = self.sample_path_table["class_name"][i]
+            class_id_str = self.sample_path_table["class_id"].iloc[i]
+            class_name = self.sample_path_table["class_name"].iloc[i]
             try:
                 class_id = int(class_id_str)
             except ValueError:
@@ -102,9 +131,9 @@ class ImageClassifierDataset(BaseDataset):
         actual_class_ids = set()
         class_id_name_pairs = set()
         
-        for i in range(len(self.sample_path_table["class_id"])):
-            class_id_str = self.sample_path_table["class_id"][i]
-            class_name = self.sample_path_table["class_name"][i]
+        for i in range(len(self.sample_path_table)):
+            class_id_str = self.sample_path_table["class_id"].iloc[i]
+            class_name = self.sample_path_table["class_name"].iloc[i]
             
             try:
                 class_id = int(class_id_str)
@@ -148,7 +177,7 @@ class ImageClassifierDataset(BaseDataset):
 
     def __getitem__(self, index):
         net_in, net_out = {}, {}
-        img_path = self.sample_path_table["img_path"][index]
+        img_path = str(self.sample_path_table["img_path"].iloc[index])
 
         img_np, img_shape = self.read_img(img_path, None)
         img_tensor = BaseDataset.convert_img_from_numpy_to_tensor_uint8(img_np)
@@ -161,8 +190,8 @@ class ImageClassifierDataset(BaseDataset):
         net_in["img_shape"] = img_shape
         net_in["img_tv_transformed"] = img_tv_transformed
         if self.has_label:
-            class_id = self.sample_path_table["class_id"][index]
-            net_out["class_name"] = self.sample_path_table["class_name"][index]
+            class_id = self.sample_path_table["class_id"].iloc[index]
+            net_out["class_name"] = self.sample_path_table["class_name"].iloc[index]
             net_out["class_id"] = int(class_id)
 
         return net_in, net_out
