@@ -8,7 +8,8 @@
 @Email   :   18675381281@163.com
 @Desc    :   This is a simple example
 """
-from typing import List, Dict, Optional, Callable, Any, Tuple, Union, Mapping
+from typing import List, Dict, Optional, Callable, Any, Tuple, Union, Mapping, Sequence
+from pathlib import Path
 import json
 import warnings
 from copy import deepcopy
@@ -43,7 +44,7 @@ class ImageClassifierDataset(BaseDataset):
 
     def __init__(
         self,
-        csv_paths: List[str],
+        csv_paths: Sequence[Union[str, Path]],
         key_map: Dict[str, str] = {"img_path": "path_img", "class_name": "class_name", "class_id": "class_id"},
         transform: Optional[Callable] = None,
         map_class_id_to_class_name: Optional[Union[Dict[int, str], Mapping[int, str]]] = None,

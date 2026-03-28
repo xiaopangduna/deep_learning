@@ -1,7 +1,7 @@
 import os
 import cv2
 import numpy as np
-from typing import List, Dict, Optional, Callable
+from typing import List, Dict, Optional, Callable, Union, Sequence
 from pathlib import Path
 from .base import BaseDataset
 from typing import List, Dict, Optional, Callable, Any, Tuple, Union
@@ -17,7 +17,7 @@ class YoloDataset(BaseDataset):
     def __init__(
         self,
         # 父类必需参数（原样传递）
-        csv_paths: List[str],
+        csv_paths: Sequence[Union[str, Path]],
         key_map: Dict[str, str] = {"img_paths": "data_img", "label_paths": "label_detect_yolo"},
         transform: Optional[Callable] = None,
         # 子类特有参数（图像配置字典）
