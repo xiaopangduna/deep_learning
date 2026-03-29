@@ -1,11 +1,11 @@
 trainer:
-  max_epochs: 100 # 600
+  max_epochs: 600 
   accelerator: auto
   callbacks:
     - class_path: lovely_deep_learning.callback.image_classifier.ImageClassifierCallback
       init_args:
-        save_dir: tmp  # 在测试和预测时使用，一般指向logs目录
-        test_only_save_mistake: true  # TODO
+        save_dir: tmp  # 在测试和预测时使用，保存预测的结果，一般指向logs目录
+        test_only_save_mistake: true  
     - class_path: lightning.pytorch.callbacks.EarlyStopping
       init_args:
         monitor: "val_loss"
