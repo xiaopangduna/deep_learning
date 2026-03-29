@@ -371,4 +371,5 @@ class BaseDataset(Dataset):
         def collate_fn(x):
             return list(zip(*x))
 
+        return collate_fn
 

@@ -1,31 +1,31 @@
+# COCO8 目标检测实验：DAGNet(YOLOv8n) + 自研 DetectDAGNetLoss
+# 用法（在 src/train 下）：lightning fit --config configs/experiments/object_detect_COCO8.yaml
+# 数据首次运行会由 COCO8DataModule.prepare_data 下载 coco8.zip 并生成 CSV / 类别映射表
+
 trainer:
   max_epochs: 100
   accelerator: auto
   callbacks:
-    - class_path: lovely_deep_learning.callback.image_classifier.ImageClassifierCallback
-      init_args:
-        save_dir: tmp       # 保存测试和预测结果的目录
-        test_only_save_mistake: true  # 只保存测试和预测结果的错误样本
     - class_path: lightning.pytorch.callbacks.EarlyStopping
       init_args:
         monitor: "val_loss"
-        min_delta: 0.00
-        patience: 10
+        min_delta: 0.0
+        patience: 15
         verbose: true
         mode: min
     - class_path: lightning.pytorch.callbacks.ModelCheckpoint
       init_args:
-        monitor: "val_acc"
-        filename: "{epoch:02d}-{val_acc:.2f}"
+        monitor: "val_loss"
+        filename: "{epoch:02d}-{val_loss:.4f}"
         save_top_k: 1
         save_last: true
-        mode: max
+        mode: min
 
   logger:
     - class_path: lightning.pytorch.loggers.TensorBoardLogger
       init_args:
         save_dir: logs
-        name: image_classifiter_IMAGE_NETTE  
+        name: object_detect_COCO8
         version: null
   profiler:
     class_path: lightning.pytorch.profilers.SimpleProfiler
@@ -33,166 +33,173 @@ trainer:
       filename: profiler
       extended: true
 
-        
 data:
-  class_path: lovely_deep_learning.data_module.image_nette.ImageNetteDataModule
+  class_path: lovely_deep_learning.data_module.coco8.COCO8DataModule
   init_args:
-    dataset_dir: datasets/IMAGENETTE/imagenette2-320
-    train_csv_paths: [datasets/IMAGENETTE/train.csv]
-    val_csv_paths: [datasets/IMAGENETTE/val.csv]
-    test_csv_paths: [datasets/IMAGENETTE/val.csv]
-    predict_csv_paths: [datasets/IMAGENETTE/predict.csv]
-    key_map : {"img_path": "path_img", "class_name": "class_name", "class_id": "class_id"}
-    predict_key_map : {"img_path": "path_img"}
-    map_class_id_to_class_name:
-      0: "n01440764"
-      1: "n02102040"
-      2: "n02979186"
-      3: "n03000684"
-      4: "n03028079"
-      5: "n03394916"
-      6: "n03417042"
-      7: "n03425413"
-      8: "n03445777"
-      9: "n03888257"
-    norm_mean : [0.485, 0.456, 0.406]  # 归一化均值 必须与transform_val中的Normalize的mean一致
-    norm_std : [0.229, 0.224, 0.225]  # 归一化标准差 必须与transform_val中的Normalize的std一致
-    batch_size: 64
-    num_workers: 8  # nproc 查看cpu核心数;先单核找到最大的batch_size，然后batch_size减少，提高num_workers,num_workers可以先用一半的cpu核心数
+    dataset_dir: datasets/COCO8/coco8
+    train_csv_paths: [datasets/COCO8/train.csv]
+    val_csv_paths: [datasets/COCO8/val.csv]
+    test_csv_paths: [datasets/COCO8/val.csv]
+    predict_csv_paths: [datasets/COCO8/predict.csv]
+    key_map:
+      img_path: path_img
+      object_label_path: path_label_detect_yolo
+    predict_key_map:
+      img_path: path_img
+    map_class_id_to_class_name: datasets/COCO8/map_class_id_to_class_name.csv
+    norm_mean: null
+    norm_std: null
+    batch_size: 16
+    num_workers: 4
     transform_train:
       class_path: torchvision.transforms.v2.Compose
       init_args:
         transforms:
           - class_path: torchvision.transforms.v2.Resize
             init_args:
-              size: [224,224]
-              interpolation: 2 # bilinear
-          - class_path: torchvision.transforms.v2.TrivialAugmentWide
+              size: [640, 640]
+              interpolation: 2
+          - class_path: torchvision.transforms.v2.RandomHorizontalFlip
+            init_args:
+              p: 0.5
           - class_path: torchvision.transforms.v2.ToDtype
             init_args:
               dtype: torch.float32
               scale: true
-          - class_path: torchvision.transforms.v2.Normalize
-            init_args:
-              mean: [0.485, 0.456, 0.406]
-              std: [0.229, 0.224, 0.225]
     transform_val:
       class_path: torchvision.transforms.v2.Compose
       init_args:
         transforms:
           - class_path: torchvision.transforms.v2.Resize
             init_args:
-              size: [224,224]
-              interpolation: 2 # bilinear
+              size: [640, 640]
+              interpolation: 2
           - class_path: torchvision.transforms.v2.ToDtype
             init_args:
               dtype: torch.float32
               scale: true
-          - class_path: torchvision.transforms.v2.Normalize
-            init_args:
-              mean: [0.485, 0.456, 0.406]
-              std: [0.229, 0.224, 0.225]
-        
-        
+
 model:
-  class_path: lovely_deep_learning.module.image_classifier.ImageClassifierModule
+  class_path: lovely_deep_learning.module.object_detect.ObjectDetectModule
   init_args:
     optimizer:
-      class_path: torch.optim.Adam
+      class_path: torch.optim.AdamW
       init_args:
-        lr: 2e-4
+        lr: 1.0e-4
+        weight_decay: 5.0e-4
     lr_scheduler:
-      class_path: torch.optim.lr_scheduler.StepLR
+      class_path: torch.optim.lr_scheduler.CosineAnnealingLR
       init_args:
-        step_size: 5
-        gamma: 0.1
+        T_max: 100
+        eta_min: 1.0e-6
+    loss:
+      box_gain: 7.5
+      cls_gain: 0.5
+      dfl_gain: 1.5
+      iou_match_thresh: 0.5
     model:
-      model_name: mobilenet_v3_large
+      model_name: yolov8_n
       pretrained: true
-      structure:
-        inputs: [{name: input, shape: [3, 224, 224]}]
-        outputs: [{name: classification, from: [classifier]}]
-        layers:
-          - name: features
-            from: [input]
-            module: torch.nn.Sequential
-            children:
-              - name: "0"
-                module: lovely_deep_learning.nn.mobilenet_v3.Conv2dNormActivation
-                args: {in_channels: 3, out_channels: 16, kernel_size: 3, stride: 2, bn_eps: 0.001, bn_momentum: 0.01, activation_layer: hswish}
-              - name: "1"
-                module: lovely_deep_learning.nn.mobilenet_v3.InvertedResidual
-                args: {input_channels: 16, kernel: 3, expanded_channels: 16, out_channels: 16, use_se: false, use_hs: false, stride: 1, dilation: 1}
-              - name: "2"
-                module: lovely_deep_learning.nn.mobilenet_v3.InvertedResidual
-                args: {input_channels: 16, kernel: 3, expanded_channels: 64, out_channels: 24, use_se: false, use_hs: false, stride: 2, dilation: 1}
-              - name: "3"
-                module: lovely_deep_learning.nn.mobilenet_v3.InvertedResidual
-                args: {input_channels: 24, kernel: 3, expanded_channels: 72, out_channels: 24, use_se: false, use_hs: false, stride: 1, dilation: 1}
-              - name: "4"
-                module: lovely_deep_learning.nn.mobilenet_v3.InvertedResidual
-                args: {input_channels: 24, kernel: 5, expanded_channels: 72, out_channels: 40, use_se: true, use_hs: false, stride: 2, dilation: 1}
-              - name: "5"
-                module: lovely_deep_learning.nn.mobilenet_v3.InvertedResidual
-                args: {input_channels: 40, kernel: 5, expanded_channels: 120, out_channels: 40, use_se: true, use_hs: false, stride: 1, dilation: 1}
-              - name: "6"
-                module: lovely_deep_learning.nn.mobilenet_v3.InvertedResidual
-                args: {input_channels: 40, kernel: 5, expanded_channels: 120, out_channels: 40, use_se: true, use_hs: false, stride: 1, dilation: 1}
-              - name: "7"
-                module: lovely_deep_learning.nn.mobilenet_v3.InvertedResidual
-                args: {input_channels: 40, kernel: 3, expanded_channels: 240, out_channels: 80, use_se: false, use_hs: true, stride: 2, dilation: 1}
-              - name: "8"
-                module: lovely_deep_learning.nn.mobilenet_v3.InvertedResidual
-                args: {input_channels: 80, kernel: 3, expanded_channels: 200, out_channels: 80, use_se: false, use_hs: true, stride: 1, dilation: 1}
-              - name: "9"
-                module: lovely_deep_learning.nn.mobilenet_v3.InvertedResidual
-                args: {input_channels: 80, kernel: 3, expanded_channels: 184, out_channels: 80, use_se: false, use_hs: true, stride: 1, dilation: 1}
-              - name: "10"
-                module: lovely_deep_learning.nn.mobilenet_v3.InvertedResidual
-                args: {input_channels: 80, kernel: 3, expanded_channels: 184, out_channels: 80, use_se: false, use_hs: true, stride: 1, dilation: 1}
-              - name: "11"
-                module: lovely_deep_learning.nn.mobilenet_v3.InvertedResidual
-                args: {input_channels: 80, kernel: 3, expanded_channels: 480, out_channels: 112, use_se: true, use_hs: true, stride: 1, dilation: 1}
-              - name: "12"
-                module: lovely_deep_learning.nn.mobilenet_v3.InvertedResidual
-                args: {input_channels: 112, kernel: 3, expanded_channels: 672, out_channels: 112, use_se: true, use_hs: true, stride: 1, dilation: 1}
-              - name: "13"
-                module: lovely_deep_learning.nn.mobilenet_v3.InvertedResidual
-                args: {input_channels: 112, kernel: 5, expanded_channels: 672, out_channels: 160, use_se: true, use_hs: true, stride: 2, dilation: 1}
-              - name: "14"
-                module: lovely_deep_learning.nn.mobilenet_v3.InvertedResidual
-                args: {input_channels: 160, kernel: 5, expanded_channels: 960, out_channels: 160, use_se: true, use_hs: true, stride: 1, dilation: 1}
-              - name: "15"
-                module: lovely_deep_learning.nn.mobilenet_v3.InvertedResidual
-                args: {input_channels: 160, kernel: 5, expanded_channels: 960, out_channels: 160, use_se: true, use_hs: true, stride: 1, dilation: 1}
-              - name: "16"
-                module: lovely_deep_learning.nn.mobilenet_v3.Conv2dNormActivation
-                args: {in_channels: 160, out_channels: 960, kernel_size: 1, stride: 1, bn_eps: 0.001, bn_momentum: 0.01, activation_layer: hswish}
-
-          - name: avgpool
-            from: [features]
-            module: torch.nn.AdaptiveAvgPool2d
-            args: {output_size: 1}
-          - name: flatten
-            from: [avgpool]
-            module: torch.nn.Flatten
-            args: {start_dim: 1}
-          - name: classifier
-            from: [flatten]
-            module: torch.nn.Sequential
-            children:
-              - {name: "0", module: torch.nn.Linear, args: {in_features: 960, out_features: 1280}}
-              - {name: "1", module: torch.nn.Hardswish, args: {inplace: true}}
-              - {name: "2", module: torch.nn.Dropout, args: {p: 0.2, inplace: true}}
-              - {name: "3", module: torch.nn.Linear, args: {in_features: 1280, out_features: 10}}
       weight:
-        path: pretrained_models/mobilenet_v3_large-5c1a4163.pth
-        url: https://download.pytorch.org/models/mobilenet_v3_large-5c1a4163.pth
+        path: pretrained_models/yolov8n.pt
+        url: https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov8n.pt
         map_location: cpu
         strict: false
         src_key_prefix: layers.
-        src_key_slice_start: 0
-
-
-
-
+        src_key_slice_start: 12
+      structure:
+        inputs: [{name: input, shape: [3, 640, 640]}]
+        outputs: [{name: detect, from: ["22"]}]
+        layers:
+          - name: "0"
+            from: ["input"]
+            module: lovely_deep_learning.nn.conv.Conv
+            args: {c1: 3, c2: 16, k: 3, s: 2}
+          - name: "1"
+            from: ["0"]
+            module: lovely_deep_learning.nn.conv.Conv
+            args: {c1: 16, c2: 32, k: 3, s: 2}
+          - name: "2"
+            from: ["1"]
+            module: lovely_deep_learning.nn.block.C2f
+            args: {c1: 32, c2: 32, n: 1, shortcut: true}
+          - name: "3"
+            from: ["2"]
+            module: lovely_deep_learning.nn.conv.Conv
+            args: {c1: 32, c2: 64, k: 3, s: 2}
+          - name: "4"
+            from: ["3"]
+            module: lovely_deep_learning.nn.block.C2f
+            args: {c1: 64, c2: 64, n: 2, shortcut: true}
+          - name: "5"
+            from: ["4"]
+            module: lovely_deep_learning.nn.conv.Conv
+            args: {c1: 64, c2: 128, k: 3, s: 2}
+          - name: "6"
+            from: ["5"]
+            module: lovely_deep_learning.nn.block.C2f
+            args: {c1: 128, c2: 128, n: 2, shortcut: true}
+          - name: "7"
+            from: ["6"]
+            module: lovely_deep_learning.nn.conv.Conv
+            args: {c1: 128, c2: 256, k: 3, s: 2}
+          - name: "8"
+            from: ["7"]
+            module: lovely_deep_learning.nn.block.C2f
+            args: {c1: 256, c2: 256, n: 1, shortcut: true}
+          - name: "9"
+            from: ["8"]
+            module: lovely_deep_learning.nn.block.SPPF
+            args: {c1: 256, c2: 256, k: 5}
+          - name: "10"
+            from: ["9"]
+            module: torch.nn.modules.upsampling.Upsample
+            args: {size: null, scale_factor: 2, mode: nearest}
+          - name: "11"
+            from: ["10", "6"]
+            module: ultralytics.nn.modules.conv.Concat
+            args: {dimension: 1}
+          - name: "12"
+            from: ["11"]
+            module: lovely_deep_learning.nn.block.C2f
+            args: {c1: 384, c2: 128, n: 1}
+          - name: "13"
+            from: ["12"]
+            module: torch.nn.modules.upsampling.Upsample
+            args: {size: null, scale_factor: 2, mode: nearest}
+          - name: "14"
+            from: ["13", "4"]
+            module: ultralytics.nn.modules.conv.Concat
+            args: {dimension: 1}
+          - name: "15"
+            from: ["14"]
+            module: lovely_deep_learning.nn.block.C2f
+            args: {c1: 192, c2: 64, n: 1}
+          - name: "16"
+            from: ["15"]
+            module: lovely_deep_learning.nn.conv.Conv
+            args: {c1: 64, c2: 64, k: 3, s: 2}
+          - name: "17"
+            from: ["16", "12"]
+            module: ultralytics.nn.modules.conv.Concat
+            args: {dimension: 1}
+          - name: "18"
+            from: ["17"]
+            module: lovely_deep_learning.nn.block.C2f
+            args: {c1: 192, c2: 128, n: 1}
+          - name: "19"
+            from: ["18"]
+            module: lovely_deep_learning.nn.conv.Conv
+            args: {c1: 128, c2: 128, k: 3, s: 2}
+          - name: "20"
+            from: ["19", "9"]
+            module: ultralytics.nn.modules.conv.Concat
+            args: {dimension: 1}
+          - name: "21"
+            from: ["20"]
+            module: lovely_deep_learning.nn.block.C2f
+            args: {c1: 384, c2: 256, n: 1}
+          - name: "22"
+            from: ["15", "18", "21"]
+            module: lovely_deep_learning.nn.head.Detect
+            args: {nc: 80, ch: [64, 128, 256], legacy: true, stride: [8, 16, 32], shape: [136, 64, 80, 80]}

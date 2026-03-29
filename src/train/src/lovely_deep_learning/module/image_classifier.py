@@ -36,9 +36,7 @@ class ImageClassifierModule(pl.LightningModule):
 
         self._graph_logged = False
 
-        # 根据 init_type 对模型进行自定义初始化；为 None 时使用默认初始化
-        # if init_type is not None:
-        #     self._initialize_weights(init_type)
+
 
     def forward(self, x):
         return self.model([x])
