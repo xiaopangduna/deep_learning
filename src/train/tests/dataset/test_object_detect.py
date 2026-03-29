@@ -1,10 +1,12 @@
 import pytest
 from pathlib import Path
-
+import cv2
 import torch
+import numpy as np
 from torchvision import tv_tensors
 from torchvision.transforms import v2
 from lovely_deep_learning.dataset.object_detect import ObjectDetectDataset
+
 
 PATH_CSV = ["tests/test_data/coco8/train.csv"]
 PATH_CSV_WITHOUT_LABEL = [
@@ -97,14 +99,17 @@ MAP_CLASS_ID_TO_CLASS_NAME = {
 
 
 def test_ObjectDetectDataset_init():
-    dataset = ObjectDetectDataset(csv_paths=PATH_CSV, key_map=KEY_MAP, transform=None, map_class_id_to_class_name=MAP_CLASS_ID_TO_CLASS_NAME)
+    dataset = ObjectDetectDataset(csv_paths=PATH_CSV, key_map=KEY_MAP,
+                                  transform=None, map_class_id_to_class_name=MAP_CLASS_ID_TO_CLASS_NAME)
     net_in, net_out = dataset[0]
     assert len(dataset.sample_path_table) == 4
     assert "img_path" in dataset.sample_path_table.columns
     assert "object_label_path" in dataset.sample_path_table.columns
 
+
 def test_ObjectDetectDataset_init_without_label():
-    dataset = ObjectDetectDataset(csv_paths=PATH_CSV_WITHOUT_LABEL, key_map=PREDICT_KEY_MAP, transform=None, map_class_id_to_class_name=MAP_CLASS_ID_TO_CLASS_NAME)
+    dataset = ObjectDetectDataset(csv_paths=PATH_CSV_WITHOUT_LABEL, key_map=PREDICT_KEY_MAP,
+                                  transform=None, map_class_id_to_class_name=MAP_CLASS_ID_TO_CLASS_NAME)
     net_in, net_out = dataset[0]
     assert len(dataset.sample_path_table) == 4
     assert "img_path" in dataset.sample_path_table.columns
@@ -114,7 +119,8 @@ def test_ObjectDetectDataset_init_without_label():
 def test_ImageClassifierDataset_getitem_with_transform():
     transforms = v2.Compose(
         [v2.Resize(size=(640, 640)), v2.ToDtype(dtype=torch.float32, scale=True)])
-    dataset = ObjectDetectDataset(csv_paths=PATH_CSV, key_map=KEY_MAP, transform=transforms, map_class_id_to_class_name=MAP_CLASS_ID_TO_CLASS_NAME)
+    dataset = ObjectDetectDataset(csv_paths=PATH_CSV, key_map=KEY_MAP,
+                                  transform=transforms, map_class_id_to_class_name=MAP_CLASS_ID_TO_CLASS_NAME)
     net_in, net_out = dataset[0]
     assert net_in["img_tv_transformed"].shape == (3, 640, 640)
 
@@ -122,6 +128,56 @@ def test_ImageClassifierDataset_getitem_with_transform():
 def test_ObjectDetectDataset_getitem_with_transform_without_label():
     transforms = v2.Compose(
         [v2.Resize(size=(640, 640)), v2.ToDtype(dtype=torch.float32, scale=True)])
-    dataset = ObjectDetectDataset(csv_paths=PATH_CSV_WITHOUT_LABEL, key_map=PREDICT_KEY_MAP, transform=transforms, map_class_id_to_class_name=MAP_CLASS_ID_TO_CLASS_NAME)
+    dataset = ObjectDetectDataset(csv_paths=PATH_CSV_WITHOUT_LABEL, key_map=PREDICT_KEY_MAP,
+                                  transform=transforms, map_class_id_to_class_name=MAP_CLASS_ID_TO_CLASS_NAME)
     net_in, net_out = dataset[0]
     assert net_in["img_tv_transformed"].shape == (3, 640, 640)
+
+
+def test_ObjectDetectDataset_draw_label_on_numpy():
+    expected_bboxes_xyxy = np.array(
+        [[1.0, 20.0, 442.0, 399.0]], dtype=np.float32)
+
+    dataset = ObjectDetectDataset(csv_paths=PATH_CSV, key_map=KEY_MAP,
+                                  transform=None, map_class_id_to_class_name=MAP_CLASS_ID_TO_CLASS_NAME)
+    net_in, net_out = dataset[0]
+    img_np = cv2.imread(net_in["img_path"])
+    bboxes_xyxy = net_out["bboxes_xyxy_abs_tv_transformed"].numpy()
+    cls_np = net_out["cls_np"]
+    img_with_label = dataset.draw_label_on_numpy(img_np, bboxes_xyxy, cls_np)
+    np.testing.assert_allclose(
+        bboxes_xyxy,
+        expected_bboxes_xyxy,
+        atol=2.0,
+        rtol=0.0,
+        err_msg="像素 XYXY 与期望值逐元素绝对差应 ≤2",
+    )
+    cv2.imwrite(
+        "./tmp/test_ObjectDetectDataset_draw_label_on_numpy.jpg", img_with_label)
+
+
+def test_ObjectDetectDataset_draw_label_on_numpy_with_transform():
+    expected_bboxes_xyxy = np.array(
+        [[1.0, 30.0, 442.0, 601.0]], dtype=np.float32)
+
+    transforms = v2.Compose(
+        [v2.Resize(size=(640, 640)), v2.ToDtype(dtype=torch.float32, scale=True)])
+    dataset = ObjectDetectDataset(csv_paths=PATH_CSV, key_map=KEY_MAP,
+                                  transform=transforms, map_class_id_to_class_name=MAP_CLASS_ID_TO_CLASS_NAME)
+    net_in, net_out = dataset[0]
+    img_tensor = net_in["img_tv_transformed"]
+    img_np = dataset.convert_img_from_tensor_to_numpy(img_tensor)
+    bboxes_xyxy = net_out["bboxes_xyxy_abs_tv_transformed"].numpy()
+    cls_np = net_out["cls_tv_transformed"].numpy()
+
+    img_with_label = dataset.draw_label_on_numpy(img_np, bboxes_xyxy, cls_np)
+    assert img_with_label.shape == (640, 640, 3)
+    np.testing.assert_allclose(
+        bboxes_xyxy,
+        expected_bboxes_xyxy,
+        atol=2.0,
+        rtol=0.0,
+        err_msg="像素 XYXY 与期望值逐元素绝对差应 ≤2",
+    )
+    cv2.imwrite(
+        "./tmp/test_ObjectDetectDataset_draw_label_on_numpy_with_transform.jpg", img_with_label)

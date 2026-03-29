@@ -1,16 +1,11 @@
 import pytest
-import csv
-import os
-import numpy as np
-import shutil
+
 import cv2
-from pathlib import Path
-from torch.utils.data import DataLoader
+import torch
+
 from lovely_deep_learning.dataset.image_classifier import ImageClassifierDataset
 from torchvision.transforms import v2
-from torchvision.io import decode_image
-from torchvision.utils import save_image
-import torch
+
 
 PATH_CSV = ["tests/test_data/dataset/test_image_classifier_train.csv"]
 PATH_CSV_WITHOUT_LABEL = [
