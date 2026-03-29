@@ -1,4 +1,4 @@
-# COCO8 目标检测实验：DAGNet(YOLOv8n) + 自研 DetectDAGNetLoss
+# COCO8 目标检测实验：DAGNet(YOLOv8n) + DetectDAGNetLoss（内部为 Ultralytics v8DetectionLoss）
 # 用法（在 src/train 下）：lightning fit --config configs/experiments/object_detect_COCO8.yaml
 # 数据首次运行会由 COCO8DataModule.prepare_data 下载 coco8.zip 并生成 CSV / 类别映射表
 
@@ -96,7 +96,7 @@ model:
       box_gain: 7.5
       cls_gain: 0.5
       dfl_gain: 1.5
-      iou_match_thresh: 0.5
+      tal_topk: 10
     model:
       model_name: yolov8_n
       pretrained: true

@@ -1,9 +1,10 @@
 """
 基于 ``DAGNet`` + ``configs/models/yolov8_n.yaml`` 的目标检测 Lightning 模块；
-损失为自实现的 :class:`~lovely_deep_learning.losses.detect_dagnet_loss.DetectDAGNetLoss`（不依赖 Ultralytics loss API）。
+损失为 :class:`~lovely_deep_learning.losses.detect_dagnet_loss.DetectDAGNetLoss`（
+自研前向，与 Ultralytics ``v8DetectionLoss`` 公式对齐；便于对照源码与论文）。
 
 数据侧使用 ``lovely_deep_learning.data_module.object_detect.ObjectDetectDataModule``。
-实验 YAML 中请将 ``model.class_path`` 指向本模块的 ``ObjectDetectDAGNetModule``。
+实验 YAML 中请将 ``model.class_path`` 指向本模块的 ``ObjectDetectModule``。
 """
 
 from __future__ import annotations
@@ -44,7 +45,12 @@ class ObjectDetectModule(pl.LightningModule):
         last_name = self.model.layers_config[-1]["name"]
         self._detect = self.model.layers[last_name]
         loss_kw = dict(loss or {})
-        self.criterion = DetectDAGNetLoss(self._detect, **loss_kw)
+        self.criterion = DetectDAGNetLoss(
+            nc=self._detect.nc,
+            reg_max=self._detect.reg_max,
+            stride=self._detect.stride,
+            **loss_kw,
+        )
 
         self._graph_logged = False
 

@@ -1,15 +1,59 @@
 """
-YOLOv8 风格检测损失（DFL + dist2bbox + CIoU + 多标签 BCE），仅依赖 PyTorch。
-与 ``lovely_deep_learning.nn.head.Detect`` 训练阶段输出的三层特征图配套使用。
+YOLOv8 检测损失（自研实现，与 Ultralytics ``v8DetectionLoss`` 前向公式对齐，便于对照论文与源码阅读）。
+
+**训练管线（先分配，再算三项损失）**
+
+1. **公共准备**：多尺度特征拼成「全锚点」预测；``make_anchors``；GT 从归一化 xywh 转为像素 xyxy；
+   DFL  logits 经 softmax×proj 得到 ltrb，再 ``dist2bbox`` 得到预测框（网格单位 → 乘 stride 与 GT 对齐）。
+
+2. **TaskAlignedAssigner（TAL）**：根据分类得分与 IoU 为每个锚点分配 soft 目标 ``target_scores``、
+   回归目标 ``target_bboxes``（像素 xyxy）及前景掩码 ``fg_mask``。三项损失**都依赖**这一步的输出。
+
+3. **三项标量损失（未乘 ``hyp.*`` 前）**
+
+   - **cls（分类）**：对 **所有**锚点做 ``BCEWithLogits(pred_scores, target_scores)``，
+     ``target_scores`` 为 TAL 给出的多类 soft label（含大量背景 0），按 ``target_scores_sum`` 归一化。
+
+   - **box（框 / CIoU）**：仅 **fg_mask** 上的锚点；``1 - CIoU(pred, target)``，加权后与 ``target_scores_sum`` 归一化。
+
+   - **dfl（分布焦点）**：仅 **fg_mask**；把 GT 框转为相对锚点的 ltrb 真值，对每条边的 ``reg_max`` 维
+     logits 做交叉熵（Ultralytics 的 ``DFLoss``）。``reg_max==1`` 时此项为 0。
+
+最后 ``loss[0,1,2]`` 分别乘 ``hyp.box / hyp.cls / hyp.dfl``，再乘 ``batch_size`` 与官方一致。
+
+不调用 ``v8DetectionLoss`` 类；``TaskAlignedAssigner`` / ``make_anchors`` / ``dist2bbox`` / ``bbox2dist``
+仍使用 Ultralytics 工具实现。辅助函数 ``_make_anchors``、``_dfl_decode`` 等保留供单测。
 """
 
 from __future__ import annotations
 
-from typing import List, Tuple
+import copy
+from typing import Any, List, NamedTuple, Sequence, Tuple, Union
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+from ultralytics.utils import DEFAULT_CFG
+from ultralytics.utils.metrics import bbox_iou
+from ultralytics.utils.ops import xywh2xyxy
+from ultralytics.utils.tal import TaskAlignedAssigner, bbox2dist, dist2bbox, make_anchors
+
+
+def merge_yolov8_hyp_args(
+    box_gain: float | None,
+    cls_gain: float | None,
+    dfl_gain: float | None,
+) -> Any:
+    """``DEFAULT_CFG`` 拷贝，可选覆盖 box/cls/dfl（与 Ultralytics 训练超参名一致）。"""
+    args = copy.deepcopy(DEFAULT_CFG)
+    if box_gain is not None:
+        args.box = float(box_gain)
+    if cls_gain is not None:
+        args.cls = float(cls_gain)
+    if dfl_gain is not None:
+        args.dfl = float(dfl_gain)
+    return args
 
 
 def _make_anchors(
@@ -79,159 +123,321 @@ def _bbox_ciou(box1: torch.Tensor, box2: torch.Tensor, eps: float = 1e-7) -> tor
     return iou - (rho2 / c2 + v * alpha)
 
 
-def _xywh_norm_to_xyxy_pixel(
-    xywh_norm: torch.Tensor, height: int, width: int
+class _DFLoss(nn.Module):
+    """与 Ultralytics ``DFLoss`` 一致（分布焦点损失）。"""
+
+    def __init__(self, reg_max: int = 16) -> None:
+        super().__init__()
+        self.reg_max = reg_max
+
+    def forward(self, pred_dist: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        target = target.clamp_(0, self.reg_max - 1 - 0.01)
+        tl = target.long()
+        tr = tl + 1
+        wl = tr - target
+        wr = 1 - wl
+        return (
+            F.cross_entropy(pred_dist, tl.view(-1), reduction="none").view(tl.shape) * wl
+            + F.cross_entropy(pred_dist, tr.view(-1), reduction="none").view(tl.shape) * wr
+        ).mean(-1, keepdim=True)
+
+
+class _BboxLoss(nn.Module):
+    """与 Ultralytics ``BboxLoss`` 一致：CIoU + DFL。"""
+
+    def __init__(self, reg_max: int = 16):
+        super().__init__()
+        self.dfl_loss = _DFLoss(reg_max) if reg_max > 1 else None
+
+    def forward(
+        self,
+        pred_dist: torch.Tensor,
+        pred_bboxes: torch.Tensor,
+        anchor_points: torch.Tensor,
+        target_bboxes: torch.Tensor,
+        target_scores: torch.Tensor,
+        target_scores_sum: torch.Tensor,
+        fg_mask: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        weight = target_scores.sum(-1)[fg_mask].unsqueeze(-1)
+        iou = bbox_iou(pred_bboxes[fg_mask], target_bboxes[fg_mask], xywh=False, CIoU=True)
+        loss_iou = ((1.0 - iou) * weight).sum() / target_scores_sum
+
+        if self.dfl_loss is not None:
+            target_ltrb = bbox2dist(anchor_points, target_bboxes, self.dfl_loss.reg_max - 1)
+            loss_dfl = (
+                self.dfl_loss(pred_dist[fg_mask].view(-1, self.dfl_loss.reg_max), target_ltrb[fg_mask]) * weight
+            )
+            loss_dfl = loss_dfl.sum() / target_scores_sum
+        else:
+            loss_dfl = torch.tensor(0.0, device=pred_dist.device)
+
+        return loss_iou, loss_dfl
+
+
+def _preprocess_v8_targets(
+    targets: torch.Tensor,
+    batch_size: int,
+    scale_tensor: torch.Tensor,
+    device: torch.device,
 ) -> torch.Tensor:
-    cx, cy, w, h = xywh_norm.unbind(-1)
-    x1 = (cx - w / 2) * width
-    y1 = (cy - h / 2) * height
-    x2 = (cx + w / 2) * width
-    y2 = (cy + h / 2) * height
-    return torch.stack((x1, y1, x2, y2), -1)
+    """与 ``v8DetectionLoss.preprocess`` 一致：按 batch 铺平 GT，xywh→xyxy（像素）。"""
+    nl, ne = targets.shape
+    if nl == 0:
+        return torch.zeros(batch_size, 0, ne - 1, device=device)
+    i = targets[:, 0]
+    _, counts = i.unique(return_counts=True)
+    counts = counts.to(dtype=torch.int32)
+    out = torch.zeros(batch_size, counts.max(), ne - 1, device=device)
+    for j in range(batch_size):
+        matches = i == j
+        if n := matches.sum():
+            out[j, :n] = targets[matches, 1:]
+    out[..., 1:5] = xywh2xyxy(out[..., 1:5].mul_(scale_tensor))
+    return out
 
 
-class DetectDAGNetLoss(nn.Module):
+def _as_stride_tensor(stride: Union[torch.Tensor, Sequence[float]]) -> torch.Tensor:
+    """各尺度 stride，形状 ``(nl,)``，与 Detect 头一致（如 ``[8, 16, 32]``）。"""
+    if isinstance(stride, torch.Tensor):
+        return stride.detach().clone().float().flatten()
+    return torch.tensor(list(stride), dtype=torch.float32)
+
+
+class _TALAssignOut(NamedTuple):
+    """TAL 分配结果，供 cls / box / dfl 三项共用。"""
+
+    target_bboxes_px: torch.Tensor
+    target_scores: torch.Tensor
+    fg_mask: torch.Tensor
+
+
+class DetectDAGNetLoss:
     """
-    将 ``Detect`` 头训练输出（三层 ``[B, no, h, w]``）与 batch 目标对齐后计算标量损失。
+    YOLOv8 检测损失（自研前向，与 ``v8DetectionLoss`` 数学路径一致）。
+
+    结构：``forward_loss_vec`` → 解析特征 → 锚点与 GT → 任务对齐分配 →
+    ``_loss_cls`` / ``_loss_box_dfl`` → 乘 ``hyp`` 与 ``batch_size``。
+
+    只依赖 **Detect 头** 的 ``nc`` / ``reg_max`` / ``stride``，不持有整网。
 
     Parameters
     ----------
-    detect
-        ``Detect`` 模块引用（读取 ``nc``、``reg_max``、``stride``）。
+    nc
+        类别数（与 Detect 的 ``nc`` 一致）。
+    reg_max
+        DFL 分布长度（与 Detect 的 ``reg_max`` 一致；为 1 表示不用 DFL）。
+    stride
+        各检测层步长，长度与特征层数相同（如 ``tensor([8.,16.,32.])`` 或 ``[8, 16, 32]``）。
     box_gain, cls_gain, dfl_gain
-        与常见 YOLOv8 默认量级相近的增益。
-    iou_match_thresh
-        锚点与 GT 的最大 IoU 低于该阈值时不视为正样本。
+        与 Ultralytics ``hyp.box`` / ``hyp.cls`` / ``hyp.dfl`` 一致，``None`` 则用 ``DEFAULT_CFG``。
+    tal_topk
+        ``TaskAlignedAssigner`` 的 ``topk``。
     """
 
     def __init__(
         self,
-        detect: nn.Module,
-        box_gain: float = 7.5,
-        cls_gain: float = 0.5,
-        dfl_gain: float = 1.5,
-        iou_match_thresh: float = 0.5,
+        nc: int,
+        reg_max: int,
+        stride: Union[torch.Tensor, Sequence[float]],
+        box_gain: float | None = None,
+        cls_gain: float | None = None,
+        dfl_gain: float | None = None,
+        tal_topk: int = 10,
+        **kwargs: Any,
     ):
-        super().__init__()
-        self.detect = detect
-        self.box_gain = box_gain
-        self.cls_gain = cls_gain
-        self.dfl_gain = dfl_gain
-        self.iou_match_thresh = iou_match_thresh
+        _ = kwargs
+        self.nc = int(nc)
+        self.reg_max = int(reg_max)
+        self.stride = _as_stride_tensor(stride)
+        self.no = self.nc + self.reg_max * 4
+        self.use_dfl = self.reg_max > 1
 
-    def forward(self, preds: List[torch.Tensor], batch: dict) -> torch.Tensor:
-        if not isinstance(preds, list) or len(preds) != self.detect.nl:
-            raise ValueError("preds 须为 Detect 训练输出的特征层列表。")
+        self.hyp = merge_yolov8_hyp_args(box_gain, cls_gain, dfl_gain)
+        self._tal_topk = tal_topk
 
-        img = batch["img"]
-        b, _c, ih, iw = img.shape
-        device, dtype = img.device, img.dtype
+        self._bce = nn.BCEWithLogitsLoss(reduction="none")
+        self._assigner: TaskAlignedAssigner | None = None
+        self._bbox_loss: _BboxLoss | None = None
+        self._proj: torch.Tensor | None = None
+        self._init_device: torch.device | None = None
 
-        strides = self.detect.stride.to(device=device, dtype=dtype)
-        reg_max = int(self.detect.reg_max)
-        nc = int(self.detect.nc)
+    def _ensure_heads(self, device: torch.device, dtype: torch.dtype) -> None:
+        if self._init_device != device or self._assigner is None:
+            self._assigner = TaskAlignedAssigner(
+                topk=self._tal_topk, num_classes=self.nc, alpha=0.5, beta=6.0
+            )
+            self._bbox_loss = _BboxLoss(self.reg_max).to(device)
+            self._proj = torch.arange(self.reg_max, dtype=torch.float, device=device)
+            self._init_device = device
 
+    def _stride_on(self, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
+        return self.stride.to(device=device, dtype=dtype)
+
+    @staticmethod
+    def _feature_list(preds: Union[List[torch.Tensor], Tuple[Any, ...]]) -> List[torch.Tensor]:
+        return preds[1] if isinstance(preds, tuple) else preds
+
+    def _split_head_outputs(
+        self, feats: List[torch.Tensor]
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """三层特征 → ``(B, A, 4*reg_max)`` 与 ``(B, A, nc)``。"""
         pred_distri, pred_scores = torch.cat(
-            [xi.view(b, self.detect.no, -1) for xi in preds], 2
-        ).split((reg_max * 4, nc), 1)
+            [xi.view(feats[0].shape[0], self.no, -1) for xi in feats], 2
+        ).split((self.reg_max * 4, self.nc), 1)
         pred_scores = pred_scores.permute(0, 2, 1).contiguous()
         pred_distri = pred_distri.permute(0, 2, 1).contiguous()
+        return pred_distri, pred_scores
 
-        anchor_points, stride_tensor = _make_anchors(preds, strides)
-        num_anchors = anchor_points.shape[0]
-        anchor_points = anchor_points.unsqueeze(0).expand(b, -1, -1)
-        stride_tensor = stride_tensor.unsqueeze(0).expand(b, -1, -1)
+    def _decode_pred_boxes(
+        self, anchor_points: torch.Tensor, pred_distri: torch.Tensor
+    ) -> torch.Tensor:
+        """DFL 解码 + ``dist2bbox`` → 网格坐标系 xyxy。"""
+        if self.use_dfl:
+            b, a, c = pred_distri.shape
+            pred_distri = pred_distri.view(b, a, 4, c // 4).softmax(3).matmul(self._proj.type(pred_distri.dtype))
+        return dist2bbox(pred_distri, anchor_points, xywh=False)
 
-        pred_ltrb = _dfl_decode(pred_distri, reg_max)
-        pred_bboxes = _dist2bbox(pred_ltrb, anchor_points) * stride_tensor
-
-        t_xyxy, t_cls, fg_mask = self._assign_targets(
-            batch, b, ih, iw, pred_bboxes.detach(), device, dtype, nc, num_anchors
-        )
-
-        loss_box = pred_bboxes.new_tensor(0.0)
-        loss_dfl = pred_distri.new_tensor(0.0)
-        if fg_mask.any():
-            pbox = pred_bboxes[fg_mask]
-            gbox = t_xyxy[fg_mask]
-            loss_box = (1.0 - _bbox_ciou(pbox, gbox)).mean()
-
-            anc = anchor_points[fg_mask]
-            st = stride_tensor[fg_mask]
-            gxyxy = gbox
-            lt = (anc[..., 0] - gxyxy[..., 0]) / st.squeeze(-1)
-            tp = (anc[..., 1] - gxyxy[..., 1]) / st.squeeze(-1)
-            rt = (gxyxy[..., 2] - anc[..., 0]) / st.squeeze(-1)
-            bt = (gxyxy[..., 3] - anc[..., 1]) / st.squeeze(-1)
-            ltrb_t = torch.stack((lt, tp, rt, bt), -1).clamp_(0, reg_max - 1 - 1e-3)
-            tgt_idx = ltrb_t.long()
-            logp = pred_distri[fg_mask].view(-1, 4, reg_max)
-            loss_dfl = F.cross_entropy(
-                logp.view(-1, reg_max), tgt_idx.reshape(-1), reduction="mean"
-            )
-
-        target_cls = torch.zeros(b, num_anchors, nc, device=device, dtype=dtype)
-        if fg_mask.any():
-            bi, ai = torch.nonzero(fg_mask, as_tuple=True)
-            target_cls[bi, ai, t_cls[fg_mask].long()] = 1.0
-        loss_cls = F.binary_cross_entropy_with_logits(pred_scores, target_cls, reduction="mean")
-
-        return (
-            self.box_gain * loss_box
-            + self.cls_gain * loss_cls
-            + self.dfl_gain * loss_dfl
-        )
-
-    def _assign_targets(
+    def _ground_truth_tensors(
         self,
         batch: dict,
-        b: int,
-        ih: int,
-        iw: int,
-        pred_bboxes: torch.Tensor,
+        batch_size: int,
+        imgsz_hw: torch.Tensor,
         device: torch.device,
-        dtype: torch.dtype,
-        nc: int,
-        num_anchors: int,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """逐图：每个 GT 选 IoU 最大的锚点；冲突时保留 IoU 更大者。"""
-        t_xyxy = torch.zeros(b, num_anchors, 4, device=device, dtype=dtype)
-        t_cls = torch.zeros(b, num_anchors, dtype=torch.long, device=device)
-        fg_mask = torch.zeros(b, num_anchors, dtype=torch.bool, device=device)
+        """``batch`` → 按图铺开的 **像素 xyxy** GT 与 ``mask_gt``。"""
+        raw = torch.cat((batch["batch_idx"].view(-1, 1), batch["cls"].view(-1, 1), batch["bboxes"]), 1)
+        targets = _preprocess_v8_targets(
+            raw.to(device), batch_size, scale_tensor=imgsz_hw[[1, 0, 1, 0]], device=device
+        )
+        gt_labels, gt_bboxes = targets.split((1, 4), 2)
+        mask_gt = gt_bboxes.sum(2, keepdim=True).gt_(0.0)
+        return gt_labels, gt_bboxes, mask_gt
 
-        batch_idx = batch["batch_idx"].long().to(device)
-        gt_cls = batch["cls"].long().to(device)
-        gt_xywh = batch["bboxes"].to(device=device, dtype=dtype)
+    def _task_aligned_assign(
+        self,
+        pred_scores: torch.Tensor,
+        pred_bboxes: torch.Tensor,
+        anchor_points: torch.Tensor,
+        stride_tensor: torch.Tensor,
+        gt_labels: torch.Tensor,
+        gt_bboxes: torch.Tensor,
+        mask_gt: torch.Tensor,
+    ) -> _TALAssignOut:
+        """TAL：在 **像素空间** 比较预测框与 GT（不读 DFL logits）。"""
+        assert self._assigner is not None
+        _, target_bboxes_px, target_scores, fg_mask, _ = self._assigner(
+            pred_scores.detach().sigmoid(),
+            (pred_bboxes.detach() * stride_tensor).type(gt_bboxes.dtype),
+            anchor_points * stride_tensor,
+            gt_labels,
+            gt_bboxes,
+            mask_gt,
+        )
+        return _TALAssignOut(
+            target_bboxes_px=target_bboxes_px,
+            target_scores=target_scores,
+            fg_mask=fg_mask,
+        )
 
-        if gt_xywh.numel() == 0:
-            return t_xyxy, t_cls, fg_mask
+    def _loss_cls(
+        self,
+        pred_scores: torch.Tensor,
+        target_scores: torch.Tensor,
+        target_scores_sum: torch.Tensor,
+        dtype: torch.dtype,
+    ) -> torch.Tensor:
+        """分类 BCE：全锚点，目标为 TAL 的 soft 多类标签。"""
+        return self._bce(pred_scores, target_scores.to(dtype)).sum() / target_scores_sum
 
-        gt_xyxy = _xywh_norm_to_xyxy_pixel(gt_xywh, ih, iw)
+    def _loss_box_dfl(
+        self,
+        pred_distri: torch.Tensor,
+        pred_bboxes: torch.Tensor,
+        anchor_points: torch.Tensor,
+        tal: _TALAssignOut,
+        target_scores_sum: torch.Tensor,
+        stride_tensor: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """框 CIoU + DFL：仅 ``fg_mask``；回归目标在 **网格单位**（除以 stride）。"""
+        assert self._bbox_loss is not None
+        if not tal.fg_mask.sum():
+            z = torch.zeros((), device=pred_distri.device)
+            return z, z
+        target_bboxes_grid = tal.target_bboxes_px / stride_tensor
+        return self._bbox_loss(
+            pred_distri,
+            pred_bboxes,
+            anchor_points,
+            target_bboxes_grid,
+            tal.target_scores,
+            target_scores_sum,
+            tal.fg_mask,
+        )
 
-        for img_i in range(b):
-            sel = batch_idx == img_i
-            if not sel.any():
-                continue
-            g_cls = gt_cls[sel]
-            g_box = gt_xyxy[sel]
-            p_box = pred_bboxes[img_i]
-            n_g = g_box.shape[0]
-            best_iou = torch.full((num_anchors,), -1.0, device=device, dtype=dtype)
-            best_gt = torch.full((num_anchors,), -1, device=device, dtype=torch.long)
+    def forward_loss_vec(self, preds: List[torch.Tensor], batch: dict) -> torch.Tensor:
+        """
+        返回 ``(3,)`` 的加权损失：**[box, cls, dfl]**，已乘 ``hyp.*``，再乘 ``batch_size`` 与 Ultralytics 一致。
+        """
+        feats = self._feature_list(preds)
+        device = feats[0].device
+        dtype = feats[0].dtype
+        self._ensure_heads(device, dtype)
+        stride = self._stride_on(device, dtype)
 
-            for gi in range(n_g):
-                gb = g_box[gi : gi + 1].expand(num_anchors, -1)
-                ious = _bbox_ciou(p_box, gb)
-                mask = ious > best_iou
-                best_iou = torch.where(mask, ious, best_iou)
-                best_gt = torch.where(mask, torch.full_like(best_gt, gi), best_gt)
+        pred_distri, pred_scores = self._split_head_outputs(feats)
+        batch_size = pred_scores.shape[0]
+        imgsz = torch.tensor(feats[0].shape[2:], device=device, dtype=dtype) * stride[0]
+        anchor_points, stride_tensor = make_anchors(feats, stride, 0.5)
 
-            pos = best_iou >= self.iou_match_thresh
-            if not pos.any():
-                continue
-            gi = best_gt[pos]
-            fg_mask[img_i, pos] = True
-            t_xyxy[img_i, pos] = g_box[gi]
-            t_cls[img_i, pos] = g_cls[gi].clamp(0, nc - 1)
+        gt_labels, gt_bboxes, mask_gt = self._ground_truth_tensors(batch, batch_size, imgsz, device)
+        pred_bboxes = self._decode_pred_boxes(anchor_points, pred_distri)
 
-        return t_xyxy, t_cls, fg_mask
+        tal = self._task_aligned_assign(
+            pred_scores,
+            pred_bboxes,
+            anchor_points,
+            stride_tensor,
+            gt_labels,
+            gt_bboxes,
+            mask_gt,
+        )
+        target_scores_sum = max(tal.target_scores.sum(), 1)
+
+        l_cls = self._loss_cls(pred_scores, tal.target_scores, target_scores_sum, dtype)
+        l_box, l_dfl = self._loss_box_dfl(
+            pred_distri,
+            pred_bboxes,
+            anchor_points,
+            tal,
+            target_scores_sum,
+            stride_tensor,
+        )
+
+        loss = torch.zeros(3, device=device)
+        loss[0] = l_box * self.hyp.box
+        loss[1] = l_cls * self.hyp.cls
+        loss[2] = l_dfl * self.hyp.dfl
+        return loss * batch_size
+
+    def __call__(self, preds: List[torch.Tensor], batch: dict) -> torch.Tensor:
+        if not isinstance(preds, list) and not isinstance(preds, tuple):
+            raise ValueError("preds 须为 Detect 训练输出的特征层列表（或含 preds 的 tuple）。")
+        return self.forward_loss_vec(preds, batch).sum()
+
+
+# 测试与旧代码兼容别名
+_merge_hyp_args = merge_yolov8_hyp_args
+
+
+class _V8LossAdapter:
+    """仅用于单测：与 Ultralytics ``v8DetectionLoss(model)`` 的 ``model`` 约定一致。"""
+
+    def __init__(self, dagnet: nn.Module, args: Any):
+        self._dagnet = dagnet
+        last = dagnet.layers_config[-1]["name"]
+        self.model = [dagnet.layers[last]]
+        self.args = args
+
+    def parameters(self):
+        return self._dagnet.parameters()
