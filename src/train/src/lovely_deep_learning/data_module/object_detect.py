@@ -5,15 +5,15 @@ import pandas as pd
 
 from .base import BaseDataModule
 from ..dataset.image_classifier import ImageClassifierDataset
+from ..dataset.object_detect import ObjectDetectDataset
 
 
-class ImageClassifierDataModule(BaseDataModule):
-    """为 ``fit`` / ``validate`` / ``test`` / ``predict`` 各阶段挂载 ``ImageClassifierDataset``。
+class ObjectDetectDataModule(BaseDataModule):
+    """为 ``fit`` / ``validate`` / ``test`` / ``predict`` 各阶段挂载 ``ObjectDetectDataset``。
 
-    - 训练、验证、测试通常共用 ``key_map``（与带标签 CSV 表头一致）。
+    - 训练、验证、测试通常共用 ``key_map``（与带标签 CSV 表头一致，须含图像与 YOLO 标签路径列）。
     - 预测 CSV 往往仅有图像路径列，应通过 ``predict_key_map`` 传入与预测表头匹配的映射；
-      若为 ``None``，须保证传给 ``ImageClassifierDataset`` 的默认 ``key_map`` 仍能与 CSV 表头求交
-      （参见 ``ImageClassifierDataset._key_map_intersect_csv_headers``）。
+      若为 ``None``，须保证 ``ObjectDetectDataset`` 默认 ``key_map`` 与 CSV 表头可对应。
     - ``norm_mean`` / ``norm_std`` 传给 Dataset，供 ``convert_img_from_tensor_to_numpy`` 等反标准化
       可视化路径使用。
     """
@@ -31,9 +31,9 @@ class ImageClassifierDataModule(BaseDataModule):
         Parameters
         ----------
         key_map
-            训练 / 验证 / 测试 CSV 的列名映射；``None`` 时使用 ``ImageClassifierDataset`` 内置默认。
+            训练 / 验证 / 测试 CSV 的列名映射；``None`` 时使用 ``ObjectDetectDataset`` 内置默认。
         predict_key_map
-            预测 CSV 的列名映射；常比 ``key_map`` 少标签相关项。
+            预测 CSV 的列名映射；常比 ``key_map`` 少 ``object_label_path`` 等项。
         map_class_id_to_class_name
             ``None`` / ``dict`` / 指向 CSV 的 ``str``（表头须含 ``class_id``、``class_name``）。
             原始值保存在 ``_map_class_id_to_class_name_spec``；在 ``setup`` 中解析为 ``dict`` 并写入
@@ -64,7 +64,7 @@ class ImageClassifierDataModule(BaseDataModule):
             self._map_class_id_to_class_name_spec
         )
         if stage == "fit" or stage is None:
-            self.train_dataset = ImageClassifierDataset(
+            self.train_dataset = ObjectDetectDataset(
                 self.train_csv_paths,
                 key_map=self.key_map,
                 transform=self.transform_train,
@@ -72,7 +72,7 @@ class ImageClassifierDataModule(BaseDataModule):
                 norm_mean=self.norm_mean,
                 norm_std=self.norm_std,
             )
-            self.val_dataset = ImageClassifierDataset(
+            self.val_dataset = ObjectDetectDataset(
                 self.val_csv_paths,
                 key_map=self.key_map,
                 transform=self.transform_val,
@@ -81,7 +81,7 @@ class ImageClassifierDataModule(BaseDataModule):
                 norm_std=self.norm_std,
             )
         if stage == "validate" or stage is None:
-            self.val_dataset = ImageClassifierDataset(
+            self.val_dataset = ObjectDetectDataset(
                 self.val_csv_paths,
                 key_map=self.key_map,
                 transform=self.transform_val,
@@ -90,7 +90,7 @@ class ImageClassifierDataModule(BaseDataModule):
                 norm_std=self.norm_std,
             )
         if stage == "test" or stage is None:
-            self.test_dataset = ImageClassifierDataset(
+            self.test_dataset = ObjectDetectDataset(
                 self.test_csv_paths,
                 key_map=self.key_map,
                 transform=self.transform_test,
@@ -99,7 +99,7 @@ class ImageClassifierDataModule(BaseDataModule):
                 norm_std=self.norm_std,
             )
         if stage == "predict" or stage is None:
-            self.pred_dataset = ImageClassifierDataset(
+            self.pred_dataset = ObjectDetectDataset(
                 self.predict_csv_paths,
                 self.predict_key_map,
                 transform=self.transform_predict,
