@@ -27,18 +27,6 @@ MAP_CLASS_ID_TO_CLASS_NAME = {
 MAP_CSV_PATH = "tests/test_data/dataset/map_class_id_to_class_name.csv"
 
 
-def test_load_map_class_id_to_class_name_from_csv():
-    m = ImageClassifierDataset.load_map_class_id_to_class_name_from_csv(MAP_CSV_PATH)
-    assert m == MAP_CLASS_ID_TO_CLASS_NAME
-
-
-def test_ImageClassifierDataset_init_with_map_csv_path():
-    path_csv = PATH_CSV
-    dataset = ImageClassifierDataset(
-        path_csv, KEY_MAP, None, MAP_CSV_PATH, None, None)
-    assert dataset.map_class_id_to_class_name == MAP_CLASS_ID_TO_CLASS_NAME
-
-
 def test_ImageClassifierDataset_init():
     path_csv = PATH_CSV
     dataset = ImageClassifierDataset(
@@ -47,6 +35,13 @@ def test_ImageClassifierDataset_init():
     assert "img_path" in dataset.sample_path_table.columns
     assert "class_name" in dataset.sample_path_table.columns
     assert "class_id" in dataset.sample_path_table.columns
+
+
+def test_ImageClassifierDataset_init_with_map_csv_path():
+    path_csv = PATH_CSV
+    dataset = ImageClassifierDataset(
+        path_csv, KEY_MAP, None, MAP_CSV_PATH, None, None)
+    assert dataset.map_class_id_to_class_name == MAP_CLASS_ID_TO_CLASS_NAME
 
 
 def test_ImageClassifierDataset_init_without_label():
@@ -58,6 +53,8 @@ def test_ImageClassifierDataset_init_without_label():
     assert "class_id" not in dataset.sample_path_table.columns
 
 # /home/xiaopangdun/project/deep_learning/src/train/tests/test_data/dataset/base_img/ILSVRC2012_val_00000293.JPEG
+
+
 def test_ImageClassifierDataset_getitem_with_transform():
     path_csv = PATH_CSV
     transforms = v2.Compose(
@@ -101,7 +98,6 @@ def test_ImageClassifierDataset_draw_label_on_numpy():
     #     "./tmp/test_ImageClassifierDataset_draw_label_on_numpy.jpg", img_with_label)
 
 
-
 def test_ImageClassifierDataset_draw_target_and_predict_label_on_numpy():
     path_csv = PATH_CSV
     dataset = ImageClassifierDataset(
@@ -115,3 +111,8 @@ def test_ImageClassifierDataset_draw_target_and_predict_label_on_numpy():
     # cv2.imwrite(
     #     "./tmp/test_ImageClassifierDataset_draw_target_and_predict_label_on_numpy.jpg", img_with_label)
 
+
+def test_load_map_class_id_to_class_name_from_csv():
+    m = ImageClassifierDataset.load_map_class_id_to_class_name_from_csv(
+        MAP_CSV_PATH)
+    assert m == MAP_CLASS_ID_TO_CLASS_NAME

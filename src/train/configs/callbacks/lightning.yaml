@@ -1,0 +1,25 @@
+    - class_path: lovely_deep_learning.callback.image_classifier.ImageClassifierCallback
+      init_args:
+        save_dir: tmp       # 保存测试和预测结果的目录
+        test_only_save_mistake: true  # 只保存测试和预测结果的错误样本
+    - class_path: lightning.pytorch.callbacks.EarlyStopping
+      init_args:
+        monitor: "val_loss"
+        min_delta: 0.00
+        patience: 10
+        verbose: true
+        mode: min
+    - class_path: lightning.pytorch.callbacks.ModelCheckpoint
+      init_args:
+        monitor: "val_acc"
+        filename: "{epoch:02d}-{val_acc:.2f}"
+        save_top_k: 1
+        save_last: true
+        mode: max
+    - class_path: lightning.pytorch.callbacks.BatchSizeFinder
+      init_args:
+        mode: binsearch        # 推荐，比 power 更稳定
+        init_val: 2            # 初始 batch size（可以根据显存调整）
+        steps_per_trial: 2     # 每个 batch 跑几步
+        max_trials: 10         # 最大尝试次数
+        batch_arg_name: batch_size
