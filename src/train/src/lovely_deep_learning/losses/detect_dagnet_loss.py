@@ -1,28 +1,20 @@
 """
-YOLOv8 检测损失（自研实现，与 Ultralytics ``v8DetectionLoss`` 前向公式对齐，便于对照论文与源码阅读）。
+YOLOv8 检测损失（自研前向，与 Ultralytics ``v8DetectionLoss`` 对齐）。
 
-**训练管线（先分配，再算三项损失）**
+**流程概要**
 
-1. **公共准备**：多尺度特征拼成「全锚点」预测；``make_anchors``；GT 从归一化 xywh 转为像素 xyxy；
-   DFL  logits 经 softmax×proj 得到 ltrb，再 ``dist2bbox`` 得到预测框（网格单位 → 乘 stride 与 GT 对齐）。
+1. **预测与锚点**：多尺度 Detect 输出合并为 ``(B, no, A)``，拆成分类 / 回归；生成 ``(A,2)`` 锚点与 ``(A,1)`` stride；
+   DFL 解码 ltrb 后经 ``_dist2bbox`` 得 **网格坐标** xyxy（非 0~1 归一化，需乘 stride 得像素）。
 
-2. **TaskAlignedAssigner（TAL）**：根据分类得分与 IoU 为每个锚点分配 soft 目标 ``target_scores``、
-   回归目标 ``target_bboxes``（像素 xyxy）及前景掩码 ``fg_mask``。三项损失**都依赖**这一步的输出。
+2. **GT**：展平 ``(N,6)`` → 按图 ``(B,n_max,5)`` → 归一化 xywh 转 **像素 xyxy**（``_xywh2xyxy``）。
 
-3. **三项标量损失（未乘 ``hyp.*`` 前）**
+3. **TAL**：``TaskAlignedAssigner`` 在像素空间分配 ``target_scores``、``target_bboxes``、``fg_mask``。
 
-   - **cls（分类）**：对 **所有**锚点做 ``BCEWithLogits(pred_scores, target_scores)``，
-     ``target_scores`` 为 TAL 给出的多类 soft label（含大量背景 0），按 ``target_scores_sum`` 归一化。
+4. **损失**：cls（全锚点 BCE）+ box（fg 上 CIoU）+ dfl（fg 上分布损失）；再乘 ``hyp`` 与 ``batch_size``。
 
-   - **box（框 / CIoU）**：仅 **fg_mask** 上的锚点；``1 - CIoU(pred, target)``，加权后与 ``target_scores_sum`` 归一化。
-
-   - **dfl（分布焦点）**：仅 **fg_mask**；把 GT 框转为相对锚点的 ltrb 真值，对每条边的 ``reg_max`` 维
-     logits 做交叉熵（Ultralytics 的 ``DFLoss``）。``reg_max==1`` 时此项为 0。
-
-最后 ``loss[0,1,2]`` 分别乘 ``hyp.box / hyp.cls / hyp.dfl``，再乘 ``batch_size`` 与官方一致。
-
-不调用 ``v8DetectionLoss`` 类；``TaskAlignedAssigner`` / ``make_anchors`` / ``dist2bbox`` / ``bbox2dist``
-仍使用 Ultralytics 工具实现。辅助函数 ``_make_anchors``、``_dfl_decode`` 等保留供单测。
+**依赖**：Ultralytics 的 ``TaskAlignedAssigner``、``bbox2dist``、``bbox_iou``、``DEFAULT_CFG``。
+**自实现**：锚点 ``build_flat_anchor_points_and_strides_from_multiscale_feats``、``_xywh2xyxy``、``_dist2bbox``、
+``_dfl_decode``（单测对照用）等。
 """
 
 from __future__ import annotations
@@ -36,8 +28,7 @@ import torch.nn.functional as F
 
 from ultralytics.utils import DEFAULT_CFG
 from ultralytics.utils.metrics import bbox_iou
-from ultralytics.utils.ops import xywh2xyxy
-from ultralytics.utils.tal import TaskAlignedAssigner, bbox2dist, dist2bbox, make_anchors
+from ultralytics.utils.tal import TaskAlignedAssigner, bbox2dist
 
 
 def merge_yolov8_hyp_args(
@@ -56,15 +47,52 @@ def merge_yolov8_hyp_args(
     return args
 
 
-def _make_anchors(
+def _xywh2xyxy(x: torch.Tensor) -> torch.Tensor:
+    """
+    中心格式 ``(cx, cy, w, h)`` → 角点格式 ``(x1, y1, x2, y2)``，与 Ultralytics
+    ``ultralytics.utils.ops.xywh2xyxy`` 一致（最后一维须为 4）。
+    """
+    assert x.shape[-1] == 4, f"expected last dim 4, got {x.shape}"
+    y = torch.empty_like(x)
+    xy = x[..., :2]
+    wh = x[..., 2:] * 0.5
+    y[..., :2] = xy - wh
+    y[..., 2:] = xy + wh
+    return y
+
+
+def build_flat_anchor_points_and_strides_from_multiscale_feats(
     feats: List[torch.Tensor],
     strides: torch.Tensor,
     grid_cell_offset: float = 0.5,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    """各尺度特征图上网格中心坐标（与 stride 同量纲）及逐点 stride。"""
+    """
+    多尺度特征上生成网格中心锚点及逐点 stride（与 ``ultralytics.utils.tal.make_anchors`` 在
+    ``feats`` 为特征张量列表时行为一致；不依赖 Ultralytics 实现）。
+
+    坐标含义：锚点位于 **该层特征图网格坐标系**（单位：格），中心为 ``(j+offset, i+offset)``；
+    与 ``_dist2bbox`` 输出的框同属一格坐标系，再乘 ``stride`` 才到像素。
+
+    Parameters
+    ----------
+    feats
+        每层 ``(B, C, H_i, W_i)``，仅用 ``H_i, W_i`` 决定该层锚点个数与布局。
+    strides
+        长度与 ``feats`` 相同，第 ``i`` 层下采样步长（如 8/16/32）。
+    grid_cell_offset
+        网格线偏移，默认 0.5 表示取 **格子中心** 而非左上角。
+
+    Returns
+    -------
+    anchor_points
+        ``(sum_i H_i*W_i, 2)``，每行 ``(x, y)`` 为网格坐标下的锚点中心。
+    stride_tensor
+        ``(sum_i H_i*W_i, 1)``，与 ``anchor_points`` 逐行对应，该锚点所属层的 stride。
+    """
     dtype, device = feats[0].dtype, feats[0].device
     anchor_points: list[torch.Tensor] = []
     stride_tensor: list[torch.Tensor] = []
+
     for i, st in enumerate(strides):
         _, _, h, w = feats[i].shape
         st_f = float(st.item()) if st.numel() == 1 else float(st)
@@ -72,22 +100,41 @@ def _make_anchors(
         sy = torch.arange(h, device=device, dtype=dtype) + grid_cell_offset
         gy, gx = torch.meshgrid(sy, sx, indexing="ij")
         anchor_points.append(torch.stack((gx, gy), -1).reshape(-1, 2))
-        stride_tensor.append(
-            torch.full((h * w, 1), st_f, device=device, dtype=dtype)
-        )
+        stride_tensor.append(torch.full((h * w, 1), st_f, device=device, dtype=dtype))
+
     return torch.cat(anchor_points, 0), torch.cat(stride_tensor, 0)
 
 
-def _dist2bbox(distance: torch.Tensor, anchor_points: torch.Tensor) -> torch.Tensor:
-    """ltrb 距离 → xyxy（与 anchor 同一坐标系，通常为网格单位）。"""
+def _dist2bbox(
+    distance: torch.Tensor,
+    anchor_points: torch.Tensor,
+    *,
+    xywh: bool = False,
+) -> torch.Tensor:
+    """
+    将 ltrb（相对锚点左/上/右/下距离）转为框；与 ``ultralytics.utils.tal.dist2bbox`` 一致。
+
+    ``distance`` 最后一维为 4：``(lt, top, rb, bottom)`` 语义与 Ultralytics 相同。
+    ``anchor_points`` 与 ``distance`` 在 batch/锚点维可广播（常见 ``distance``: ``(B,A,4)``，
+    ``anchor_points``: ``(A,2)``）。
+
+    Parameters
+    ----------
+    xywh
+        ``False``（默认）返回 ``xyxy``；``True`` 返回 ``xywh``（中心+宽高），与官方一致。
+    """
     lt, rb = distance.chunk(2, -1)
     x1y1 = anchor_points - lt
     x2y2 = anchor_points + rb
+    if xywh:
+        c_xy = (x1y1 + x2y2) * 0.5
+        wh = x2y2 - x1y1
+        return torch.cat((c_xy, wh), -1)
     return torch.cat((x1y1, x2y2), -1)
 
 
 def _dfl_decode(pred_dist: torch.Tensor, reg_max: int) -> torch.Tensor:
-    """(B, A, 4*reg_max) logits → (B, A, 4) 期望 ltrb。"""
+    """DFL：``(B,A,4*reg_max)`` softmax×bin 索引 → ``(B,A,4)`` 期望 ltrb（单测用）。"""
     b, a, _c = pred_dist.shape
     p = pred_dist.view(b, a, 4, reg_max).softmax(-1)
     proj = torch.arange(reg_max, device=p.device, dtype=p.dtype).view(1, 1, 1, -1)
@@ -175,16 +222,38 @@ class _BboxLoss(nn.Module):
         return loss_iou, loss_dfl
 
 
-def _preprocess_v8_targets(
+def group_flat_v8_rows_per_image_by_batch_id(
     targets: torch.Tensor,
     batch_size: int,
-    scale_tensor: torch.Tensor,
     device: torch.device,
 ) -> torch.Tensor:
-    """与 ``v8DetectionLoss.preprocess`` 一致：按 batch 铺平 GT，xywh→xyxy（像素）。"""
+    """
+    将展平行表 ``(N, ne)``（首列为 ``batch_idx``）按图铺开为 ``(B, n_max, ne-1)``。
+
+    每行剩余列为 ``cls`` + 归一化 ``xywh``；不足 ``n_max`` 的位置为 0，与
+    ``v8DetectionLoss.preprocess`` 前半段一致。
+
+    Parameters
+    ----------
+    targets
+        ``(N, ne)``，第 0 列为样本所属 batch 内图像下标 ``0..B-1``，后面列为该条 GT 属性
+        （通常为 ``cls`` + 4 维归一化 ``xywh``，即 ``ne=6``）。
+    batch_size
+        当前 batch 图像数 ``B``（可与 ``targets[:,0].max()+1`` 一致，由调用方传入）。
+    device
+        输出张量所在 device。
+
+    Returns
+    -------
+    torch.Tensor
+        ``(B, n_max, ne-1)``。第 ``j`` 行前若干列为第 ``j`` 张图的所有 GT（顺序与
+        ``targets`` 中该行出现的顺序一致），其余槽位为 0；``n_max`` 为本 batch 中单张图
+        GT 数的最大值。
+    """
     nl, ne = targets.shape
     if nl == 0:
         return torch.zeros(batch_size, 0, ne - 1, device=device)
+
     i = targets[:, 0]
     _, counts = i.unique(return_counts=True)
     counts = counts.to(dtype=torch.int32)
@@ -193,8 +262,31 @@ def _preprocess_v8_targets(
         matches = i == j
         if n := matches.sum():
             out[j, :n] = targets[matches, 1:]
-    out[..., 1:5] = xywh2xyxy(out[..., 1:5].mul_(scale_tensor))
     return out
+
+
+def build_v8_target_rows_from_flat_components(
+    batch_idx: torch.Tensor,
+    cls: torch.Tensor,
+    bboxes: torch.Tensor,
+    device: torch.device,
+) -> torch.Tensor:
+    """
+    将展平 GT 拼成与 Ultralytics 一致的行表 ``(N, 6)``。
+
+    每行 ``[image_idx, cls, cx, cy, w, h]``，其中 ``cx,cy,w,h`` 为 **归一化 xywh**。
+    无 GT 时返回形状 ``(0, 6)`` 的空表，仍供 ``group_flat_v8_rows_per_image_by_batch_id`` 走统一路径。
+    """
+    if batch_idx.numel() == 0:
+        return torch.zeros((0, 6), device=device)
+    return torch.cat(
+        (
+            batch_idx.to(device=device).view(-1, 1).long(),
+            cls.to(device=device).view(-1, 1).long(),
+            bboxes.to(device=device).view(-1, 4).float(),
+        ),
+        1,
+    )
 
 
 def _as_stride_tensor(stride: Union[torch.Tensor, Sequence[float]]) -> torch.Tensor:
@@ -214,12 +306,8 @@ class _TALAssignOut(NamedTuple):
 
 class DetectDAGNetLoss:
     """
-    YOLOv8 检测损失（自研前向，与 ``v8DetectionLoss`` 数学路径一致）。
-
-    结构：``forward_loss_vec`` → 解析特征 → 锚点与 GT → 任务对齐分配 →
-    ``_loss_cls`` / ``_loss_box_dfl`` → 乘 ``hyp`` 与 ``batch_size``。
-
-    只依赖 **Detect 头** 的 ``nc`` / ``reg_max`` / ``stride``，不持有整网。
+    见模块顶部的流程说明。对外入口：``forward_loss_vec`` → ``(3,)`` 的 ``[box, cls, dfl]``；
+    ``__call__`` 返回三项之和。
 
     Parameters
     ----------
@@ -263,6 +351,7 @@ class DetectDAGNetLoss:
         self._init_device: torch.device | None = None
 
     def _ensure_heads(self, device: torch.device, dtype: torch.dtype) -> None:
+        """懒初始化 TAL、``_BboxLoss``、DFL 投影向量；device 变化时重建。"""
         if self._init_device != device or self._assigner is None:
             self._assigner = TaskAlignedAssigner(
                 topk=self._tal_topk, num_classes=self.nc, alpha=0.5, beta=6.0
@@ -272,47 +361,93 @@ class DetectDAGNetLoss:
             self._init_device = device
 
     def _stride_on(self, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
+        """``self.stride`` 与当前 ``device/dtype`` 对齐。"""
         return self.stride.to(device=device, dtype=dtype)
 
     @staticmethod
     def _feature_list(preds: Union[List[torch.Tensor], Tuple[Any, ...]]) -> List[torch.Tensor]:
+        """Detect 特征列表；若 ``preds`` 为 tuple 则取 ``preds[1]``（兼容 (aux, feats) 封装）。"""
         return preds[1] if isinstance(preds, tuple) else preds
 
-    def _split_head_outputs(
-        self, feats: List[torch.Tensor]
+    @staticmethod
+    def merge_multiscale_detect_features_to_flat_anchor_tensor(feats: List[torch.Tensor], no: int) -> torch.Tensor:
+        """
+        将多层 Detect 输出沿「全锚点」维拼成一张扁平大表。
+
+        各尺度特征先按空间维展平，再在锚点维 ``cat``，等价于把 P3/P4/P5… 上所有网格位置
+        排成一条长序列；结果不是二维 H×W 图，而是 ``(B, no, A)``，``A`` 为总锚点数。
+
+        Parameters
+        ----------
+        feats
+            多尺度特征列表，每层 ``(B, no, H_i, W_i)``，``no = nc + 4*reg_max``。
+        no
+            单层的通道数 ``no``（与 ``self.no`` 一致）。
+
+        Returns
+        -------
+        merged_head_output
+            形状 ``(B, no, A)``，其中 ``A = sum_i(H_i * W_i)`` 为所有层锚点总数。
+        """
+        batch_size = feats[0].shape[0]
+        flattened_per_level = [level_feat.view(batch_size, no, -1) for level_feat in feats]
+        return torch.cat(flattened_per_level, dim=2)
+
+    @staticmethod
+    def split_flat_anchor_tensor_to_cls_and_reg(
+        merged_head_output: torch.Tensor, reg_max: int, nc: int
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """三层特征 → ``(B, A, 4*reg_max)`` 与 ``(B, A, nc)``。"""
-        pred_distri, pred_scores = torch.cat(
-            [xi.view(feats[0].shape[0], self.no, -1) for xi in feats], 2
-        ).split((self.reg_max * 4, self.nc), 1)
-        pred_scores = pred_scores.permute(0, 2, 1).contiguous()
-        pred_distri = pred_distri.permute(0, 2, 1).contiguous()
-        return pred_distri, pred_scores
+        """
+        将合并后的检测头输出按通道拆成分类与回归（DFL）两支，并转为 ``(B, A, C)`` 布局。
+
+        Parameters
+        ----------
+        merged_head_output
+            ``merge_multiscale_detect_features_to_flat_anchor_tensor`` 的输出，``(B, no, A)``。
+        reg_max
+            DFL 分布长度。
+        nc
+            类别数。
+
+        Returns
+        -------
+        pred_scores
+            分类分支 logits，``(B, A, nc)``。
+        pred_distri
+            回归分支 logits，``(B, A, 4*reg_max)``（l/t/r/b 每边 ``reg_max`` 个 bin）。
+        """
+        pred_reg_distri, pred_cls_scores = merged_head_output.split(
+            (reg_max * 4, nc), dim=1
+        )
+        pred_cls_scores = pred_cls_scores.permute(0, 2, 1).contiguous()
+        pred_reg_distri = pred_reg_distri.permute(0, 2, 1).contiguous()
+        return pred_cls_scores, pred_reg_distri
 
     def _decode_pred_boxes(
         self, anchor_points: torch.Tensor, pred_distri: torch.Tensor
     ) -> torch.Tensor:
-        """DFL 解码 + ``dist2bbox`` → 网格坐标系 xyxy。"""
+        """
+        回归分支 → 各锚点上的预测框（**网格坐标系** xyxy，尚未乘 stride）。
+
+        - **use_dfl**：``(B, A, 4*reg_max)`` logits 经 softmax×投影得到期望 ltrb，形状变为 ``(B, A, 4)``。
+        - **非 DFL**（``reg_max==1``）：``pred_distri`` 已可视作 ``(B, A, 4)`` 的 ltrb，不再做 softmax。
+
+        Parameters
+        ----------
+        anchor_points
+            ``(A, 2)``，全图锚点中心在网格坐标下的 ``(x, y)``。
+        pred_distri
+            ``(B, A, 4*reg_max)`` 或 ``(B, A, 4)``（见上）。
+
+        Returns
+        -------
+        torch.Tensor
+            ``(B, A, 4)``，与 ``anchor_points`` 同坐标系的 **xyxy**；后续 TAL 中会 ``* stride_tensor`` 到像素。
+        """
         if self.use_dfl:
             b, a, c = pred_distri.shape
             pred_distri = pred_distri.view(b, a, 4, c // 4).softmax(3).matmul(self._proj.type(pred_distri.dtype))
-        return dist2bbox(pred_distri, anchor_points, xywh=False)
-
-    def _ground_truth_tensors(
-        self,
-        batch: dict,
-        batch_size: int,
-        imgsz_hw: torch.Tensor,
-        device: torch.device,
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """``batch`` → 按图铺开的 **像素 xyxy** GT 与 ``mask_gt``。"""
-        raw = torch.cat((batch["batch_idx"].view(-1, 1), batch["cls"].view(-1, 1), batch["bboxes"]), 1)
-        targets = _preprocess_v8_targets(
-            raw.to(device), batch_size, scale_tensor=imgsz_hw[[1, 0, 1, 0]], device=device
-        )
-        gt_labels, gt_bboxes = targets.split((1, 4), 2)
-        mask_gt = gt_bboxes.sum(2, keepdim=True).gt_(0.0)
-        return gt_labels, gt_bboxes, mask_gt
+        return _dist2bbox(pred_distri, anchor_points, xywh=False)
 
     def _task_aligned_assign(
         self,
@@ -375,9 +510,17 @@ class DetectDAGNetLoss:
             tal.fg_mask,
         )
 
-    def forward_loss_vec(self, preds: List[torch.Tensor], batch: dict) -> torch.Tensor:
+    def forward_loss_vec(
+        self,
+        preds: List[torch.Tensor],
+        batch_idx: torch.Tensor,
+        cls: torch.Tensor,
+        bboxes: torch.Tensor,
+    ) -> torch.Tensor:
         """
-        返回 ``(3,)`` 的加权损失：**[box, cls, dfl]**，已乘 ``hyp.*``，再乘 ``batch_size`` 与 Ultralytics 一致。
+        返回 ``(3,)``：**[box, cls, dfl]**，已乘 ``hyp.*`` 与 ``batch_size``（与 v8 一致）。
+
+        形状：``B`` batch，``no=nc+4*reg_max``，``A=Σ_i H_i W_i``，``N`` GT 条数，``n_max`` 单图 GT 上限。
         """
         feats = self._feature_list(preds)
         device = feats[0].device
@@ -385,12 +528,20 @@ class DetectDAGNetLoss:
         self._ensure_heads(device, dtype)
         stride = self._stride_on(device, dtype)
 
-        pred_distri, pred_scores = self._split_head_outputs(feats)
+        merged_head = self.merge_multiscale_detect_features_to_flat_anchor_tensor(feats, self.no)
+        pred_scores, pred_distri = self.split_flat_anchor_tensor_to_cls_and_reg(
+            merged_head, self.reg_max, self.nc
+        )
         batch_size = pred_scores.shape[0]
         imgsz = torch.tensor(feats[0].shape[2:], device=device, dtype=dtype) * stride[0]
-        anchor_points, stride_tensor = make_anchors(feats, stride, 0.5)
+        anchor_points, stride_tensor = build_flat_anchor_points_and_strides_from_multiscale_feats(feats, stride, 0.5)
 
-        gt_labels, gt_bboxes, mask_gt = self._ground_truth_tensors(batch, batch_size, imgsz, device)
+        raw_gt = build_v8_target_rows_from_flat_components(batch_idx, cls, bboxes, device)
+        scale_tensor = imgsz[[1, 0, 1, 0]]
+        packed_gt = group_flat_v8_rows_per_image_by_batch_id(raw_gt, batch_size, device)
+        packed_gt[..., 1:5] = _xywh2xyxy(packed_gt[..., 1:5].mul_(scale_tensor))
+        gt_labels, gt_bboxes = packed_gt.split((1, 4), 2)
+        mask_gt = gt_bboxes.sum(2, keepdim=True).gt_(0.0)
         pred_bboxes = self._decode_pred_boxes(anchor_points, pred_distri)
 
         tal = self._task_aligned_assign(
@@ -420,10 +571,18 @@ class DetectDAGNetLoss:
         loss[2] = l_dfl * self.hyp.dfl
         return loss * batch_size
 
-    def __call__(self, preds: List[torch.Tensor], batch: dict) -> torch.Tensor:
+    def __call__(
+        self,
+        preds: List[torch.Tensor],
+        *,
+        batch_idx: torch.Tensor,
+        cls: torch.Tensor,
+        bboxes: torch.Tensor,
+    ) -> torch.Tensor:
+        """标量总损失，等价于 ``forward_loss_vec(...).sum()``。"""
         if not isinstance(preds, list) and not isinstance(preds, tuple):
             raise ValueError("preds 须为 Detect 训练输出的特征层列表（或含 preds 的 tuple）。")
-        return self.forward_loss_vec(preds, batch).sum()
+        return self.forward_loss_vec(preds, batch_idx=batch_idx, cls=cls, bboxes=bboxes).sum()
 
 
 # 测试与旧代码兼容别名

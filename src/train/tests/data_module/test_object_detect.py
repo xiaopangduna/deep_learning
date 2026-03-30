@@ -93,10 +93,10 @@ def test_ObjectDetectDataModule_train_dataloader():
     train_dataloader = data_module.train_dataloader()
     net_in, net_out = next(iter(train_dataloader))
 
-    assert "img_tv_transformed" in net_in.keys()
-    assert "cls_np" in net_out.keys()
+    assert "img_tv_transformed" in net_in[0].keys()
+    assert "cls_np" in net_out[0].keys()
 
-    assert net_in["img_tv_transformed"].shape == (BATCH_SIZE, 3, 640, 640)
+    assert net_in[0]["img_tv_transformed"].shape == (3, 640, 640)
 
 
 def test_ObjectDetectDataModule_predict_dataloader():

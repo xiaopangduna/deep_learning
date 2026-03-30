@@ -148,7 +148,12 @@ class ObjectDetectModule(pl.LightningModule):
         self.train()
         try:
             preds = self._forward_train_preds(tb["img"])
-            return self.criterion(preds, tb)
+            return self.criterion(
+                preds,
+                batch_idx=tb["batch_idx"],
+                cls=tb["cls"],
+                bboxes=tb["bboxes"],
+            )
         finally:
             if not prev:
                 self.eval()

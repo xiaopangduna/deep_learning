@@ -6,6 +6,11 @@ trainer:
       init_args:
         save_dir: tmp  # 在测试和预测时使用，保存预测的结果，一般指向logs目录
         test_only_save_mistake: true  
+    - class_path: lovely_deep_learning.callback.memory_monitor.MemoryMonitorCallback
+      init_args:
+        save_dir: logs/image_classifiter_IMAGE_NET/memory
+        filename: memory_usage.csv
+        log_every_n_steps: 5000
     - class_path: lightning.pytorch.callbacks.EarlyStopping
       init_args:
         monitor: "val_loss"
@@ -26,11 +31,12 @@ trainer:
         save_dir: logs
         name: image_classifiter_IMAGE_NET 
         version: null
-  profiler:
-    class_path: lightning.pytorch.profilers.SimpleProfiler
-    init_args:
-      filename: profiler
-      extended: true
+  # 数据太大时不能开，否则cpu占用爆，触发OOM
+  # profiler:
+  #   class_path: lightning.pytorch.profilers.SimpleProfiler
+  #   init_args:
+  #     filename: profiler
+  #     extended: true
 
         
 data:

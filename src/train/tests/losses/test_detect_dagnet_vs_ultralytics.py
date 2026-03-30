@@ -28,7 +28,7 @@ from lovely_deep_learning.losses.detect_dagnet_loss import (
     _bbox_ciou,
     _dist2bbox,
     _dfl_decode,
-    _make_anchors,
+    build_flat_anchor_points_and_strides_from_multiscale_feats,
     _merge_hyp_args,
     _V8LossAdapter,
 )
@@ -122,7 +122,7 @@ def test_make_anchors_matches_ultralytics():
     ]
     strides = torch.tensor([8.0, 16.0, 32.0])
 
-    a1, s1 = _make_anchors(feats, strides)
+    a1, s1 = build_flat_anchor_points_and_strides_from_multiscale_feats(feats, strides)
     a2, s2 = u_make_anchors(feats, strides, grid_cell_offset=0.5)
     assert torch.allclose(a1, a2, atol=0.0, rtol=0.0)
     assert torch.allclose(s1, s2, atol=0.0, rtol=0.0)
@@ -181,7 +181,12 @@ def test_dagnet_loss_finite_on_random_batch():
             [[0.5, 0.5, 0.1, 0.1], [0.2, 0.3, 0.05, 0.05], [0.4, 0.4, 0.1, 0.2]]
         ),
     }
-    loss = crit(preds, batch)
+    loss = crit(
+        preds,
+        batch_idx=batch["batch_idx"],
+        cls=batch["cls"],
+        bboxes=batch["bboxes"],
+    )
     assert loss.ndim == 0
     assert torch.isfinite(loss)
     loss.backward()
@@ -262,7 +267,12 @@ def test_detect_dagnet_loss_matches_v8_detection_loss_coco8():
         dfl_gain=1.5,
         tal_topk=10,
     )
-    loss_vec_ours = crit_ours.forward_loss_vec(preds, batch)
+    loss_vec_ours = crit_ours.forward_loss_vec(
+        preds,
+        batch_idx=batch["batch_idx"],
+        cls=batch["cls"],
+        bboxes=batch["bboxes"],
+    )
 
     adapter = _V8LossAdapter(dag, hyp)
     crit_v8 = v8DetectionLoss(adapter, tal_topk=10)

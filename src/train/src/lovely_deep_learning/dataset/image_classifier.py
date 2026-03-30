@@ -78,6 +78,9 @@ class ImageClassifierDataset(BaseDataset):
             net_out["class_id"] = int(class_id)
 
         return net_in, net_out
+    
+    def get_collate_fn_for_dataloader(self):
+        return None
 
     def convert_img_from_tensor_to_numpy(self, img: torch.Tensor) -> np.ndarray:
         """

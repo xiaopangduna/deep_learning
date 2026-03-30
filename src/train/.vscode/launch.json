@@ -57,7 +57,7 @@
             "args": [
                 "fit",
                 "--config",
-                "configs/experiments/object_detect_COCO8.yaml",
+                "configs/experiments/image_classifiter_IMAGE_NET.yaml",
                 "--trainer.fast_dev_run","true"
 
                 // "test",
