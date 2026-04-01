@@ -206,17 +206,25 @@ class _BboxLoss(nn.Module):
         target_scores_sum: torch.Tensor,
         fg_mask: torch.Tensor,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
+        # target_scores: (B, A, nc) -> 每个锚点的前景权重，形状约为 (#fg, 1)
         weight = target_scores.sum(-1)[fg_mask].unsqueeze(-1)
+        # 仅在前景锚点上计算 CIoU，pred/target 均为 xyxy（同一坐标系）
         iou = bbox_iou(pred_bboxes[fg_mask], target_bboxes[fg_mask], xywh=False, CIoU=True)
+        # CIoU 损失：1 - iou，并按前景权重加权，再用 target_scores_sum 做归一化
         loss_iou = ((1.0 - iou) * weight).sum() / target_scores_sum
 
         if self.dfl_loss is not None:
+            # 将目标框（xyxy）转为相对锚点的 ltrb 离散回归目标，范围截断到 reg_max-1
             target_ltrb = bbox2dist(anchor_points, target_bboxes, self.dfl_loss.reg_max - 1)
+            # pred_dist[fg_mask]: (#fg, 4*reg_max) -> view 后每条边一个 reg_max 分类
+            # _DFLoss 输出 (#fg, 1)，再乘同一套前景权重
             loss_dfl = (
                 self.dfl_loss(pred_dist[fg_mask].view(-1, self.dfl_loss.reg_max), target_ltrb[fg_mask]) * weight
             )
+            # DFL 同样按 target_scores_sum 归一化，保证与 cls/box 标度一致
             loss_dfl = loss_dfl.sum() / target_scores_sum
         else:
+            # reg_max==1 时不启用 DFL，保持返回标量张量
             loss_dfl = torch.tensor(0.0, device=pred_dist.device)
 
         return loss_iou, loss_dfl
@@ -522,26 +530,39 @@ class DetectDAGNetLoss:
 
         形状：``B`` batch，``no=nc+4*reg_max``，``A=Σ_i H_i W_i``，``N`` GT 条数，``n_max`` 单图 GT 上限。
         """
+        # feats: List[(B, no, H_i, W_i)]
         feats = self._feature_list(preds)
         device = feats[0].device
         dtype = feats[0].dtype
         self._ensure_heads(device, dtype)
+        # stride: (nl,)
         stride = self._stride_on(device, dtype)
 
+        # merged_head: (B, no, A)
         merged_head = self.merge_multiscale_detect_features_to_flat_anchor_tensor(feats, self.no)
+        # pred_scores: (B, A, nc), pred_distri: (B, A, 4*reg_max)
         pred_scores, pred_distri = self.split_flat_anchor_tensor_to_cls_and_reg(
             merged_head, self.reg_max, self.nc
         )
         batch_size = pred_scores.shape[0]
+        # imgsz: (2,) = [H, W]，像素尺度
         imgsz = torch.tensor(feats[0].shape[2:], device=device, dtype=dtype) * stride[0]
+        # anchor_points: (A, 2), stride_tensor: (A, 1)
         anchor_points, stride_tensor = build_flat_anchor_points_and_strides_from_multiscale_feats(feats, stride, 0.5)
 
+        # raw_gt: (N, 6) = [img_idx, cls, cx, cy, w, h]（xywh 为归一化）
         raw_gt = build_v8_target_rows_from_flat_components(batch_idx, cls, bboxes, device)
+        # scale_tensor: (4,) = [W, H, W, H]
         scale_tensor = imgsz[[1, 0, 1, 0]]
+        # packed_gt: (B, n_max, 5) = [cls, cx, cy, w, h]（按图聚合并 padding）
         packed_gt = group_flat_v8_rows_per_image_by_batch_id(raw_gt, batch_size, device)
+        # packed_gt[...,1:5]: (B, n_max, 4), 归一化 xywh -> 像素 xyxy
         packed_gt[..., 1:5] = _xywh2xyxy(packed_gt[..., 1:5].mul_(scale_tensor))
+        # gt_labels: (B, n_max, 1), gt_bboxes: (B, n_max, 4) (pixel xyxy)
         gt_labels, gt_bboxes = packed_gt.split((1, 4), 2)
+        # mask_gt: (B, n_max, 1), True 表示该槽位有 GT（非 padding）
         mask_gt = gt_bboxes.sum(2, keepdim=True).gt_(0.0)
+        # pred_bboxes: (B, A, 4), 网格坐标系 xyxy（尚未乘 stride）
         pred_bboxes = self._decode_pred_boxes(anchor_points, pred_distri)
 
         tal = self._task_aligned_assign(
@@ -553,9 +574,15 @@ class DetectDAGNetLoss:
             gt_bboxes,
             mask_gt,
         )
+        # tal.*（TAL 分配结果）
+        # - tal.target_scores: (B, A, nc) 软分类标签（多数为背景 0）
+        # - tal.target_bboxes_px: (B, A, 4) 像素空间目标框（与 gt_bboxes 同一坐标系）
+        # - tal.fg_mask: (B, A, 1) 前景掩码（正样本为 True/1）
         target_scores_sum = max(tal.target_scores.sum(), 1)
+        # 归一化分母：避免无前景时出现除零；是标量（0-d tensor）或 Python int。
 
         l_cls = self._loss_cls(pred_scores, tal.target_scores, target_scores_sum, dtype)
+        # l_cls: 分类损失标量（未乘 hyp，且内部已按 target_scores_sum 归一化）
         l_box, l_dfl = self._loss_box_dfl(
             pred_distri,
             pred_bboxes,
@@ -564,11 +591,15 @@ class DetectDAGNetLoss:
             target_scores_sum,
             stride_tensor,
         )
+        # l_box: 回归（CIoU）标量；主要在 fg_mask 为 True 的锚点上计算
+        # l_dfl: DFL（分布焦点）标量；reg_max==1 时通常为 0（见 _loss_box_dfl）
 
         loss = torch.zeros(3, device=device)
+        # loss: (3,) 向量，对应 [box, cls, dfl]，最后会再乘 batch_size
         loss[0] = l_box * self.hyp.box
         loss[1] = l_cls * self.hyp.cls
         loss[2] = l_dfl * self.hyp.dfl
+        # 返回 (3,)（含 hyp.* 权重），再乘 batch_size 以对齐 Ultralytics 的标度约定
         return loss * batch_size
 
     def __call__(

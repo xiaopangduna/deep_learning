@@ -43,7 +43,7 @@ data:
   class_path: lovely_deep_learning.data_module.image_net.ImageNetDataModule
   init_args:
     dataset_dir: datasets/IMAGENET
-    train_csv_paths: [datasets/IMAGENET/val.csv]  # datasets/IMAGENET/train.csv
+    train_csv_paths: [datasets/IMAGENET/train.csv]  # datasets/IMAGENET/train.csv
     val_csv_paths: [datasets/IMAGENET/val.csv]
     test_csv_paths: [datasets/IMAGENET/val.csv]     # test 没有标签，只能预测
     predict_csv_paths: [datasets/IMAGENET/predict.csv] # datasets/IMAGENET/test.csv
@@ -53,7 +53,8 @@ data:
     norm_mean : [0.485, 0.456, 0.406]
     norm_std : [0.229, 0.224, 0.225]  
     batch_size: 32
-    num_workers: 8
+    # ImageNet train.csv 极大，每个 worker 会继承/映射父进程内存；num_workers 过高易 OOM（见 logs/.../memory_usage.csv）
+    num_workers: 2
     transform_train:
       class_path: torchvision.transforms.v2.Compose
       init_args:
