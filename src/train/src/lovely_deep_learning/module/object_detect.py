@@ -12,10 +12,12 @@ from __future__ import annotations
 import lightning.pytorch as pl
 import torch
 from lightning.pytorch.cli import instantiate_class
+from torchvision.ops import batched_nms
 from typing import Any
 
 from lovely_deep_learning.model.DAGNet import DAGNet
 from lovely_deep_learning.losses.detect_dagnet_loss import DetectDAGNetLoss
+from lovely_deep_learning.nn.head import Detect
 
 from ..dataset.object_detect import ObjectDetectDataset
 
@@ -29,9 +31,15 @@ class ObjectDetectModule(pl.LightningModule):
         optimizer: dict[str, Any] | None = None,
         lr_scheduler: dict[str, Any] | None = None,
         loss: dict[str, Any] | None = None,
+        nms: bool = True,
+        nms_iou: float = 0.7,
+        inference_conf_thres: float = 0.001,
     ):
         super().__init__()
         self.learning_rate = float(learning_rate)
+        self.nms = bool(nms)
+        self.nms_iou = float(nms_iou)
+        self.inference_conf_thres = float(inference_conf_thres)
         self.optimizer_cfg = optimizer
         self.lr_scheduler_cfg = lr_scheduler
         if self.optimizer_cfg is None:
@@ -203,11 +211,78 @@ class ObjectDetectModule(pl.LightningModule):
             prog_bar=True,
         )
 
+    @staticmethod
+    def _unpack_raw_detection_output(dag_out: tuple) -> torch.Tensor:
+        """DAGNet 返回 ``(最后一层输出,)``；Detect 在 eval 下返回 ``(raw_pred, feats)``。"""
+        layer_out = dag_out[0]
+        if isinstance(layer_out, tuple):
+            return layer_out[0]
+        return layer_out
+
+    def postprocess_inference(self, raw: torch.Tensor) -> torch.Tensor:
+        """``raw``: ``(B, 4+nc, anchors)`` → ``(B, max_det, 6)``（xywh 像素、score、cls）。"""
+        return Detect.postprocess(
+            raw.permute(0, 2, 1), self._detect.max_det, self._detect.nc
+        )
+
+    @staticmethod
+    def _cxcywh_pixels_to_xyxy(boxes: torch.Tensor) -> torch.Tensor:
+        """``boxes``: ``(..., 4)`` 中心 cxcywh 像素 → xyxy。"""
+        cx, cy, w, h = boxes.unbind(-1)
+        return torch.stack(
+            (cx - w * 0.5, cy - h * 0.5, cx + w * 0.5, cy + h * 0.5), dim=-1
+        )
+
+    def _apply_nms_to_detections(self, dets: torch.Tensor) -> torch.Tensor:
+        """
+        对 :meth:`postprocess_inference` 输出做按类 ``batched_nms``，仍返回 ``(B, M, 6)``（不足行填零）。
+
+        最后一维：cxcywh 像素、objectness+class 分数、class id（与 :class:`Detect.postprocess` 一致）。
+        """
+        B, M, _ = dets.shape
+        device, dtype = dets.device, dets.dtype
+        out = torch.zeros(B, M, 6, device=device, dtype=dtype)
+        max_keep = M
+        for b in range(B):
+            row = dets[b]
+            mask = row[:, 4] > self.inference_conf_thres
+            if not mask.any():
+                continue
+            xywh = row[mask, :4]
+            scores = row[mask, 4]
+            cls_ids = row[mask, 5].long()
+            boxes_xyxy = self._cxcywh_pixels_to_xyxy(xywh)
+            keep = batched_nms(boxes_xyxy, scores, cls_ids, self.nms_iou)
+            keep = keep[:max_keep]
+            if keep.numel() == 0:
+                continue
+            xywh_k = xywh[keep]
+            sc_k = scores[keep]
+            cl_k = cls_ids[keep].to(dtype=dtype)
+            n = keep.numel()
+            out[b, :n, :4] = xywh_k
+            out[b, :n, 4] = sc_k
+            out[b, :n, 5] = cl_k
+        return out
+
+    def run_inference(self, imgs: torch.Tensor) -> torch.Tensor:
+        """推理后处理 ``(B, max_det, 6)``；若 ``nms`` 为真则对解码框做按类 NMS。"""
+        out = self.model([imgs])
+        raw = self._unpack_raw_detection_output(out)
+        dets = self.postprocess_inference(raw)
+        if self.nms:
+            dets = self._apply_nms_to_detections(dets)
+        return dets
+
     def test_step(self, batch, batch_idx):
         net_in, net_out = batch
         tb = self._collate_to_target_batch(net_in, net_out)
         loss = self._compute_loss(tb)
         self.log("test_loss", loss, on_step=False, on_epoch=True, prog_bar=True)
+        imgs = tb["img"]
+        with torch.no_grad():
+            detections = self.run_inference(imgs)
+        return {"detections": detections}
 
     def predict_step(self, batch, batch_idx):
         net_in, _ = batch
@@ -227,7 +302,8 @@ class ObjectDetectModule(pl.LightningModule):
             )
         self.eval()
         with torch.no_grad():
-            return self.forward(imgs)
+            detections = self.run_inference(imgs)
+        return {"detections": detections}
 
     def configure_optimizers(self):
         optimizer = instantiate_class(self.model.parameters(), self.optimizer_cfg)

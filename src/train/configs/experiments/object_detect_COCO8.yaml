@@ -3,9 +3,15 @@
 # 数据首次运行会由 COCO8DataModule.prepare_data 下载 coco8.zip 并生成 CSV / 类别映射表
 
 trainer:
-  max_epochs: 100
+  max_epochs: 20
   accelerator: auto
   callbacks:
+    - class_path: lovely_deep_learning.callback.object_detect.ObjectDetectCallback
+      init_args:
+        save_dir: tmp
+        test_only_save_mistake: false
+        conf_thres: 0.25
+        match_iou_thres: 0.5
     - class_path: lightning.pytorch.callbacks.EarlyStopping
       init_args:
         monitor: "val_loss"
@@ -97,6 +103,10 @@ model:
       cls_gain: 0.5
       dfl_gain: 1.5
       tal_topk: 10
+    # 推理：postprocess 后按类 batched_nms（与可视化 / test / predict 共用 run_inference）
+    nms: true
+    nms_iou: 0.7
+    inference_conf_thres: 0.001
     model:
       model_name: yolov8_n
       pretrained: true

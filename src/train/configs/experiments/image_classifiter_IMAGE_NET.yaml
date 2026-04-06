@@ -1,6 +1,7 @@
 trainer:
   max_epochs: 600 
   accelerator: auto
+  accumulate_grad_batches: 4
   callbacks:
     - class_path: lovely_deep_learning.callback.image_classifier.ImageClassifierCallback
       init_args:
@@ -31,7 +32,6 @@ trainer:
         save_dir: logs
         name: image_classifiter_IMAGE_NET 
         version: null
-  # 数据太大时不能开，否则cpu占用爆，触发OOM
   # profiler:
   #   class_path: lightning.pytorch.profilers.SimpleProfiler
   #   init_args:
@@ -54,7 +54,7 @@ data:
     norm_std : [0.229, 0.224, 0.225]  
     batch_size: 32
     # ImageNet train.csv 极大，每个 worker 会继承/映射父进程内存；num_workers 过高易 OOM（见 logs/.../memory_usage.csv）
-    num_workers: 2
+    num_workers: 4
     transform_train:
       class_path: torchvision.transforms.v2.Compose
       init_args:
@@ -106,7 +106,8 @@ model:
     optimizer:
       class_path: torch.optim.RMSprop
       init_args:
-        lr: 0.064
+        # 预训练微调：0.064 适合从零训 ImageNet，会迅速破坏预训练权重；0.001～1e-4 更稳妥，适合验证预训练模型
+        lr: 0.0001  # 0.064
         momentum: 0.9
         weight_decay: 0.00001
         eps: 0.0316
@@ -118,7 +119,7 @@ model:
         gamma: 0.973
     model:
       model_name: mobilenet_v3_large
-      pretrained: true
+      pretrained: false
       structure:
         inputs: [{name: input, shape: [3, 224, 224]}]
         outputs: [{name: classification, from: [classifier]}]

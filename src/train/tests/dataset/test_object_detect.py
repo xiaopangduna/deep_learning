@@ -156,6 +156,43 @@ def test_ObjectDetectDataset_draw_label_on_numpy():
         "./tmp/test_ObjectDetectDataset_draw_label_on_numpy.jpg", img_with_label)
 
 
+def test_ObjectDetectDataset_draw_target_and_predict_label_on_numpy():
+    """左右拼接：左预测、右真值；预测暂与真值使用同一组框与类别。"""
+    expected_bboxes_xyxy = np.array(
+        [[1.0, 20.0, 442.0, 399.0]], dtype=np.float32)
+
+    dataset = ObjectDetectDataset(csv_paths=PATH_CSV, key_map=KEY_MAP,
+                                  transform=None, map_class_id_to_class_name=MAP_CLASS_ID_TO_CLASS_NAME)
+    net_in, net_out = dataset[0]
+    img_np = cv2.imread(net_in["img_path"])
+    bboxes_xyxy = net_out["bboxes_xyxy_abs_tv_transformed"].numpy()
+    cls_np = net_out["cls_np"]
+    np.testing.assert_allclose(
+        bboxes_xyxy,
+        expected_bboxes_xyxy,
+        atol=2.0,
+        rtol=0.0,
+        err_msg="像素 XYXY 与期望值逐元素绝对差应 ≤2",
+    )
+    pred_scores = np.ones(bboxes_xyxy.shape[0], dtype=np.float32)
+    img_pair = ObjectDetectDataset.draw_target_and_predict_label_on_numpy(
+        img_np,
+        bboxes_xyxy,
+        cls_np,
+        bboxes_xyxy,
+        cls_np,
+        class_names=MAP_CLASS_ID_TO_CLASS_NAME,
+        pred_scores=pred_scores,
+    )
+    h, w = img_np.shape[:2]
+    gap = 3
+    assert img_pair.shape == (h, 2 * w + gap, 3)
+    cv2.imwrite(
+        "./tmp/test_ObjectDetectDataset_draw_target_and_predict_label_on_numpy.jpg",
+        img_pair,
+    )
+
+
 def test_ObjectDetectDataset_draw_label_on_numpy_with_transform():
     expected_bboxes_xyxy = np.array(
         [[1.0, 30.0, 442.0, 601.0]], dtype=np.float32)
