@@ -312,7 +312,7 @@ class _TALAssignOut(NamedTuple):
     fg_mask: torch.Tensor
 
 
-class DetectDAGNetLoss:
+class DetectionLossYOLOv8:
     """
     见模块顶部的流程说明。对外入口：``forward_loss_vec`` → ``(3,)`` 的 ``[box, cls, dfl]``；
     ``__call__`` 返回三项之和。

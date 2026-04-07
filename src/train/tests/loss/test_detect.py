@@ -1,11 +1,11 @@
 """
-对照 Ultralytics YOLOv8 的工具函数与 ``v8DetectionLoss``，验证 ``detect_dagnet_loss`` 中
-几何解码与 **自研** ``DetectDAGNetLoss`` 是否与官方前向 **逐分量** 完全一致。
+对照 Ultralytics YOLOv8 的工具函数与 ``v8DetectionLoss``，验证 ``loss.object_detect`` 中
+几何解码与 **自研** ``DetectionLossYOLOv8`` 是否与官方前向 **逐分量** 完全一致。
 
 说明
 ----
 - **CIoU、make_anchors、DFL 期望 + dist2bbox**：与 ``ultralytics.utils`` 对齐（``allclose``）。
-- **总损失**：``DetectDAGNetLoss.forward_loss_vec`` 应与 ``v8DetectionLoss`` 返回的第一个 ``(3,)``
+- **总损失**：``DetectionLossYOLOv8.forward_loss_vec`` 应与 ``v8DetectionLoss`` 返回的第一个 ``(3,)``
   张量 **完全一致**（同一 ``preds``、``batch``、超参）；对照测试使用 ``datasets/COCO8`` 真实标注。
 """
 
@@ -23,13 +23,13 @@ from ultralytics.utils.tal import dist2bbox as u_dist2bbox
 from ultralytics.utils.tal import make_anchors as u_make_anchors
 
 from lovely_deep_learning.dataset.object_detect import ObjectDetectDataset
-from lovely_deep_learning.losses.detect_dagnet_loss import (
-    DetectDAGNetLoss,
+from lovely_deep_learning.loss.object_detect import (
+    DetectionLossYOLOv8,
     _bbox_ciou,
     _dist2bbox,
     _dfl_decode,
     build_flat_anchor_points_and_strides_from_multiscale_feats,
-    _merge_hyp_args,
+    merge_yolov8_hyp_args,
     _V8LossAdapter,
 )
 from lovely_deep_learning.model.DAGNet import DAGNet
@@ -163,13 +163,13 @@ def test_dfl_decode_and_dist2bbox_match_ultralytics():
 
 @pytest.mark.skipif(not _YOLO_PT.is_file(), reason="pretrained yolov8n.pt not found")
 def test_dagnet_loss_finite_on_random_batch():
-    """``DetectDAGNetLoss`` 在随机 batch 上可前向、可反传。"""
+    """``DetectionLossYOLOv8`` 在随机 batch 上可前向、可反传。"""
     with open(_YAML, encoding="utf-8") as f:
         cfg = yaml.safe_load(f)
     net = DAGNet(**cfg)
     net.train()
     det = net.layers[net.layers_config[-1]["name"]]
-    crit = DetectDAGNetLoss(nc=det.nc, reg_max=det.reg_max, stride=det.stride)
+    crit = DetectionLossYOLOv8(nc=det.nc, reg_max=det.reg_max, stride=det.stride)
     b, h, w = 2, 640, 640
     img = torch.rand(b, 3, h, w)
     preds = net([img])[0]
@@ -225,9 +225,9 @@ def test_ultralytics_v8_loss_finite_same_batch():
 @pytest.mark.skipif(not _YOLO_PT.is_file(), reason="pretrained yolov8n.pt not found")
 @pytest.mark.skipif(not _COCO_TRAIN_CSV.is_file(), reason="datasets/COCO8/train.csv not found")
 @pytest.mark.skipif(not _COCO_MAP.is_file(), reason="COCO8 class map csv not found")
-def test_detect_dagnet_loss_matches_v8_detection_loss_coco8():
+def test_detect_loss_matches_v8_detection_loss_coco8():
     """
-    自研 ``DetectDAGNetLoss`` 与 ``v8DetectionLoss`` 在 **同一 preds、同一 batch** 下
+    自研 ``DetectionLossYOLOv8`` 与 ``v8DetectionLoss`` 在 **同一 preds、同一 batch** 下
     三个分量（已含 gain 与 batch_size）应与官方 **逐元素一致**；数据来自 ``datasets/COCO8``。
     """
     from ultralytics.utils.loss import v8DetectionLoss
@@ -256,9 +256,9 @@ def test_detect_dagnet_loss_matches_v8_detection_loss_coco8():
     img = batch["img"]
     preds = dag([img])[0]
 
-    hyp = _merge_hyp_args(7.5, 0.5, 1.5)
+    hyp = merge_yolov8_hyp_args(7.5, 0.5, 1.5)
     det = dag.layers[dag.layers_config[-1]["name"]]
-    crit_ours = DetectDAGNetLoss(
+    crit_ours = DetectionLossYOLOv8(
         nc=det.nc,
         reg_max=det.reg_max,
         stride=det.stride,

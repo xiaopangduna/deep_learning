@@ -1,6 +1,6 @@
 """
 基于 ``DAGNet`` + ``configs/models/yolov8_n.yaml`` 的目标检测 Lightning 模块；
-损失为 :class:`~lovely_deep_learning.losses.detect_dagnet_loss.DetectDAGNetLoss`（
+损失为 :class:`~lovely_deep_learning.loss.object_detect.DetectionLossYOLOv8`（
 自研前向，与 Ultralytics ``v8DetectionLoss`` 公式对齐；便于对照源码与论文）。
 
 数据侧使用 ``lovely_deep_learning.data_module.object_detect.ObjectDetectDataModule``。
@@ -16,7 +16,7 @@ from torchvision.ops import batched_nms
 from typing import Any
 
 from lovely_deep_learning.model.DAGNet import DAGNet
-from lovely_deep_learning.losses.detect_dagnet_loss import DetectDAGNetLoss
+from lovely_deep_learning.loss.object_detect import DetectionLossYOLOv8
 from lovely_deep_learning.nn.head import Detect
 
 from ..dataset.object_detect import ObjectDetectDataset
@@ -53,7 +53,7 @@ class ObjectDetectModule(pl.LightningModule):
         last_name = self.model.layers_config[-1]["name"]
         self._detect = self.model.layers[last_name]
         loss_kw = dict(loss or {})
-        self.criterion = DetectDAGNetLoss(
+        self.criterion = DetectionLossYOLOv8(
             nc=self._detect.nc,
             reg_max=self._detect.reg_max,
             stride=self._detect.stride,
