@@ -210,6 +210,10 @@ class ObjectDetectDataset(BaseDataset):
             cv2.rectangle(
                 image, (x1, y1 - text_size[1] - 10), (x1 + text_size[0], y1), color, -1)
 
+            # 根据标签背景亮度自动选择文字颜色，提升可读性
+            luminance = 0.114 * float(color[0]) + 0.587 * float(color[1]) + 0.299 * float(color[2])
+            text_color = (20, 20, 20) if luminance >= 150 else (245, 245, 245)
+
             # 绘制标签文字
             cv2.putText(
                 image,
@@ -217,7 +221,7 @@ class ObjectDetectDataset(BaseDataset):
                 (x1, y1 - 5),
                 font,
                 font_scale,
-                (255, 255, 255),  # 白色文字
+                text_color,
                 1,
                 cv2.LINE_AA
             )
@@ -235,11 +239,12 @@ class ObjectDetectDataset(BaseDataset):
         pred_scores: Optional[np.ndarray] = None,
         match_by_iou: bool = True,
         iou_match_threshold: float = 0.5,
-        color_match: Tuple[int, int, int] = (0, 255, 0),
-        color_mismatch: Tuple[int, int, int] = (0, 0, 255),
-        color_pred: Tuple[int, int, int] = (0, 0, 255),
-        color_gt: Tuple[int, int, int] = (0, 255, 0),
+        color_match: Tuple[int, int, int] = (80, 240, 120),
+        color_mismatch: Tuple[int, int, int] = (30, 30, 210),
+        color_pred: Tuple[int, int, int] = (0, 140, 255),
+        color_gt: Tuple[int, int, int] = (80, 240, 120),
         gap_px: int = 3,
+        gap_color: Tuple[int, int, int] = (0, 0, 0),
         thickness: int = 2,
         cached_match: Optional[tuple[np.ndarray, np.ndarray]] = None,
     ) -> np.ndarray:
@@ -262,7 +267,8 @@ class ObjectDetectDataset(BaseDataset):
             iou_match_threshold: IoU 阈值。
             color_match / color_mismatch: 判定一致 / 不一致时的 BGR 颜色。
             color_pred / color_gt: 仅在 ``match_by_iou=False`` 时使用。
-            gap_px: 左右图之间的分隔条宽度（浅灰）。
+            gap_px: 左右图之间的分隔条宽度。
+            gap_color: 分隔条颜色（BGR）。
             thickness: 线宽。
             cached_match: 可选 ``(pred_matched, gt_matched)`` 与 :func:`_greedy_match_pred_gt_iou`
                 返回值同形；传入时不再重复计算匹配（便于与外部逻辑共用同一结果）。
@@ -344,7 +350,7 @@ class ObjectDetectDataset(BaseDataset):
         hr, wr = right.shape[:2]
         if (h, wl) != (hr, wr):
             right = cv2.resize(right, (wl, h), interpolation=cv2.INTER_LINEAR)
-        sep = np.full((h, max(gap_px, 0), 3), 220, dtype=np.uint8)
+        sep = np.full((h, max(gap_px, 0), 3), np.asarray(gap_color, dtype=np.uint8), dtype=np.uint8)
         return np.hstack([left, sep, right])
 
     @staticmethod

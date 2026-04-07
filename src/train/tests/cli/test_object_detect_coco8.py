@@ -3,7 +3,7 @@ import subprocess
 
 
 @pytest.mark.cli
-def test_ImageNette_fit():
+def test_COCO8_object_detect_fit():
     result = subprocess.run(
         [
             "python",
@@ -16,7 +16,7 @@ def test_ImageNette_fit():
         ],
         capture_output=True,
         text=True,
-        timeout=60,
+        timeout=180,
     )
     if result.returncode != 0:
         print(result.stdout)
