@@ -25,6 +25,9 @@ class ObjectDetectDataModule(BaseDataModule):
         map_class_id_to_class_name=None,
         norm_mean=None,
         norm_std=None,
+        nms: bool = True,
+        nms_iou: float = 0.7,
+        inference_conf_thres: float = 0.001,
         **kwargs,
     ):
         """
@@ -52,6 +55,9 @@ class ObjectDetectDataModule(BaseDataModule):
         self.map_class_id_to_class_name: dict[int, str] = {}
         self.norm_mean = norm_mean
         self.norm_std = norm_std
+        self.nms = bool(nms)
+        self.nms_iou = float(nms_iou)
+        self.inference_conf_thres = float(inference_conf_thres)
 
     def setup(self, stage=None):
         """按 Lightning ``stage`` 创建对应 Dataset；``stage is None`` 时构建全部阶段所用数据集。
@@ -71,6 +77,9 @@ class ObjectDetectDataModule(BaseDataModule):
                 map_class_id_to_class_name=self.map_class_id_to_class_name,
                 norm_mean=self.norm_mean,
                 norm_std=self.norm_std,
+                nms=self.nms,
+                nms_iou=self.nms_iou,
+                inference_conf_thres=self.inference_conf_thres,
             )
             self.val_dataset = ObjectDetectDataset(
                 self.val_csv_paths,
@@ -79,6 +88,9 @@ class ObjectDetectDataModule(BaseDataModule):
                 map_class_id_to_class_name=self.map_class_id_to_class_name,
                 norm_mean=self.norm_mean,
                 norm_std=self.norm_std,
+                nms=self.nms,
+                nms_iou=self.nms_iou,
+                inference_conf_thres=self.inference_conf_thres,
             )
         if stage == "validate" or stage is None:
             self.val_dataset = ObjectDetectDataset(
@@ -88,6 +100,9 @@ class ObjectDetectDataModule(BaseDataModule):
                 map_class_id_to_class_name=self.map_class_id_to_class_name,
                 norm_mean=self.norm_mean,
                 norm_std=self.norm_std,
+                nms=self.nms,
+                nms_iou=self.nms_iou,
+                inference_conf_thres=self.inference_conf_thres,
             )
         if stage == "test" or stage is None:
             self.test_dataset = ObjectDetectDataset(
@@ -97,6 +112,9 @@ class ObjectDetectDataModule(BaseDataModule):
                 map_class_id_to_class_name=self.map_class_id_to_class_name,
                 norm_mean=self.norm_mean,
                 norm_std=self.norm_std,
+                nms=self.nms,
+                nms_iou=self.nms_iou,
+                inference_conf_thres=self.inference_conf_thres,
             )
         if stage == "predict" or stage is None:
             self.pred_dataset = ObjectDetectDataset(
@@ -106,6 +124,9 @@ class ObjectDetectDataModule(BaseDataModule):
                 map_class_id_to_class_name=self.map_class_id_to_class_name,
                 norm_mean=self.norm_mean,
                 norm_std=self.norm_std,
+                nms=self.nms,
+                nms_iou=self.nms_iou,
+                inference_conf_thres=self.inference_conf_thres,
             )
 
     @staticmethod

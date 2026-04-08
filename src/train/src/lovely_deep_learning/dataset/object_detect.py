@@ -8,11 +8,13 @@ import pandas as pd
 import torch
 import cv2
 from torchvision import tv_tensors
+from torchvision.ops import batched_nms
 
 from .base import BaseDataset
+from ..nn.head import Detect
 
 
-def _iou_xyxy_pair(a: np.ndarray, b: np.ndarray) -> float:
+def iou_xyxy_pair(a: np.ndarray, b: np.ndarray) -> float:
     """单对 XYXY 框的 IoU，``a``/``b`` 为 ``(4,)``。"""
     ax1, ay1, ax2, ay2 = (float(a[i]) for i in range(4))
     bx1, by1, bx2, by2 = (float(b[i]) for i in range(4))
@@ -26,7 +28,7 @@ def _iou_xyxy_pair(a: np.ndarray, b: np.ndarray) -> float:
     return inter / union
 
 
-def _greedy_match_pred_gt_iou(
+def greedy_match_pred_gt_iou(
     bboxes_pred: np.ndarray,
     classes_pred: np.ndarray,
     bboxes_gt: np.ndarray,
@@ -53,7 +55,7 @@ def _greedy_match_pred_gt_iou(
                 continue
             if cp != int(classes_gt[gj]):
                 continue
-            iou = _iou_xyxy_pair(bboxes_pred[pi], bboxes_gt[gj])
+            iou = iou_xyxy_pair(bboxes_pred[pi], bboxes_gt[gj])
             if iou > best_iou:
                 best_iou = iou
                 best_j = gj
@@ -62,6 +64,89 @@ def _greedy_match_pred_gt_iou(
             gt_taken[best_j] = True
     gt_matched[:] = gt_taken
     return pred_matched, gt_matched
+
+
+def cxcywh_pixels_to_xyxy(boxes: torch.Tensor) -> torch.Tensor:
+    """``boxes``: ``(..., 4)`` 中心 cxcywh 像素 → xyxy。"""
+    cx, cy, w, h = boxes.unbind(-1)
+    return torch.stack(
+        (cx - w * 0.5, cy - h * 0.5, cx + w * 0.5, cy + h * 0.5), dim=-1
+    )
+
+
+def xyxy_abs_pixels_to_xywh_norm(
+    xyxy: torch.Tensor, height: int, width: int
+) -> torch.Tensor:
+    """``xyxy`` 像素框转归一化 ``xywh``（中心点 + 宽高）。"""
+    x1 = xyxy[..., 0]
+    y1 = xyxy[..., 1]
+    x2 = xyxy[..., 2]
+    y2 = xyxy[..., 3]
+    w = float(width)
+    h = float(height)
+    cx = (x1 + x2) * 0.5 / w
+    cy = (y1 + y2) * 0.5 / h
+    bw = (x2 - x1) / w
+    bh = (y2 - y1) / h
+    return torch.stack((cx, cy, bw, bh), dim=-1)
+
+
+def apply_nms_to_detections(
+    dets: torch.Tensor, conf_thres: float, nms_iou: float
+) -> torch.Tensor:
+    """
+    对 Detect 后处理输出做按类 ``batched_nms``，返回固定形状 ``(B, M, 6)``（不足行补零）。
+
+    维度与语义约定：
+    - 输入 ``dets``: ``(B, M, 6)``
+      - ``B``: batch size
+      - ``M``: 每张图解码后的候选框数上限（max_det）
+      - ``6``: ``[cx, cy, w, h, score, cls_id]``（坐标单位为像素）
+    - 输出 ``out``: ``(B, M, 6)``
+      - 对每张图，前 ``n`` 行为 NMS 保留结果，剩余 ``M-n`` 行为 0 填充
+    """
+    B, M, _ = dets.shape
+    device, dtype = dets.device, dets.dtype
+    out = torch.zeros(B, M, 6, device=device, dtype=dtype)
+    max_keep = M
+    for b in range(B):
+        row = dets[b]  # (M, 6)
+        # 置信度阈值过滤后：从 (M, 6) -> (K, 6)，K<=M
+        mask = row[:, 4] > conf_thres
+        if not mask.any():
+            continue
+        xywh = row[mask, :4]          # (K, 4), cxcywh(pixel)
+        scores = row[mask, 4]         # (K,)
+        cls_ids = row[mask, 5].long()  # (K,)
+        boxes_xyxy = cxcywh_pixels_to_xyxy(xywh)  # (K, 4), xyxy(pixel)
+        keep = batched_nms(boxes_xyxy, scores, cls_ids, nms_iou)
+        keep = keep[:max_keep]  # (N,), N<=K<=M
+        if keep.numel() == 0:
+            continue
+        xywh_k = xywh[keep]              # (N, 4)
+        sc_k = scores[keep]              # (N,)
+        cl_k = cls_ids[keep].to(dtype=dtype)  # (N,)
+        n = keep.numel()
+        # 写回固定形状输出：out[b] 仍为 (M, 6)，仅前 n 行有效
+        out[b, :n, :4] = xywh_k
+        out[b, :n, 4] = sc_k
+        out[b, :n, 5] = cl_k
+    return out
+
+
+def postprocess_detections(
+    raw: torch.Tensor,
+    max_det: int,
+    nc: int,
+    nms: bool,
+    conf_thres: float,
+    nms_iou: float,
+) -> torch.Tensor:
+    """Detect 解码 + 可选按类 NMS，返回 ``(B, max_det, 6)``。"""
+    dets = Detect.postprocess(raw.permute(0, 2, 1), max_det, nc)
+    if nms:
+        dets = apply_nms_to_detections(dets, conf_thres=conf_thres, nms_iou=nms_iou)
+    return dets
 
 
 class ObjectDetectDataset(BaseDataset):
@@ -75,11 +160,17 @@ class ObjectDetectDataset(BaseDataset):
         map_class_id_to_class_name: Optional[Union[Dict[Any, str], str]] = None,
         norm_mean: Optional[List[float]] = None,
         norm_std: Optional[List[float]] = None,
+        nms: bool = True,
+        nms_iou: float = 0.7,
+        inference_conf_thres: float = 0.001,
     ):
         super().__init__(csv_paths=csv_paths, key_map=key_map, transform=transform)
         self.map_class_id_to_class_name = map_class_id_to_class_name
         self.norm_mean = norm_mean
         self.norm_std = norm_std
+        self.nms = bool(nms)
+        self.nms_iou = float(nms_iou)
+        self.inference_conf_thres = float(inference_conf_thres)
         self._has_label = "object_label_path" in self.sample_path_table.columns
 
     def __getitem__(self, index: int) -> Tuple[Dict[str, Any], Dict[str, Any]]:
@@ -270,7 +361,7 @@ class ObjectDetectDataset(BaseDataset):
             gap_px: 左右图之间的分隔条宽度。
             gap_color: 分隔条颜色（BGR）。
             thickness: 线宽。
-            cached_match: 可选 ``(pred_matched, gt_matched)`` 与 :func:`_greedy_match_pred_gt_iou`
+            cached_match: 可选 ``(pred_matched, gt_matched)`` 与 :func:`greedy_match_pred_gt_iou`
                 返回值同形；传入时不再重复计算匹配（便于与外部逻辑共用同一结果）。
 
         返回:
@@ -291,7 +382,7 @@ class ObjectDetectDataset(BaseDataset):
                 pred_order = None
                 if pred_scores is not None and n_p > 0:
                     pred_order = np.argsort(-np.asarray(pred_scores, dtype=np.float32))
-                pred_ok, gt_ok = _greedy_match_pred_gt_iou(
+                pred_ok, gt_ok = greedy_match_pred_gt_iou(
                     bboxes_pred,
                     classes_pred,
                     bboxes_gt,

@@ -12,84 +12,217 @@ from __future__ import annotations
 import lightning.pytorch as pl
 import torch
 from lightning.pytorch.cli import instantiate_class
-from torchvision.ops import batched_nms
 from typing import Any
 
 from lovely_deep_learning.model.DAGNet import DAGNet
-from lovely_deep_learning.loss.object_detect import DetectionLossYOLOv8
-from lovely_deep_learning.nn.head import Detect
 
-from ..dataset.object_detect import ObjectDetectDataset
+from ..dataset.object_detect import postprocess_detections, xyxy_abs_pixels_to_xywh_norm
 
 
 class ObjectDetectModule(pl.LightningModule):
     def __init__(
         self,
-        learning_rate=1e-3,
-        model=None,
-        init_type: str | None = None,
+        model: Any = None,
         optimizer: dict[str, Any] | None = None,
         lr_scheduler: dict[str, Any] | None = None,
-        loss: dict[str, Any] | None = None,
-        nms: bool = True,
-        nms_iou: float = 0.7,
-        inference_conf_thres: float = 0.001,
+        criterion: Any = None,
+        metrics: Any = None,
     ):
         super().__init__()
-        self.learning_rate = float(learning_rate)
-        self.nms = bool(nms)
-        self.nms_iou = float(nms_iou)
-        self.inference_conf_thres = float(inference_conf_thres)
         self.optimizer_cfg = optimizer
         self.lr_scheduler_cfg = lr_scheduler
         if self.optimizer_cfg is None:
-            raise ValueError("`optimizer` config is required in YAML (model.init_args.optimizer).")
+            raise ValueError(
+                "`optimizer` config is required in YAML (model.init_args.optimizer).")
         if self.lr_scheduler_cfg is None:
-            raise ValueError("`lr_scheduler` config is required in YAML (model.init_args.lr_scheduler).")
+            raise ValueError(
+                "`lr_scheduler` config is required in YAML (model.init_args.lr_scheduler).")
+        if criterion is None:
+            raise ValueError(
+                "`criterion` config is required in YAML (model.init_args.criterion).")
+        if metrics is None:
+            raise ValueError(
+                "`metrics` config is required in YAML (model.init_args.metrics).")
         if model is None:
-            raise ValueError("`model` config is required (DAGNet / yolov8_n.yaml 字段).")
+            raise ValueError(
+                "`model` config is required (DAGNet / yolov8_n.yaml 字段).")
 
         self.model = DAGNet(**model)
+        self.criterion = criterion
+        self.metrics = metrics
+
         last_name = self.model.layers_config[-1]["name"]
         self._detect = self.model.layers[last_name]
-        loss_kw = dict(loss or {})
-        self.criterion = DetectionLossYOLOv8(
-            nc=self._detect.nc,
-            reg_max=self._detect.reg_max,
-            stride=self._detect.stride,
-            **loss_kw,
-        )
 
-        self._graph_logged = False
 
     def forward(self, x: torch.Tensor):
         return self.model([x])
 
-    @staticmethod
-    def _xyxy_abs_pixels_to_xywh_norm(
-        xyxy: torch.Tensor, height: int, width: int
-    ) -> torch.Tensor:
-        x1 = xyxy[..., 0]
-        y1 = xyxy[..., 1]
-        x2 = xyxy[..., 2]
-        y2 = xyxy[..., 3]
-        w = float(width)
-        h = float(height)
-        cx = (x1 + x2) * 0.5 / w
-        cy = (y1 + y2) * 0.5 / h
-        bw = (x2 - x1) / w
-        bh = (y2 - y1) / h
-        return torch.stack((cx, cy, bw, bh), dim=-1)
+    def training_step(self, batch, batch_idx):
+        net_in, net_out = batch
+        tb = self._collate_to_target_batch(net_in, net_out)
+        preds = self.model([tb["img"]])
+        loss = self.criterion(
+            preds,
+            batch_idx=tb["batch_idx"],
+            cls=tb["cls"],
+            bboxes=tb["bboxes"],
+        )
+        bs = tb["img"].shape[0]
 
+        self.log(
+            "train_loss",
+            loss,
+            batch_size=bs,
+            on_step=False,
+            on_epoch=True,
+            prog_bar=True,
+        )
+        return loss
+
+    def validation_step(self, batch, batch_idx):
+        net_in, net_out = batch
+        tb = self._collate_to_target_batch(net_in, net_out)
+        preds_for_loss = self.model([tb["img"]])
+        loss = self.criterion(
+            preds_for_loss,
+            batch_idx=tb["batch_idx"],
+            cls=tb["cls"],
+            bboxes=tb["bboxes"],
+        )
+        bs = tb["img"].shape[0]
+
+        self.log(
+            "val_loss",
+            loss,
+            batch_size=bs,
+            on_step=False,
+            on_epoch=True,
+            prog_bar=True,
+        )
+        # val 下 Lightning 已 eval；与 loss 共用前向，``raw`` 为 Detect 解码输出（再经 top-k / NMS）。
+        raw = self._unpack_raw_detection_output(preds_for_loss)
+        nms, nms_iou, conf_thres = self._get_postprocess_cfg()
+        detections = postprocess_detections(
+            raw=raw,
+            max_det=self._detect.max_det,
+            nc=self._detect.nc,
+            nms=nms,
+            conf_thres=conf_thres,
+            nms_iou=nms_iou,
+        )
+        preds, targets = self._build_map_inputs(detections, net_out)
+        self.metrics.update("val", preds, targets)
+
+    def test_step(self, batch, batch_idx):
+        net_in, net_out = batch
+        tb = self._collate_to_target_batch(net_in, net_out)
+        preds_for_loss = self.model([tb["img"]])
+        loss = self.criterion(
+            preds_for_loss,
+            batch_idx=tb["batch_idx"],
+            cls=tb["cls"],
+            bboxes=tb["bboxes"],
+        )
+        self.log("test_loss", loss, on_step=False,
+                 on_epoch=True, prog_bar=True)
+        raw = self._unpack_raw_detection_output(preds_for_loss)
+        nms, nms_iou, conf_thres = self._get_postprocess_cfg()
+        detections = postprocess_detections(
+            raw=raw,
+            max_det=self._detect.max_det,
+            nc=self._detect.nc,
+            nms=nms,
+            conf_thres=conf_thres,
+            nms_iou=nms_iou,
+        )
+        preds, targets = self._build_map_inputs(detections, net_out)
+        self.metrics.update("test", preds, targets)
+        return {"detections": detections}
+
+    def predict_step(self, batch, batch_idx):
+        net_in, _ = batch
+        if isinstance(net_in, dict):
+            imgs = net_in["img_tv_transformed"]
+            if hasattr(imgs, "data"):
+                imgs = imgs.data
+        else:
+            imgs = torch.stack(
+                [
+                    ni["img_tv_transformed"].data
+                    if hasattr(ni["img_tv_transformed"], "data")
+                    else ni["img_tv_transformed"]
+                    for ni in net_in
+                ],
+                dim=0,
+            )
+        self.eval()
+        with torch.no_grad():
+            out = self.model([imgs])
+            raw = self._unpack_raw_detection_output(out)
+            nms, nms_iou, conf_thres = self._get_postprocess_cfg()
+            detections = postprocess_detections(
+                raw=raw,
+                max_det=self._detect.max_det,
+                nc=self._detect.nc,
+                nms=nms,
+                conf_thres=conf_thres,
+                nms_iou=nms_iou,
+            )
+        return {"detections": detections}
+
+    def on_validation_epoch_end(self):
+        metrics = self.metrics.compute("val")
+        self.log("val_map", metrics["map"],
+                 prog_bar=True, on_step=False, on_epoch=True)
+        self.metrics.reset("val")
+
+    def on_test_epoch_end(self):
+        metrics = self.metrics.compute("test")
+        self.log("test_map", metrics["map"],
+                 prog_bar=True, on_step=False, on_epoch=True)
+        self.metrics.reset("test")
+
+    def configure_optimizers(self):
+        optimizer = instantiate_class(
+            self.model.parameters(), self.optimizer_cfg)
+        scheduler = instantiate_class(optimizer, self.lr_scheduler_cfg)
+        return {"optimizer": optimizer, "lr_scheduler": scheduler}
+
+    # -----------------------------
+    # Inference / postprocess
+    # -----------------------------
+
+    @staticmethod
+    def _unpack_raw_detection_output(dag_out: tuple) -> torch.Tensor:
+        """DAGNet 返回 ``(最后一层输出,)``；Detect 在 eval 下返回 ``(raw_pred, feats)``。"""
+        layer_out = dag_out[0]
+        if isinstance(layer_out, tuple):
+            return layer_out[0]
+        return layer_out
+
+    @staticmethod
+    def _cxcywh_pixels_to_xyxy(boxes: torch.Tensor) -> torch.Tensor:
+        """``boxes``: ``(..., 4)`` 中心 cxcywh 像素 → xyxy。"""
+        cx, cy, w, h = boxes.unbind(-1)
+        return torch.stack(
+            (cx - w * 0.5, cy - h * 0.5, cx + w * 0.5, cy + h * 0.5), dim=-1
+        )
+
+    # -----------------------------
+    # Loss / metric input builders
+    # -----------------------------
     def _collate_to_target_batch(self, net_in: Any, net_out: Any) -> dict[str, torch.Tensor]:
         if isinstance(net_in, dict):
             img_batch = net_in["img_tv_transformed"]
             if hasattr(img_batch, "data"):
                 img_batch = img_batch.data
             batch_size = img_batch.shape[0]
-            net_in_list = [{k: net_in[k][i] for k in net_in} for i in range(batch_size)]
+            net_in_list = [{k: net_in[k][i] for k in net_in}
+                           for i in range(batch_size)]
             net_out_list = (
-                [{k: net_out[k][i] for k in net_out} for i in range(batch_size)]
+                [{k: net_out[k][i] for k in net_out}
+                    for i in range(batch_size)]
                 if isinstance(net_out, dict) and net_out
                 else [{} for _ in range(batch_size)]
             )
@@ -111,7 +244,7 @@ class ObjectDetectModule(pl.LightningModule):
         cls_parts: list[torch.Tensor] = []
         bbox_parts: list[torch.Tensor] = []
 
-        for i, (ni, no) in enumerate(zip(net_in_list, net_out_list)):
+        for i, (_ni, no) in enumerate(zip(net_in_list, net_out_list)):
             _c, h_i, w_i = img_batch[i].shape
             if not no:
                 continue
@@ -124,7 +257,7 @@ class ObjectDetectModule(pl.LightningModule):
             n = int(cls_t.shape[0])
             if n == 0:
                 continue
-            xywh = self._xyxy_abs_pixels_to_xywh_norm(
+            xywh = xyxy_abs_pixels_to_xywh_norm(
                 boxes.float(), int(h_i), int(w_i)
             ).to(device)
             batch_idx_parts.append(
@@ -145,218 +278,68 @@ class ObjectDetectModule(pl.LightningModule):
             "bboxes": torch.cat(bbox_parts, dim=0),
         }
 
-    def _forward_train_preds(self, imgs: torch.Tensor):
-        out = self.model([imgs])
-        if isinstance(out, tuple) and len(out) == 1:
-            return out[0]
-        return out
+    def _build_map_inputs(
+        self, detections: torch.Tensor, net_out: Any
+    ) -> tuple[list[dict[str, torch.Tensor]], list[dict[str, torch.Tensor]]]:
+        preds: list[dict[str, torch.Tensor]] = []
+        targets: list[dict[str, torch.Tensor]] = []
+        _nms, _nms_iou, conf_thres = self._get_postprocess_cfg()
 
-    def _compute_loss(self, tb: dict) -> torch.Tensor:
-        prev = self.training
-        self.train()
-        try:
-            preds = self._forward_train_preds(tb["img"])
-            return self.criterion(
-                preds,
-                batch_idx=tb["batch_idx"],
-                cls=tb["cls"],
-                bboxes=tb["bboxes"],
+        if isinstance(net_out, dict):
+            batch_size = detections.shape[0]
+            net_out_list = (
+                [{k: net_out[k][i] for k in net_out}
+                    for i in range(batch_size)]
+                if net_out
+                else [{} for _ in range(batch_size)]
             )
-        finally:
-            if not prev:
-                self.eval()
-
-    def training_step(self, batch, batch_idx):
-        net_in, net_out = batch
-        tb = self._collate_to_target_batch(net_in, net_out)
-        loss = self._compute_loss(tb)
-        bs = tb["img"].shape[0]
-
-        if batch_idx == 0:
-            try:
-                dataset: ObjectDetectDataset = self.trainer.datamodule.train_dataset
-                self._log_detection_images(net_in, net_out, dataset, "train")
-            except Exception as e:
-                print(f"Warning: failed to log detection images at step {self.global_step}, {e}")
-
-        self.log(
-            "train_loss",
-            loss,
-            batch_size=bs,
-            on_step=False,
-            on_epoch=True,
-            prog_bar=True,
-        )
-        return loss
-
-    def validation_step(self, batch, batch_idx):
-        net_in, net_out = batch
-        tb = self._collate_to_target_batch(net_in, net_out)
-        loss = self._compute_loss(tb)
-        bs = tb["img"].shape[0]
-
-        if batch_idx == 0:
-            try:
-                dataset: ObjectDetectDataset = self.trainer.datamodule.val_dataset
-                self._log_detection_images(net_in, net_out, dataset, "val")
-            except Exception as e:
-                print(f"Warning: failed to log detection images at step {self.global_step}, {e}")
-
-        self.log(
-            "val_loss",
-            loss,
-            batch_size=bs,
-            on_step=False,
-            on_epoch=True,
-            prog_bar=True,
-        )
-
-    @staticmethod
-    def _unpack_raw_detection_output(dag_out: tuple) -> torch.Tensor:
-        """DAGNet 返回 ``(最后一层输出,)``；Detect 在 eval 下返回 ``(raw_pred, feats)``。"""
-        layer_out = dag_out[0]
-        if isinstance(layer_out, tuple):
-            return layer_out[0]
-        return layer_out
-
-    def postprocess_inference(self, raw: torch.Tensor) -> torch.Tensor:
-        """``raw``: ``(B, 4+nc, anchors)`` → ``(B, max_det, 6)``（xywh 像素、score、cls）。"""
-        return Detect.postprocess(
-            raw.permute(0, 2, 1), self._detect.max_det, self._detect.nc
-        )
-
-    @staticmethod
-    def _cxcywh_pixels_to_xyxy(boxes: torch.Tensor) -> torch.Tensor:
-        """``boxes``: ``(..., 4)`` 中心 cxcywh 像素 → xyxy。"""
-        cx, cy, w, h = boxes.unbind(-1)
-        return torch.stack(
-            (cx - w * 0.5, cy - h * 0.5, cx + w * 0.5, cy + h * 0.5), dim=-1
-        )
-
-    def _apply_nms_to_detections(self, dets: torch.Tensor) -> torch.Tensor:
-        """
-        对 :meth:`postprocess_inference` 输出做按类 ``batched_nms``，仍返回 ``(B, M, 6)``（不足行填零）。
-
-        最后一维：cxcywh 像素、objectness+class 分数、class id（与 :class:`Detect.postprocess` 一致）。
-        """
-        B, M, _ = dets.shape
-        device, dtype = dets.device, dets.dtype
-        out = torch.zeros(B, M, 6, device=device, dtype=dtype)
-        max_keep = M
-        for b in range(B):
-            row = dets[b]
-            mask = row[:, 4] > self.inference_conf_thres
-            if not mask.any():
-                continue
-            xywh = row[mask, :4]
-            scores = row[mask, 4]
-            cls_ids = row[mask, 5].long()
-            boxes_xyxy = self._cxcywh_pixels_to_xyxy(xywh)
-            keep = batched_nms(boxes_xyxy, scores, cls_ids, self.nms_iou)
-            keep = keep[:max_keep]
-            if keep.numel() == 0:
-                continue
-            xywh_k = xywh[keep]
-            sc_k = scores[keep]
-            cl_k = cls_ids[keep].to(dtype=dtype)
-            n = keep.numel()
-            out[b, :n, :4] = xywh_k
-            out[b, :n, 4] = sc_k
-            out[b, :n, 5] = cl_k
-        return out
-
-    def run_inference(self, imgs: torch.Tensor) -> torch.Tensor:
-        """推理后处理 ``(B, max_det, 6)``；若 ``nms`` 为真则对解码框做按类 NMS。"""
-        out = self.model([imgs])
-        raw = self._unpack_raw_detection_output(out)
-        dets = self.postprocess_inference(raw)
-        if self.nms:
-            dets = self._apply_nms_to_detections(dets)
-        return dets
-
-    def test_step(self, batch, batch_idx):
-        net_in, net_out = batch
-        tb = self._collate_to_target_batch(net_in, net_out)
-        loss = self._compute_loss(tb)
-        self.log("test_loss", loss, on_step=False, on_epoch=True, prog_bar=True)
-        imgs = tb["img"]
-        with torch.no_grad():
-            detections = self.run_inference(imgs)
-        return {"detections": detections}
-
-    def predict_step(self, batch, batch_idx):
-        net_in, _ = batch
-        if isinstance(net_in, dict):
-            imgs = net_in["img_tv_transformed"]
-            if hasattr(imgs, "data"):
-                imgs = imgs.data
         else:
-            imgs = torch.stack(
-                [
-                    ni["img_tv_transformed"].data
-                    if hasattr(ni["img_tv_transformed"], "data")
-                    else ni["img_tv_transformed"]
-                    for ni in net_in
-                ],
-                dim=0,
-            )
-        self.eval()
-        with torch.no_grad():
-            detections = self.run_inference(imgs)
-        return {"detections": detections}
+            net_out_list = list(net_out)
 
-    def configure_optimizers(self):
-        optimizer = instantiate_class(self.model.parameters(), self.optimizer_cfg)
-        scheduler = instantiate_class(optimizer, self.lr_scheduler_cfg)
-        return {"optimizer": optimizer, "lr_scheduler": scheduler}
-
-    def _log_detection_images(self, net_in, net_out, dataset: ObjectDetectDataset, log_prefix: str):
-        if self.logger is None:
-            return
-        from torchvision.utils import make_grid
-
-        if isinstance(net_in, dict):
-            n_show = min(4, net_in["img_tv_transformed"].shape[0])
-            rows = []
-            for i in range(n_show):
-                ni = {k: net_in[k][i] for k in net_in}
-                no = (
-                    {k: net_out[k][i] for k in net_out}
-                    if isinstance(net_out, dict) and net_out
-                    else {}
-                )
-                rows.append(self._one_sample_to_viz_tensor(ni, no, dataset))
-        else:
-            n_show = min(4, len(net_in))
-            rows = []
-            for i in range(n_show):
-                rows.append(self._one_sample_to_viz_tensor(net_in[i], net_out[i], dataset))
-
-        if not rows:
-            return
-        grid = make_grid(rows, nrow=min(2, len(rows)))
-        self.logger.experiment.add_image(
-            f"{log_prefix}/sample_batch", grid, global_step=self.global_step
-        )
-
-    def _one_sample_to_viz_tensor(self, ni: dict, no: dict, dataset: ObjectDetectDataset):
-        from ..dataset.base import BaseDataset
-
-        img_t = ni["img_tv_transformed"]
-        if hasattr(img_t, "data"):
-            img_t = img_t.data
-        img_np = dataset.convert_img_from_tensor_to_numpy(img_t)
-        if no and "bboxes_xyxy_abs_tv_transformed" in no:
-            boxes = no["bboxes_xyxy_abs_tv_transformed"]
-            if hasattr(boxes, "data"):
-                boxes = boxes.data.cpu().numpy()
+        for det_row, gt in zip(detections, net_out_list):
+            pred_mask = det_row[:, 4] > conf_thres
+            pred_row = det_row[pred_mask]
+            if pred_row.numel() == 0:
+                pred_boxes = det_row.new_zeros((0, 4))
+                pred_scores = det_row.new_zeros((0,))
+                pred_labels = torch.zeros(
+                    (0,), device=det_row.device, dtype=torch.long)
             else:
-                boxes = boxes.cpu().numpy()
-            cls_ids = no["cls_tv_transformed"].cpu().numpy()
-            names = dataset.map_class_id_to_class_name or None
-            img_np = ObjectDetectDataset.draw_label_on_numpy(
-                img_np, boxes, cls_ids, class_names=names
+                pred_boxes = self._cxcywh_pixels_to_xyxy(
+                    pred_row[:, :4]).float()
+                pred_scores = pred_row[:, 4].float()
+                pred_labels = pred_row[:, 5].long()
+
+            preds.append(
+                {"boxes": pred_boxes, "scores": pred_scores, "labels": pred_labels}
             )
 
-        t = BaseDataset.convert_img_from_numpy_to_tensor_uint8(img_np)
-        return t.float() / 255.0
+            if gt and "bboxes_xyxy_abs_tv_transformed" in gt:
+                gt_boxes = gt["bboxes_xyxy_abs_tv_transformed"]
+                if hasattr(gt_boxes, "data"):
+                    gt_boxes = gt_boxes.data
+                elif hasattr(gt_boxes, "as_tensor"):
+                    gt_boxes = gt_boxes.as_tensor()
+                gt_boxes = gt_boxes.to(
+                    device=det_row.device, dtype=torch.float32)
+                gt_labels = gt["cls_tv_transformed"].to(
+                    device=det_row.device).long().reshape(-1)
+            else:
+                gt_boxes = det_row.new_zeros((0, 4), dtype=torch.float32)
+                gt_labels = torch.zeros(
+                    (0,), device=det_row.device, dtype=torch.long)
+
+            targets.append({"boxes": gt_boxes, "labels": gt_labels})
+
+        return preds, targets
+
+    def _get_postprocess_cfg(self) -> tuple[bool, float, float]:
+        trainer = getattr(self, "_trainer", None)
+        dm = getattr(trainer, "datamodule", None) if trainer is not None else None
+        if dm is None:
+            return True, 0.7, 0.001
+        for name in ("train_dataset", "val_dataset", "test_dataset", "pred_dataset"):
+            ds = getattr(dm, name, None)
+            if ds is not None:
+                return bool(ds.nms), float(ds.nms_iou), float(ds.inference_conf_thres)
+        return True, 0.7, 0.001

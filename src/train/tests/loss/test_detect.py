@@ -22,7 +22,10 @@ from ultralytics.utils.metrics import bbox_iou
 from ultralytics.utils.tal import dist2bbox as u_dist2bbox
 from ultralytics.utils.tal import make_anchors as u_make_anchors
 
-from lovely_deep_learning.dataset.object_detect import ObjectDetectDataset
+from lovely_deep_learning.dataset.object_detect import (
+    ObjectDetectDataset,
+    xyxy_abs_pixels_to_xywh_norm,
+)
 from lovely_deep_learning.loss.object_detect import (
     DetectionLossYOLOv8,
     _bbox_ciou,
@@ -33,8 +36,6 @@ from lovely_deep_learning.loss.object_detect import (
     _V8LossAdapter,
 )
 from lovely_deep_learning.model.DAGNet import DAGNet
-from lovely_deep_learning.module.object_detect import ObjectDetectModule
-
 # 与仓库内实验配置一致，便于本地跑 pytest
 _YOLO_PT = Path(__file__).resolve().parents[2] / "pretrained_models" / "yolov8n.pt"
 _YAML = Path(__file__).resolve().parents[2] / "configs" / "models" / "yolov8_n.yaml"
@@ -74,7 +75,7 @@ def _collate_object_detect_batch(
         n = int(cls_t.shape[0])
         if n == 0:
             continue
-        xywh = ObjectDetectModule._xyxy_abs_pixels_to_xywh_norm(
+        xywh = xyxy_abs_pixels_to_xywh_norm(
             boxes.float(), int(h_i), int(w_i)
         ).to(device)
         batch_idx_parts.append(

@@ -55,6 +55,10 @@ data:
     map_class_id_to_class_name: datasets/COCO8/map_class_id_to_class_name.csv
     norm_mean: null
     norm_std: null
+    # 推理后处理参数（由 Dataset 提供给 Module 使用）
+    nms: true
+    nms_iou: 0.7
+    inference_conf_thres: 0.001
     batch_size: 16
     num_workers: 4
     transform_train:
@@ -98,15 +102,21 @@ model:
       init_args:
         T_max: 100
         eta_min: 1.0e-6
-    loss:
-      box_gain: 7.5
-      cls_gain: 0.5
-      dfl_gain: 1.5
-      tal_topk: 10
-    # 推理：postprocess 后按类 batched_nms（与可视化 / test / predict 共用 run_inference）
-    nms: true
-    nms_iou: 0.7
-    inference_conf_thres: 0.001
+    criterion:
+      class_path: lovely_deep_learning.loss.object_detect.DetectionLossYOLOv8
+      init_args:
+        nc: 80
+        reg_max: 16
+        stride: [8, 16, 32]
+        box_gain: 7.5
+        cls_gain: 0.5
+        dfl_gain: 1.5
+        tal_topk: 10
+    metrics:
+      class_path: lovely_deep_learning.metric.object_detect.ObjectDetectMetric
+      init_args:
+        box_format: xyxy
+        iou_type: bbox
     model:
       model_name: yolov8_n
       pretrained: true

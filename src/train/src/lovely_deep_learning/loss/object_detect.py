@@ -374,8 +374,21 @@ class DetectionLossYOLOv8:
 
     @staticmethod
     def _feature_list(preds: Union[List[torch.Tensor], Tuple[Any, ...]]) -> List[torch.Tensor]:
-        """Detect 特征列表；若 ``preds`` 为 tuple 则取 ``preds[1]``（兼容 (aux, feats) 封装）。"""
-        return preds[1] if isinstance(preds, tuple) else preds
+        """
+        Detect 多尺度特征列表。
+
+        - ``DAGNet`` 单输出节点时返回 ``(detect_out,)``，训练态 ``detect_out`` 即为特征 list。
+        - 部分封装为 ``(aux, feats)`` 时取 ``feats``（``preds[1]``）。
+        - ``Detect`` 在 eval 下可能返回 ``(decoded, raw_feats)``，损失需要 ``raw_feats``。
+        """
+        if not isinstance(preds, tuple):
+            return preds
+        if len(preds) == 1:
+            inner = preds[0]
+            if isinstance(inner, tuple) and len(inner) == 2:
+                return inner[1]
+            return inner
+        return preds[1]
 
     @staticmethod
     def merge_multiscale_detect_features_to_flat_anchor_tensor(feats: List[torch.Tensor], no: int) -> torch.Tensor:

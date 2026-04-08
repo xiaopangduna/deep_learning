@@ -140,6 +140,9 @@ class COCO8DataModule(ObjectDetectDataModule):
         map_class_id_to_class_name=None,
         norm_mean=None,
         norm_std=None,
+        nms: bool = True,
+        nms_iou: float = 0.7,
+        inference_conf_thres: float = 0.001,
         dataset_dir: str = "datasets/COCO8/coco8",
         download_url: str | None = None,
     ):
@@ -156,6 +159,8 @@ class COCO8DataModule(ObjectDetectDataModule):
             各 ``DataLoader`` 批量与 worker 数。
         key_map, predict_key_map, map_class_id_to_class_name, norm_mean, norm_std
             目标检测 DataModule 与 Dataset 共用配置；语义见 ``ObjectDetectDataModule``。
+        nms, nms_iou, inference_conf_thres
+            推理后处理参数，传给 ``ObjectDetectDataset`` 并在 Module 中复用。
         dataset_dir : str or pathlib.Path
             COCO8 解压后的根目录（含 ``images/``、``labels/``）。zip 下载至其父目录并解压到该父目录下。
         download_url
@@ -167,6 +172,9 @@ class COCO8DataModule(ObjectDetectDataModule):
             map_class_id_to_class_name=map_class_id_to_class_name,
             norm_mean=norm_mean,
             norm_std=norm_std,
+            nms=nms,
+            nms_iou=nms_iou,
+            inference_conf_thres=inference_conf_thres,
             train_csv_paths=train_csv_paths,
             val_csv_paths=val_csv_paths,
             test_csv_paths=test_csv_paths,

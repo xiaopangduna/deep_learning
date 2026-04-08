@@ -11,7 +11,7 @@ import torch
 
 from ..dataset.object_detect import (
     ObjectDetectDataset,
-    _greedy_match_pred_gt_iou,
+    greedy_match_pred_gt_iou,
 )
 
 
@@ -171,7 +171,7 @@ class ObjectDetectCallback(pl.Callback):
             pred_order = (
                 np.argsort(-pred_score) if pred_xyxy.shape[0] else None
             )
-            pred_ok, gt_ok = _greedy_match_pred_gt_iou(
+            pred_ok, gt_ok = greedy_match_pred_gt_iou(
                 pred_xyxy.astype(np.float32),
                 pred_cls.astype(np.int32),
                 boxes.astype(np.float32),
