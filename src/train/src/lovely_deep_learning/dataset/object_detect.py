@@ -228,6 +228,51 @@ class ObjectDetectDataset(BaseDataset):
         return net_in, net_out
 
     @staticmethod
+    def get_collate_fn_for_dataloader():
+        def collate_fn(x):
+            net_in_tuple, net_out_tuple = list(zip(*x))
+            net_in_list: list[Dict[str, Any]] = []
+            net_out_list: list[Dict[str, Any]] = []
+            for i, (ni0, no0) in enumerate(zip(net_in_tuple, net_out_tuple)):
+                ni = dict(ni0)
+                img_t = (
+                    ni["img_tv_transformed"].data
+                    if hasattr(ni["img_tv_transformed"], "data")
+                    else ni["img_tv_transformed"]
+                )
+                ni["img"] = img_t
+                if not no0:
+                    net_in_list.append(ni)
+                    net_out_list.append({})
+                    continue
+                no = dict(no0)
+                _c, h_i, w_i = img_t.shape
+                cls_t = no["cls_tv_transformed"]
+                boxes = no["bboxes_xyxy_abs_tv_transformed"]
+                if hasattr(boxes, "data"):
+                    boxes = boxes.data
+                elif hasattr(boxes, "as_tensor"):
+                    boxes = boxes.as_tensor()
+                n = int(cls_t.shape[0])
+                if n == 0:
+                    net_in_list.append(ni)
+                    net_out_list.append(no)
+                    continue
+                xywh = xyxy_abs_pixels_to_xywh_norm(
+                    boxes.float(), int(h_i), int(w_i)
+                )
+                device = xywh.device
+                no["batch_idx"] = torch.full(
+                    (n,), float(i), device=device, dtype=torch.float32
+                )
+                no["bboxes_xywh_norm"] = xywh
+                net_in_list.append(ni)
+                net_out_list.append(no)
+            return (tuple(net_in_list), tuple(net_out_list))
+
+        return collate_fn
+
+    @staticmethod
     def draw_label_on_numpy(
         image: np.ndarray,
         bboxes: np.ndarray,

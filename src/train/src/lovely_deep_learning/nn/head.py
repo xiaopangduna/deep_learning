@@ -146,8 +146,8 @@ class Detect(nn.Module):
 
     def forward(self, x: List[torch.Tensor]) -> Union[List[torch.Tensor], Tuple]:
         """Concatenate and return predicted bounding boxes and class probabilities."""
-        if self.end2end:
-            return self.forward_end2end(x)
+        # if self.end2end:
+        #     return self.forward_end2end(x)
 
         for i in range(self.nl):
             x[i] = torch.cat((self.cv2[i](x[i]), self.cv3[i](x[i])), 1)

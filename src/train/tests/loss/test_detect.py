@@ -22,10 +22,7 @@ from ultralytics.utils.metrics import bbox_iou
 from ultralytics.utils.tal import dist2bbox as u_dist2bbox
 from ultralytics.utils.tal import make_anchors as u_make_anchors
 
-from lovely_deep_learning.dataset.object_detect import (
-    ObjectDetectDataset,
-    xyxy_abs_pixels_to_xywh_norm,
-)
+from lovely_deep_learning.dataset.object_detect import ObjectDetectDataset
 from lovely_deep_learning.loss.object_detect import (
     DetectionLossYOLOv8,
     _bbox_ciou,
@@ -42,59 +39,6 @@ _YAML = Path(__file__).resolve().parents[2] / "configs" / "models" / "yolov8_n.y
 _COCO_ROOT = Path(__file__).resolve().parents[2] / "datasets" / "COCO8"
 _COCO_TRAIN_CSV = _COCO_ROOT / "train.csv"
 _COCO_MAP = _COCO_ROOT / "map_class_id_to_class_name.csv"
-
-
-def _collate_object_detect_batch(
-    net_in_list: list, net_out_list: list
-) -> dict[str, torch.Tensor]:
-    """与 ``ObjectDetectModule._collate_to_target_batch`` 列表分支一致（供测试构造 batch）。"""
-    img_batch = torch.stack(
-        [
-            ni["img_tv_transformed"].data
-            if hasattr(ni["img_tv_transformed"], "data")
-            else ni["img_tv_transformed"]
-            for ni in net_in_list
-        ],
-        dim=0,
-    )
-    device = img_batch.device
-    batch_idx_parts: list[torch.Tensor] = []
-    cls_parts: list[torch.Tensor] = []
-    bbox_parts: list[torch.Tensor] = []
-
-    for i, (ni, no) in enumerate(zip(net_in_list, net_out_list)):
-        _c, h_i, w_i = img_batch[i].shape
-        if not no:
-            continue
-        cls_t = no["cls_tv_transformed"]
-        boxes = no["bboxes_xyxy_abs_tv_transformed"]
-        if hasattr(boxes, "data"):
-            boxes = boxes.data
-        elif hasattr(boxes, "as_tensor"):
-            boxes = boxes.as_tensor()
-        n = int(cls_t.shape[0])
-        if n == 0:
-            continue
-        xywh = xyxy_abs_pixels_to_xywh_norm(
-            boxes.float(), int(h_i), int(w_i)
-        ).to(device)
-        batch_idx_parts.append(
-            torch.full((n,), float(i), device=device, dtype=torch.float32)
-        )
-        cls_parts.append(cls_t.float().to(device).reshape(-1))
-        bbox_parts.append(xywh)
-
-    if not cls_parts:
-        z = img_batch.new_zeros((0,), dtype=torch.float32)
-        z4 = img_batch.new_zeros((0, 4), dtype=torch.float32)
-        return {"img": img_batch, "batch_idx": z, "cls": z, "bboxes": z4}
-
-    return {
-        "img": img_batch,
-        "batch_idx": torch.cat(batch_idx_parts, dim=0),
-        "cls": torch.cat(cls_parts, dim=0),
-        "bboxes": torch.cat(bbox_parts, dim=0),
-    }
 
 
 def test_ciou_matches_ultralytics_bbox_iou_xyxy():
@@ -253,7 +197,12 @@ def test_detect_loss_matches_v8_detection_loss_coco8():
     )
     assert len(ds) >= 2, "COCO8 train.csv should have at least 2 samples"
     s0, s1 = ds[0], ds[1]
-    batch = _collate_object_detect_batch([s0[0], s1[0]], [s0[1], s1[1]])
+    collate = ObjectDetectDataset.get_collate_fn_for_dataloader()
+    net_in, net_out = collate([s0, s1])
+    imgs = torch.stack([item["img"] for item in net_in], dim=0)
+    # v8DetectionLoss 期望 batch dict 中含展平后的 batch_idx/cls/bboxes；我们复用自研 loss 的内部展平逻辑。
+    flat = DetectionLossYOLOv8._flatten_collated_net_out_for_loss(net_out, imgs.device)
+    batch = {"img": imgs, **flat}
     img = batch["img"]
     preds = dag([img])[0]
 
@@ -270,9 +219,7 @@ def test_detect_loss_matches_v8_detection_loss_coco8():
     )
     loss_vec_ours = crit_ours.forward_loss_vec(
         preds,
-        batch_idx=batch["batch_idx"],
-        cls=batch["cls"],
-        bboxes=batch["bboxes"],
+        net_out=net_out,
     )
 
     adapter = _V8LossAdapter(dag, hyp)

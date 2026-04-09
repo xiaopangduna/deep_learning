@@ -16,8 +16,9 @@ from typing import Any
 
 from lovely_deep_learning.model.DAGNet import DAGNet
 
-from ..dataset.object_detect import postprocess_detections, xyxy_abs_pixels_to_xywh_norm
-
+from ..dataset.object_detect import postprocess_detections
+from ..loss.object_detect import DetectionLossYOLOv8
+from ..metric.object_detect import ObjectDetectMetric
 
 class ObjectDetectModule(pl.LightningModule):
     def __init__(
@@ -48,8 +49,8 @@ class ObjectDetectModule(pl.LightningModule):
                 "`model` config is required (DAGNet / yolov8_n.yaml 字段).")
 
         self.model = DAGNet(**model)
-        self.criterion = criterion
-        self.metrics = metrics
+        self.criterion: DetectionLossYOLOv8 = criterion
+        self.metrics: ObjectDetectMetric = metrics
 
         last_name = self.model.layers_config[-1]["name"]
         self._detect = self.model.layers[last_name]
@@ -59,16 +60,30 @@ class ObjectDetectModule(pl.LightningModule):
         return self.model([x])
 
     def training_step(self, batch, batch_idx):
+        # batch: (net_in, net_out)，长度均为 B（batch size）；与 DataLoader 中样本顺序一致。
         net_in, net_out = batch
-        tb = self._collate_to_target_batch(net_in, net_out)
-        preds = self.model([tb["img"]])
-        loss = self.criterion(
-            preds,
-            batch_idx=tb["batch_idx"],
-            cls=tb["cls"],
-            bboxes=tb["bboxes"],
-        )
-        bs = tb["img"].shape[0]
+        # imgs: (B, C, H, W)，与 net_in[i]["img"] 单张 (C, H, W) 沿 batch 维 stack。
+        imgs = torch.stack([item["img"] for item in net_in], dim=0)
+        preds = self.model([imgs])
+        loss = self.criterion(preds, net_out=net_out)
+        bs = imgs.shape[0]  # B
+
+        # 训练态 Detect.forward 返回多尺度特征 list；可直接调用 Detect._inference 解码，
+        # 避免为记录 mAP 再做一次 eval 前向。
+        train_feats = self._unpack_raw_detection_output(preds)
+        with torch.no_grad():
+            raw = self._detect._inference([t.detach() for t in train_feats])
+            nms, nms_iou, conf_thres = self._get_postprocess_cfg()
+            detections = postprocess_detections(
+                raw=raw,
+                max_det=self._detect.max_det,
+                nc=self._detect.nc,
+                nms=nms,
+                conf_thres=conf_thres,
+                nms_iou=nms_iou,
+            )
+            preds_map, targets_map = self._build_map_inputs(detections, net_out)
+            self.metrics.update("train", preds_map, targets_map)
 
         self.log(
             "train_loss",
@@ -80,17 +95,17 @@ class ObjectDetectModule(pl.LightningModule):
         )
         return loss
 
+    def on_train_epoch_end(self):
+        metrics = self.metrics.compute("train")
+        self.log("train_map", metrics["map"], prog_bar=True, on_step=False, on_epoch=True)
+        self.metrics.reset("train")
+
     def validation_step(self, batch, batch_idx):
         net_in, net_out = batch
-        tb = self._collate_to_target_batch(net_in, net_out)
-        preds_for_loss = self.model([tb["img"]])
-        loss = self.criterion(
-            preds_for_loss,
-            batch_idx=tb["batch_idx"],
-            cls=tb["cls"],
-            bboxes=tb["bboxes"],
-        )
-        bs = tb["img"].shape[0]
+        imgs = torch.stack([item["img"] for item in net_in], dim=0)
+        preds_for_loss = self.model([imgs])
+        loss = self.criterion(preds_for_loss, net_out=net_out)
+        bs = imgs.shape[0]
 
         self.log(
             "val_loss",
@@ -116,14 +131,9 @@ class ObjectDetectModule(pl.LightningModule):
 
     def test_step(self, batch, batch_idx):
         net_in, net_out = batch
-        tb = self._collate_to_target_batch(net_in, net_out)
-        preds_for_loss = self.model([tb["img"]])
-        loss = self.criterion(
-            preds_for_loss,
-            batch_idx=tb["batch_idx"],
-            cls=tb["cls"],
-            bboxes=tb["bboxes"],
-        )
+        imgs = torch.stack([item["img"] for item in net_in], dim=0)
+        preds_for_loss = self.model([imgs])
+        loss = self.criterion(preds_for_loss, net_out=net_out)
         self.log("test_loss", loss, on_step=False,
                  on_epoch=True, prog_bar=True)
         raw = self._unpack_raw_detection_output(preds_for_loss)
@@ -141,21 +151,8 @@ class ObjectDetectModule(pl.LightningModule):
         return {"detections": detections}
 
     def predict_step(self, batch, batch_idx):
-        net_in, _ = batch
-        if isinstance(net_in, dict):
-            imgs = net_in["img_tv_transformed"]
-            if hasattr(imgs, "data"):
-                imgs = imgs.data
-        else:
-            imgs = torch.stack(
-                [
-                    ni["img_tv_transformed"].data
-                    if hasattr(ni["img_tv_transformed"], "data")
-                    else ni["img_tv_transformed"]
-                    for ni in net_in
-                ],
-                dim=0,
-            )
+        net_in, _net_out = batch
+        imgs = torch.stack([item["img"] for item in net_in], dim=0)
         self.eval()
         with torch.no_grad():
             out = self.model([imgs])
@@ -212,72 +209,6 @@ class ObjectDetectModule(pl.LightningModule):
     # -----------------------------
     # Loss / metric input builders
     # -----------------------------
-    def _collate_to_target_batch(self, net_in: Any, net_out: Any) -> dict[str, torch.Tensor]:
-        if isinstance(net_in, dict):
-            img_batch = net_in["img_tv_transformed"]
-            if hasattr(img_batch, "data"):
-                img_batch = img_batch.data
-            batch_size = img_batch.shape[0]
-            net_in_list = [{k: net_in[k][i] for k in net_in}
-                           for i in range(batch_size)]
-            net_out_list = (
-                [{k: net_out[k][i] for k in net_out}
-                    for i in range(batch_size)]
-                if isinstance(net_out, dict) and net_out
-                else [{} for _ in range(batch_size)]
-            )
-        else:
-            net_in_list = list(net_in)
-            net_out_list = list(net_out)
-            img_batch = torch.stack(
-                [
-                    ni["img_tv_transformed"].data
-                    if hasattr(ni["img_tv_transformed"], "data")
-                    else ni["img_tv_transformed"]
-                    for ni in net_in_list
-                ],
-                dim=0,
-            )
-
-        device = img_batch.device
-        batch_idx_parts: list[torch.Tensor] = []
-        cls_parts: list[torch.Tensor] = []
-        bbox_parts: list[torch.Tensor] = []
-
-        for i, (_ni, no) in enumerate(zip(net_in_list, net_out_list)):
-            _c, h_i, w_i = img_batch[i].shape
-            if not no:
-                continue
-            cls_t = no["cls_tv_transformed"]
-            boxes = no["bboxes_xyxy_abs_tv_transformed"]
-            if hasattr(boxes, "data"):
-                boxes = boxes.data
-            elif hasattr(boxes, "as_tensor"):
-                boxes = boxes.as_tensor()
-            n = int(cls_t.shape[0])
-            if n == 0:
-                continue
-            xywh = xyxy_abs_pixels_to_xywh_norm(
-                boxes.float(), int(h_i), int(w_i)
-            ).to(device)
-            batch_idx_parts.append(
-                torch.full((n,), float(i), device=device, dtype=torch.float32)
-            )
-            cls_parts.append(cls_t.float().to(device).reshape(-1))
-            bbox_parts.append(xywh)
-
-        if not cls_parts:
-            z = img_batch.new_zeros((0,), dtype=torch.float32)
-            z4 = img_batch.new_zeros((0, 4), dtype=torch.float32)
-            return {"img": img_batch, "batch_idx": z, "cls": z, "bboxes": z4}
-
-        return {
-            "img": img_batch,
-            "batch_idx": torch.cat(batch_idx_parts, dim=0),
-            "cls": torch.cat(cls_parts, dim=0),
-            "bboxes": torch.cat(bbox_parts, dim=0),
-        }
-
     def _build_map_inputs(
         self, detections: torch.Tensor, net_out: Any
     ) -> tuple[list[dict[str, torch.Tensor]], list[dict[str, torch.Tensor]]]:

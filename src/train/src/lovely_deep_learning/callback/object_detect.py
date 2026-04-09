@@ -241,7 +241,7 @@ class ObjectDetectCallback(pl.Callback):
         if self.save_dir is None or outputs is None:
             return
         dataset: ObjectDetectDataset = trainer.predict_dataloaders.dataset
-        net_in, _ = batch
+        net_in, _net_out = batch
         detections = outputs["detections"]
 
         if isinstance(net_in, dict):
