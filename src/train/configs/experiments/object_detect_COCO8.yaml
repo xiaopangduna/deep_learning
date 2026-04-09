@@ -113,8 +113,15 @@ model:
         dfl_gain: 1.5
         tal_topk: 10
     metrics:
-      class_path: lovely_deep_learning.metric.object_detect.ObjectDetectMetric
+      class_path: lovely_deep_learning.metric.object_detect.ObjectDetectYOLOMetric
       init_args:
+        nc: 80
+        reg_max: 16
+        stride: [8, 16, 32]
+        max_det: 300
+        nms: true
+        nms_iou: 0.7
+        inference_conf_thres: 0.001
         box_format: xyxy
         iou_type: bbox
     model:
