@@ -160,17 +160,11 @@ class ObjectDetectDataset(BaseDataset):
         map_class_id_to_class_name: Optional[Union[Dict[Any, str], str]] = None,
         norm_mean: Optional[List[float]] = None,
         norm_std: Optional[List[float]] = None,
-        nms: bool = True,
-        nms_iou: float = 0.7,
-        inference_conf_thres: float = 0.001,
     ):
         super().__init__(csv_paths=csv_paths, key_map=key_map, transform=transform)
         self.map_class_id_to_class_name = map_class_id_to_class_name
         self.norm_mean = norm_mean
         self.norm_std = norm_std
-        self.nms = bool(nms)
-        self.nms_iou = float(nms_iou)
-        self.inference_conf_thres = float(inference_conf_thres)
         self._has_label = "object_label_path" in self.sample_path_table.columns
 
     def __getitem__(self, index: int) -> Tuple[Dict[str, Any], Dict[str, Any]]:
@@ -246,7 +240,6 @@ class ObjectDetectDataset(BaseDataset):
                     net_out_list.append({})
                     continue
                 no = dict(no0)
-                _c, h_i, w_i = img_t.shape
                 cls_t = no["cls_tv_transformed"]
                 boxes = no["bboxes_xyxy_abs_tv_transformed"]
                 if hasattr(boxes, "data"):
@@ -258,14 +251,10 @@ class ObjectDetectDataset(BaseDataset):
                     net_in_list.append(ni)
                     net_out_list.append(no)
                     continue
-                xywh = xyxy_abs_pixels_to_xywh_norm(
-                    boxes.float(), int(h_i), int(w_i)
-                )
-                device = xywh.device
+                device = boxes.device if hasattr(boxes, "device") else torch.device("cpu")
                 no["batch_idx"] = torch.full(
                     (n,), float(i), device=device, dtype=torch.float32
                 )
-                no["bboxes_xywh_norm"] = xywh
                 net_in_list.append(ni)
                 net_out_list.append(no)
             return (tuple(net_in_list), tuple(net_out_list))

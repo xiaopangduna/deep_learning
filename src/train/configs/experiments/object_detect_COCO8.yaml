@@ -3,22 +3,22 @@
 # 数据首次运行会由 COCO8DataModule.prepare_data 下载 coco8.zip 并生成 CSV / 类别映射表
 
 trainer:
-  max_epochs: 20
+  max_epochs: 10
   accelerator: auto
   callbacks:
-    - class_path: lovely_deep_learning.callback.object_detect.ObjectDetectCallback
+    - class_path: lovely_deep_learning.callback.object_detect.SaveObjectDetectVisualizationCallback
       init_args:
         save_dir: tmp
         test_only_save_mistake: false
         conf_thres: 0.25
         match_iou_thres: 0.5
-    - class_path: lightning.pytorch.callbacks.EarlyStopping
-      init_args:
-        monitor: "val_loss"
-        min_delta: 0.0
-        patience: 15
-        verbose: true
-        mode: min
+    # - class_path: lightning.pytorch.callbacks.EarlyStopping
+    #   init_args:
+    #     monitor: "val_loss"
+    #     min_delta: 0.0
+    #     patience: 15
+    #     verbose: true
+    #     mode: min
     - class_path: lightning.pytorch.callbacks.ModelCheckpoint
       init_args:
         monitor: "val_loss"
@@ -26,6 +26,11 @@ trainer:
         save_top_k: 1
         save_last: true
         mode: min
+    - class_path: lightning.pytorch.callbacks.LearningRateMonitor
+      init_args:
+        logging_interval: epoch   # 可选: "step" / "epoch" / null
+        log_momentum: false      # 是否记录 momentum（一般不用）
+        log_weight_decay: false  # 是否记录 weight decay
 
   logger:
     - class_path: lightning.pytorch.loggers.TensorBoardLogger
@@ -33,11 +38,11 @@ trainer:
         save_dir: logs
         name: object_detect_COCO8
         version: null
-  profiler:
-    class_path: lightning.pytorch.profilers.SimpleProfiler
-    init_args:
-      filename: profiler
-      extended: true
+  # profiler:
+  #   class_path: lightning.pytorch.profilers.SimpleProfiler
+  #   init_args:
+  #     filename: profiler
+  #     extended: true
 
 data:
   class_path: lovely_deep_learning.data_module.coco8.COCO8DataModule
@@ -55,10 +60,6 @@ data:
     map_class_id_to_class_name: datasets/COCO8/map_class_id_to_class_name.csv
     norm_mean: null
     norm_std: null
-    # 推理后处理参数（由 Dataset 提供给 Module 使用）
-    nms: true
-    nms_iou: 0.7
-    inference_conf_thres: 0.001
     batch_size: 16
     num_workers: 4
     transform_train:
@@ -112,8 +113,8 @@ model:
         cls_gain: 0.5
         dfl_gain: 1.5
         tal_topk: 10
-    metrics:
-      class_path: lovely_deep_learning.metric.object_detect.ObjectDetectYOLOMetric
+    postprocess:
+      class_path: lovely_deep_learning.postprocess.yolov8.YOLOv8PostProcessor
       init_args:
         nc: 80
         reg_max: 16
@@ -122,6 +123,11 @@ model:
         nms: true
         nms_iou: 0.7
         inference_conf_thres: 0.001
+        # 须与下方 metrics.init_args.box_format 一致（仅 preds；targets 由 metric 从 net_out 转换）
+        map_pred_box_format: xyxy
+    metrics:
+      class_path: lovely_deep_learning.metric.object_detect.ObjectDetectMetric
+      init_args:
         box_format: xyxy
         iou_type: bbox
     model:

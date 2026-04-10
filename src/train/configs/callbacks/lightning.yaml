@@ -23,3 +23,8 @@
         steps_per_trial: 2     # 每个 batch 跑几步
         max_trials: 10         # 最大尝试次数
         batch_arg_name: batch_size
+    - class_path: lightning.pytorch.callbacks.LearningRateMonitor
+      init_args:
+        logging_interval: epoch   # 可选: "step" / "epoch" / null
+        log_momentum: false      # 是否记录 momentum（一般不用）
+        log_weight_decay: false  # 是否记录 weight decay

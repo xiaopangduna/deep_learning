@@ -1,12 +1,3 @@
-"""
-基于 ``DAGNet`` + ``configs/models/yolov8_n.yaml`` 的目标检测 Lightning 模块；
-损失为 :class:`~lovely_deep_learning.loss.object_detect.DetectionLossYOLOv8`（
-自研前向，与 Ultralytics ``v8DetectionLoss`` 公式对齐；便于对照源码与论文）。
-
-数据侧使用 ``lovely_deep_learning.data_module.object_detect.ObjectDetectDataModule``。
-实验 YAML 中请将 ``model.class_path`` 指向本模块的 ``ObjectDetectModule``。
-"""
-
 from __future__ import annotations
 
 import lightning.pytorch as pl
@@ -17,7 +8,8 @@ from typing import Any
 from lovely_deep_learning.model.DAGNet import DAGNet
 
 from ..loss.object_detect import DetectionLossYOLOv8
-from ..metric.object_detect import ObjectDetectYOLOMetric
+from ..metric.object_detect import ObjectDetectMetric
+from ..postprocess.yolov8 import YOLOv8PostProcessor
 
 
 class ObjectDetectModule(pl.LightningModule):
@@ -27,6 +19,7 @@ class ObjectDetectModule(pl.LightningModule):
         optimizer: dict[str, Any] | None = None,
         lr_scheduler: dict[str, Any] | None = None,
         criterion: Any = None,
+        postprocess: Any = None,
         metrics: Any = None,
     ):
         super().__init__()
@@ -44,27 +37,33 @@ class ObjectDetectModule(pl.LightningModule):
         if criterion is None:
             raise ValueError(
                 "`criterion` config is required in YAML (model.init_args.criterion).")
+        if postprocess is None:
+            raise ValueError(
+                "`postprocess` config is required in YAML (model.init_args.postprocess).")
         if metrics is None:
             raise ValueError(
                 "`metrics` config is required in YAML (model.init_args.metrics).")
 
         self.model: DAGNet = DAGNet(**model)
         self.criterion: DetectionLossYOLOv8 = criterion
-        self.metrics: ObjectDetectYOLOMetric = metrics
+        self.postprocess: YOLOv8PostProcessor = postprocess
+        self.metrics: ObjectDetectMetric = metrics
 
     def forward(self, x: torch.Tensor):
         return self.model([x])
 
     def training_step(self, batch, batch_idx):
         net_in, net_out = batch
-        imgs = torch.stack([item["img_tv_transformed"] for item in net_in], dim=0)
+        imgs = torch.stack([item["img_tv_transformed"]
+                           for item in net_in], dim=0)
         batch_size = imgs.shape[0]
 
         preds = self.model([imgs])
-        loss = self.criterion(preds, net_out=net_out)
+        loss = self.criterion(preds, net_out=net_out, net_in=net_in)
 
         with torch.inference_mode():
-            self.metrics.update("train", preds, net_out)
+            map_preds = self.postprocess.dag_out_to_mean_ap_preds(preds)
+            self.metrics.update("train", map_preds, net_out)
 
         self.log("train_loss", loss, batch_size=batch_size,
                  on_step=False, on_epoch=True, prog_bar=True)
@@ -78,14 +77,16 @@ class ObjectDetectModule(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         net_in, net_out = batch
-        imgs = torch.stack([item["img_tv_transformed"] for item in net_in], dim=0)
+        imgs = torch.stack([item["img_tv_transformed"]
+                           for item in net_in], dim=0)
         batch_size = imgs.shape[0]
 
         preds = self.model([imgs])
-        loss = self.criterion(preds, net_out=net_out)
+        loss = self.criterion(preds, net_out=net_out, net_in=net_in)
 
         with torch.inference_mode():
-            self.metrics.update("val", preds, net_out)
+            map_preds = self.postprocess.dag_out_to_mean_ap_preds(preds)
+            self.metrics.update("val", map_preds, net_out)
 
         self.log("val_loss", loss, batch_size=batch_size,
                  on_step=False, on_epoch=True, prog_bar=True)
@@ -98,20 +99,19 @@ class ObjectDetectModule(pl.LightningModule):
 
     def test_step(self, batch, batch_idx):
         net_in, net_out = batch
-        imgs = torch.stack([item["img_tv_transformed"] for item in net_in], dim=0)
+        imgs = torch.stack([item["img_tv_transformed"]
+                           for item in net_in], dim=0)
         batch_size = imgs.shape[0]
 
         preds = self.model([imgs])
-        loss = self.criterion(preds, net_out=net_out)
+        loss = self.criterion(preds, net_out=net_out, net_in=net_in)
 
         with torch.inference_mode():
-            detections = self.metrics.to_detections(preds)
-            self.metrics.update("test", preds, net_out, detections=detections)
+            map_preds = self.postprocess.dag_out_to_mean_ap_preds(preds)
+            self.metrics.update("test", map_preds, net_out)
 
         self.log("test_loss", loss, batch_size=batch_size,
                  on_step=False, on_epoch=True, prog_bar=True)
-
-        return {"detections": detections}
 
     def on_test_epoch_end(self):
         metrics = self.metrics.compute("test")
@@ -124,7 +124,7 @@ class ObjectDetectModule(pl.LightningModule):
         imgs = torch.stack([item["img"] for item in net_in], dim=0)
         with torch.inference_mode():
             out = self.model([imgs])
-            detections = self.metrics.to_detections(out)
+            detections = self.postprocess.dag_out_to_detections(out)
         return {"detections": detections}
 
     def configure_optimizers(self):

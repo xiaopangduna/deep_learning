@@ -30,6 +30,8 @@ from ultralytics.utils import DEFAULT_CFG
 from ultralytics.utils.metrics import bbox_iou
 from ultralytics.utils.tal import TaskAlignedAssigner, bbox2dist
 
+from ..dataset.object_detect import xyxy_abs_pixels_to_xywh_norm
+
 
 def merge_yolov8_hyp_args(
     box_gain: float | None,
@@ -374,16 +376,19 @@ class DetectionLossYOLOv8:
 
     @staticmethod
     def _flatten_collated_net_out_for_loss(
-        net_out: Sequence[Dict[str, Any]], device: torch.device
+        net_out: Sequence[Dict[str, Any]],
+        device: torch.device,
+        net_in: Sequence[Dict[str, Any]] | None = None,
     ) -> dict[str, torch.Tensor]:
         """将 DataLoader `collate_fn` 写入的逐图 `net_out` 展平为损失输入。
 
         约定与 `ObjectDetectDataset.get_collate_fn_for_dataloader` 一致：
-        - `net_out[i] == {}` 或缺少 `batch_idx`：跳过；
-        - 有目标时必须包含：
-          - `batch_idx`: (n_i,)
-          - `cls_tv_transformed`: (n_i,) 或 (n_i, 1)
-          - `bboxes_xywh_norm`: (n_i, 4)
+        - `collate_fn` 仅对带标签样本额外写入 `batch_idx`；
+        - `net_out[i]` 须含 `cls_tv_transformed` 与 `bboxes_xyxy_abs_tv_transformed`；
+        - 归一化 xywh 在损失内由 xyxy 像素框与对应 `net_in[i]["img"]` 尺寸计算（若传入
+          `bboxes_xywh_norm` 则优先使用，兼容旧接口）。
+
+        参数 `net_in` 与 `net_out` 逐样本对齐；从 `net_out` 展平时必须传入。
         """
         dtype = torch.float32
         batch_idx_parts: list[torch.Tensor] = []
@@ -395,25 +400,53 @@ class DetectionLossYOLOv8:
             if "batch_idx" not in no:
                 continue
             cls_t = no.get("cls_tv_transformed")
-            bbox_n = no.get("bboxes_xywh_norm")
             bi = no["batch_idx"]
-            if cls_t is None or bbox_n is None:
+            if cls_t is None:
                 raise KeyError(
-                    f"net_out[{i}] 含 batch_idx 但缺少 cls_tv_transformed 或 bboxes_xywh_norm；"
+                    f"net_out[{i}] 含 batch_idx 但缺少 cls_tv_transformed；"
                     f"keys={list(no.keys())!r}"
+                )
+            bbox_n = no.get("bboxes_xywh_norm")
+            if bbox_n is None:
+                boxes_xyxy = no.get("bboxes_xyxy_abs_tv_transformed")
+                if boxes_xyxy is None:
+                    raise KeyError(
+                        f"net_out[{i}] 缺少 bboxes_xywh_norm 与 bboxes_xyxy_abs_tv_transformed 二者之一；"
+                        f"keys={list(no.keys())!r}"
+                    )
+                if net_in is None or i >= len(net_in):
+                    raise ValueError(
+                        "从 xyxy 像素框展平 GT 时必须传入与 net_out 对齐的 net_in（含每样本 img）"
+                    )
+                ni = net_in[i]
+                img_t = ni.get("img")
+                if img_t is None:
+                    raise KeyError(
+                        f"net_in[{i}] 缺少 img，无法将 bboxes_xyxy_abs_tv_transformed 转为归一化 xywh"
+                    )
+                if hasattr(img_t, "shape"):
+                    _c, h_i, w_i = img_t.shape[-3], img_t.shape[-2], img_t.shape[-1]
+                else:
+                    raise TypeError(f"net_in[{i}][\"img\"] 须为张量，收到 {type(img_t)!r}")
+                if hasattr(boxes_xyxy, "data"):
+                    boxes_xyxy = boxes_xyxy.data
+                elif hasattr(boxes_xyxy, "as_tensor"):
+                    boxes_xyxy = boxes_xyxy.as_tensor()
+                bbox_n = xyxy_abs_pixels_to_xywh_norm(
+                    boxes_xyxy.float(), int(h_i), int(w_i)
                 )
             n_cls = int(cls_t.shape[0])
             n_bi = int(bi.shape[0])
             n_bb = int(bbox_n.shape[0])
             if n_cls != n_bi or n_cls != n_bb:
                 raise ValueError(
-                    f"net_out[{i}] 长度不一致：cls={n_cls}, batch_idx={n_bi}, bboxes_xywh_norm={n_bb}"
+                    f"net_out[{i}] 长度不一致：cls={n_cls}, batch_idx={n_bi}, bboxes={n_bb}"
                 )
             if n_cls == 0:
                 continue
             if bbox_n.dim() != 2 or bbox_n.shape[-1] != 4:
                 raise ValueError(
-                    f"net_out[{i}] bboxes_xywh_norm 期望 (n, 4)，收到 {tuple(bbox_n.shape)}"
+                    f"net_out[{i}] 归一化 bboxes 期望 (n, 4)，收到 {tuple(bbox_n.shape)}"
                 )
             batch_idx_parts.append(bi.to(device=device, dtype=dtype))
             cls_parts.append(cls_t.float().to(device=device).reshape(-1))
@@ -595,11 +628,15 @@ class DetectionLossYOLOv8:
         bboxes: torch.Tensor | None = None,
         *,
         net_out: Sequence[Dict[str, Any]] | None = None,
+        net_in: Sequence[Dict[str, Any]] | None = None,
     ) -> torch.Tensor:
         """
         返回 ``(3,)``：**[box, cls, dfl]**，已乘 ``hyp.*`` 与 ``batch_size``（与 v8 一致）。
 
         形状：``B`` batch，``no=nc+4*reg_max``，``A=Σ_i H_i W_i``，``N`` GT 条数，``n_max`` 单图 GT 上限。
+
+        使用 ``net_out`` 时须同时传入 ``net_in``（与 DataLoader 的 ``(net_in, net_out)`` 对齐），
+        以便由 ``bboxes_xyxy_abs_tv_transformed`` 与 ``img`` 尺寸得到归一化 xywh。
         """
         # feats: List[(B, no, H_i, W_i)]
         feats = self._feature_list(preds)
@@ -625,7 +662,9 @@ class DetectionLossYOLOv8:
         # 1) 直接传 batch_idx/cls/bboxes（旧接口）
         # 2) 传 net_out（由 DataLoader collate 得到），由 loss 内部完成展平
         if net_out is not None:
-            flat = self._flatten_collated_net_out_for_loss(net_out, device)
+            flat = self._flatten_collated_net_out_for_loss(
+                net_out, device, net_in=net_in
+            )
             batch_idx = flat["batch_idx"]
             cls = flat["cls"]
             bboxes = flat["bboxes"]
@@ -693,6 +732,7 @@ class DetectionLossYOLOv8:
         cls: torch.Tensor | None = None,
         bboxes: torch.Tensor | None = None,
         net_out: Sequence[Dict[str, Any]] | None = None,
+        net_in: Sequence[Dict[str, Any]] | None = None,
     ) -> torch.Tensor:
         """标量总损失，等价于 ``forward_loss_vec(...).sum()``。"""
         if not isinstance(preds, list) and not isinstance(preds, tuple):
@@ -703,6 +743,7 @@ class DetectionLossYOLOv8:
             cls=cls,
             bboxes=bboxes,
             net_out=net_out,
+            net_in=net_in,
         ).sum()
 
 

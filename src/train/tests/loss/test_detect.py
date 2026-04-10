@@ -201,7 +201,9 @@ def test_detect_loss_matches_v8_detection_loss_coco8():
     net_in, net_out = collate([s0, s1])
     imgs = torch.stack([item["img"] for item in net_in], dim=0)
     # v8DetectionLoss 期望 batch dict 中含展平后的 batch_idx/cls/bboxes；我们复用自研 loss 的内部展平逻辑。
-    flat = DetectionLossYOLOv8._flatten_collated_net_out_for_loss(net_out, imgs.device)
+    flat = DetectionLossYOLOv8._flatten_collated_net_out_for_loss(
+        net_out, imgs.device, net_in=net_in
+    )
     batch = {"img": imgs, **flat}
     img = batch["img"]
     preds = dag([img])[0]
@@ -220,6 +222,7 @@ def test_detect_loss_matches_v8_detection_loss_coco8():
     loss_vec_ours = crit_ours.forward_loss_vec(
         preds,
         net_out=net_out,
+        net_in=net_in,
     )
 
     adapter = _V8LossAdapter(dag, hyp)

@@ -84,8 +84,8 @@ def _detections_tensor_to_numpy(
     return xyxy, cls_id, score
 
 
-class ObjectDetectCallback(pl.Callback):
-    """保存目标检测可视化。测试阶段使用 :meth:`ObjectDetectDataset.draw_target_and_predict_label_on_numpy`（左=预测，右=GT，IoU 配色）；预测阶段为左=原图、右=预测框。"""
+class SaveObjectDetectVisualizationCallback(pl.Callback):
+    """保存目标检测可视化（仅 test / predict；训练与验证不写入）。测试阶段使用 :meth:`ObjectDetectDataset.draw_target_and_predict_label_on_numpy`（左=预测，右=GT，IoU 配色）；预测阶段为左=原图、右=预测框。"""
 
     def __init__(
         self,
