@@ -12,6 +12,11 @@ trainer:
         test_only_save_mistake: false
         conf_thres: 0.25
         match_iou_thres: 0.5
+    - class_path: lovely_deep_learning.callback.object_detect.LogObjectDetectVisualizationCallback
+      init_args:
+        max_images: 4
+        nrow: 2
+        match_iou_thres: 0.5
     # - class_path: lightning.pytorch.callbacks.EarlyStopping
     #   init_args:
     #     monitor: "val_loss"
@@ -122,7 +127,7 @@ model:
         max_det: 300
         nms: true
         nms_iou: 0.7
-        inference_conf_thres: 0.001
+        inference_conf_thres: 0.25
         # 须与下方 metrics.init_args.box_format 一致（仅 preds；targets 由 metric 从 net_out 转换）
         map_pred_box_format: xyxy
     metrics:

@@ -8,6 +8,7 @@ import lightning.pytorch as pl
 import numpy as np
 import pandas as pd
 import torch
+from torchvision.utils import make_grid
 
 from ..dataset.object_detect import (
     ObjectDetectDataset,
@@ -64,24 +65,48 @@ def _cxcywh_to_xyxy(boxes: np.ndarray) -> np.ndarray:
     return np.stack([x1, y1, x2, y2], axis=1).astype(np.float32)
 
 
-def _detections_tensor_to_numpy(
-    det_i: torch.Tensor, conf_thres: float
+def _boxes_layout_to_xyxy_numpy(boxes: np.ndarray, box_format: str) -> np.ndarray:
+    """``postprocess.run`` 的 ``boxes`` ``(N,4)``（由 ``map_pred_box_format`` 约定）→ 像素 xyxy。"""
+    if boxes.size == 0:
+        return boxes.reshape(0, 4)
+    bf = box_format.lower()
+    b = boxes.reshape(-1, 4).astype(np.float32)
+    if bf == "xyxy":
+        return b
+    if bf == "cxcywh":
+        return _cxcywh_to_xyxy(b)
+    if bf == "xywh":
+        x1, y1, w, h = b[:, 0], b[:, 1], b[:, 2], b[:, 3]
+        return np.stack([x1, y1, x1 + w, y1 + h], axis=1).astype(np.float32)
+    return b
+
+
+def _map_pred_item_to_pred_xyxy_cls_score(
+    pr: dict[str, Any],
+    box_format: str,
+    conf_thres: float | None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """单张图 ``(max_det, 6)`` → xyxy、cls、score（已按 conf 过滤）。"""
-    d = det_i.detach().cpu().float().numpy()
-    if d.size == 0:
-        return (
-            np.zeros((0, 4), dtype=np.float32),
-            np.zeros((0,), dtype=np.int32),
-            np.zeros((0,), dtype=np.float32),
-        )
-    xywh = d[:, :4]
-    score = d[:, 4]
-    cls_id = d[:, 5].astype(np.int32)
-    m = score >= conf_thres
-    xywh, score, cls_id = xywh[m], score[m], cls_id[m]
-    xyxy = _cxcywh_to_xyxy(xywh)
-    return xyxy, cls_id, score
+    """
+    单张图的 ``map_preds[i]`` → 像素 xyxy、类别、分数；可选再按 ``conf_thres`` 过滤。
+    """
+    pb = pr["boxes"].detach().cpu().float().numpy()
+    ps = pr["scores"].detach().cpu().float().numpy()
+    plb = pr["labels"].detach().cpu().numpy().astype(np.int32)
+    if conf_thres is not None:
+        m = ps >= float(conf_thres)
+        pb, ps, plb = pb[m], ps[m], plb[m]
+    pb_xyxy = _boxes_layout_to_xyxy_numpy(pb, box_format)
+    return pb_xyxy, plb, ps
+
+
+def _stack_visual_imgs_from_net_in(net_in: Any) -> torch.Tensor:
+    """test/val 用 ``img_tv_transformed``；predict 可能仅有 ``img``。"""
+    if isinstance(net_in, dict):
+        key = "img_tv_transformed" if "img_tv_transformed" in net_in else "img"
+        return net_in[key]
+    first = net_in[0]
+    key = "img_tv_transformed" if "img_tv_transformed" in first else "img"
+    return torch.stack([ni[key] for ni in net_in], dim=0)
 
 
 class SaveObjectDetectVisualizationCallback(pl.Callback):
@@ -120,11 +145,16 @@ class SaveObjectDetectVisualizationCallback(pl.Callback):
     ):
         if self.save_dir is None or outputs is None:
             return
+        map_preds = outputs.get("map_preds")
+        if map_preds is None:
+            return
         dataset: ObjectDetectDataset = trainer.test_dataloaders.dataset
         net_in, net_out = batch
-        detections = outputs["detections"]
+        post = getattr(pl_module, "postprocess", None)
+        box_fmt = str(post.map_pred_box_format) if post else "xyxy"
+
         if isinstance(net_in, dict):
-            img_tv = net_in["img_tv_transformed"]
+            img_tv = net_in.get("img_tv_transformed", net_in.get("img"))
             img_paths = net_in["img_path"]
         else:
             img_tv = torch.stack(
@@ -139,15 +169,14 @@ class SaveObjectDetectVisualizationCallback(pl.Callback):
             img_paths = [ni["img_path"] for ni in net_in]
 
         img_tv = img_tv.detach().cpu()
-        B = detections.shape[0]
+        B = len(map_preds)
 
         for i in range(B):
             img_path = Path(img_paths[i])
             img = img_tv[i]
-            det_i = detections[i]
 
-            pred_xyxy, pred_cls, pred_score = _detections_tensor_to_numpy(
-                det_i, self.conf_thres
+            pred_xyxy, pred_cls, pred_score = _map_pred_item_to_pred_xyxy_cls_score(
+                map_preds[i], box_fmt, self.conf_thres
             )
 
             if isinstance(net_out, dict):
@@ -240,34 +269,29 @@ class SaveObjectDetectVisualizationCallback(pl.Callback):
     ):
         if self.save_dir is None or outputs is None:
             return
+        map_preds = outputs.get("map_preds")
+        if map_preds is None:
+            return
         dataset: ObjectDetectDataset = trainer.predict_dataloaders.dataset
         net_in, _net_out = batch
-        detections = outputs["detections"]
+        post = getattr(pl_module, "postprocess", None)
+        box_fmt = str(post.map_pred_box_format) if post else "xyxy"
 
         if isinstance(net_in, dict):
-            img_tv = net_in["img_tv_transformed"]
+            img_tv = net_in.get("img_tv_transformed", net_in.get("img"))
             img_paths = net_in["img_path"]
         else:
-            img_tv = torch.stack(
-                [
-                    ni["img_tv_transformed"].data
-                    if hasattr(ni["img_tv_transformed"], "data")
-                    else ni["img_tv_transformed"]
-                    for ni in net_in
-                ],
-                dim=0,
-            )
+            img_tv = _stack_visual_imgs_from_net_in(net_in)
             img_paths = [ni["img_path"] for ni in net_in]
 
         img_tv = img_tv.detach().cpu()
-        B = detections.shape[0]
+        B = len(map_preds)
 
         for i in range(B):
             img_path = Path(img_paths[i])
             img = img_tv[i]
-            det_i = detections[i]
-            pred_xyxy, pred_cls, pred_score = _detections_tensor_to_numpy(
-                det_i, self.conf_thres
+            pred_xyxy, pred_cls, pred_score = _map_pred_item_to_pred_xyxy_cls_score(
+                map_preds[i], box_fmt, self.conf_thres
             )
 
             img_np = dataset.convert_img_from_tensor_to_numpy(img)
@@ -306,3 +330,193 @@ class SaveObjectDetectVisualizationCallback(pl.Callback):
             csv_save_path = self.save_dir / "prediction_results.csv"
             df.to_csv(csv_save_path, index=False)
             print(f"检测结果已保存到: {csv_save_path}")
+
+
+class LogObjectDetectVisualizationCallback(pl.Callback):
+    """
+    训练 / 验证每个 epoch **各记录一次**检测可视化到 TensorBoard（``train/sample_detections``、
+    ``val/sample_detections``），均使用 **``batch_idx==0``** 的 batch。
+
+    依赖 :class:`~lovely_deep_learning.module.object_detect.ObjectDetectModule`：``training_step``
+    返回 ``{"loss", "map_preds", "net_out"}``（``loss`` 供优化）；``validation_step`` 返回
+    ``{"map_preds", "net_out"}``（损失仅通过 ``self.log`` 记录）。
+
+    默认 ``max_images=4``、``nrow=2``，拼成 **2×2** 正方形网格。
+    """
+
+    def __init__(
+        self,
+        max_images: int = 4,
+        nrow: int = 2,
+        match_iou_thres: float = 0.5,
+    ) -> None:
+        super().__init__()
+        self.max_images = int(max_images)
+        self.nrow = int(nrow)
+        self.match_iou_thres = float(match_iou_thres)
+
+    @staticmethod
+    def _net_out_i(net_out: Any, i: int) -> dict[str, Any]:
+        if isinstance(net_out, dict):
+            return {k: net_out[k][i] for k in net_out}
+        return net_out[i]
+
+    @staticmethod
+    def _gt_xyxy_cls_numpy(gt: Mapping[str, Any]) -> tuple[np.ndarray, np.ndarray]:
+        if not gt or "bboxes_xyxy_abs_tv_transformed" not in gt:
+            return (
+                np.zeros((0, 4), dtype=np.float32),
+                np.zeros((0,), dtype=np.int64),
+            )
+        bb = gt["bboxes_xyxy_abs_tv_transformed"]
+        cl = gt["cls_tv_transformed"]
+        if torch.is_tensor(bb):
+            bb = bb.detach().cpu().float().numpy()
+        if torch.is_tensor(cl):
+            cl = cl.detach().cpu().numpy().astype(np.int64).reshape(-1)
+        bb = np.asarray(bb, dtype=np.float32).reshape(-1, 4)
+        cl = np.asarray(cl).reshape(-1).astype(np.int64)
+        return bb, cl
+
+    def _pred_boxes_to_xyxy_numpy(
+        self, boxes: np.ndarray, box_format: str
+    ) -> np.ndarray:
+        return _boxes_layout_to_xyxy_numpy(boxes, box_format)
+
+    def _log_sample_detections_tensorboard(
+        self,
+        pl_module: pl.LightningModule,
+        batch: Any,
+        outputs: dict[str, Any],
+        dataset: ObjectDetectDataset,
+        tb_tag: str,
+    ) -> None:
+        map_preds = outputs.get("map_preds")
+        net_out = outputs.get("net_out")
+        if map_preds is None or net_out is None:
+            return
+        if getattr(pl_module, "logger", None) is None:
+            return
+        try:
+            experiment = pl_module.logger.experiment
+        except Exception:
+            return
+        if not hasattr(experiment, "add_image"):
+            return
+
+        net_in, _ = batch
+        box_fmt = "xyxy"
+        post = getattr(pl_module, "postprocess", None)
+        if post is not None and hasattr(post, "map_pred_box_format"):
+            box_fmt = str(post.map_pred_box_format)
+
+        n = min(self.max_images, len(map_preds), len(net_in))
+        if n == 0:
+            return
+
+        panels: list[torch.Tensor] = []
+        for i in range(n):
+            img_tensor = net_in[i]["img_tv_transformed"]
+            img_np = dataset.convert_img_from_tensor_to_numpy(img_tensor)
+            pr = map_preds[i]
+            pb = pr["boxes"].detach().cpu().float().numpy()
+            ps = pr["scores"].detach().cpu().float().numpy()
+            plb = pr["labels"].detach().cpu().numpy().astype(np.int64)
+            pb_xyxy = self._pred_boxes_to_xyxy_numpy(pb, box_fmt)
+
+            gt_dict = self._net_out_i(net_out, i)
+            gb, gl = self._gt_xyxy_cls_numpy(gt_dict)
+
+            panel = ObjectDetectDataset.draw_target_and_predict_label_on_numpy(
+                img_np,
+                bboxes_pred=pb_xyxy,
+                classes_pred=plb,
+                bboxes_gt=gb,
+                classes_gt=gl,
+                class_names=dataset.map_class_id_to_class_name,
+                pred_scores=ps,
+                match_by_iou=True,
+                iou_match_threshold=self.match_iou_thres,
+            )
+            t = ObjectDetectDataset.convert_img_from_numpy_to_tensor_uint8(panel)
+            panels.append(t)
+
+        img_grid = make_grid(panels, nrow=self.nrow)
+        experiment.add_image(
+            tb_tag,
+            img_grid,
+            global_step=pl_module.global_step,
+        )
+
+    def _try_log_batch(
+        self,
+        trainer: pl.Trainer,
+        pl_module: pl.LightningModule,
+        outputs: Any,
+        batch: Any,
+        batch_idx: int,
+        dataset_name: str,
+        tb_tag: str,
+        phase_label: str,
+    ) -> None:
+        if not trainer.is_global_zero or batch_idx != 0:
+            return
+        if outputs is None or not isinstance(outputs, dict):
+            return
+        dm = trainer.datamodule
+        if dm is None:
+            return
+        dataset = getattr(dm, dataset_name, None)
+        if dataset is None:
+            return
+        try:
+            self._log_sample_detections_tensorboard(
+                pl_module, batch, outputs, dataset, tb_tag
+            )
+        except Exception as e:
+            print(
+                f"Warning: failed to log {phase_label} detection visualization at step "
+                f"{pl_module.global_step}, {e}"
+            )
+
+    def on_train_batch_end(
+        self,
+        trainer: pl.Trainer,
+        pl_module: pl.LightningModule,
+        outputs: Any,
+        batch: Any,
+        batch_idx: int,
+        dataloader_idx: int = 0,
+    ) -> None:
+        self._try_log_batch(
+            trainer,
+            pl_module,
+            outputs,
+            batch,
+            batch_idx,
+            "train_dataset",
+            "train/sample_detections",
+            "train",
+        )
+
+    def on_validation_batch_end(
+        self,
+        trainer: pl.Trainer,
+        pl_module: pl.LightningModule,
+        outputs: Any,
+        batch: Any,
+        batch_idx: int,
+        dataloader_idx: int = 0,
+    ) -> None:
+        if dataloader_idx != 0:
+            return
+        self._try_log_batch(
+            trainer,
+            pl_module,
+            outputs,
+            batch,
+            batch_idx,
+            "val_dataset",
+            "val/sample_detections",
+            "val",
+        )
