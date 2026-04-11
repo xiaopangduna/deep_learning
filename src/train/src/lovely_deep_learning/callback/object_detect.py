@@ -100,13 +100,84 @@ def _map_pred_item_to_pred_xyxy_cls_score(
 
 
 def _stack_visual_imgs_from_net_in(net_in: Any) -> torch.Tensor:
-    """test/val 用 ``img_tv_transformed``；predict 可能仅有 ``img``。"""
+    """tuple batch：按样本选用 ``img_tv_transformed`` 或 ``img``（predict 可能仅有 ``img``）。"""
     if isinstance(net_in, dict):
         key = "img_tv_transformed" if "img_tv_transformed" in net_in else "img"
         return net_in[key]
     first = net_in[0]
     key = "img_tv_transformed" if "img_tv_transformed" in first else "img"
     return torch.stack([ni[key] for ni in net_in], dim=0)
+
+
+def _cpu_imgs_and_paths_from_net_in(
+    net_in: Any,
+    *,
+    tuple_use_tv_stack: bool,
+) -> tuple[torch.Tensor, list[Any]]:
+    """
+    collate 后的 ``net_in`` → CPU 上 ``(B,C,H,W)`` 与路径列表。
+
+    ``tuple_use_tv_stack=True``：tuple batch 时只堆叠 ``img_tv_transformed``（test）；
+    ``False``：与 :func:`_stack_visual_imgs_from_net_in` 一致（predict）。
+    """
+    if isinstance(net_in, dict):
+        img = net_in.get("img_tv_transformed", net_in.get("img"))
+        paths = net_in["img_path"]
+        return img.detach().cpu(), paths
+    if tuple_use_tv_stack:
+        stacked = torch.stack(
+            [
+                ni["img_tv_transformed"].data
+                if hasattr(ni["img_tv_transformed"], "data")
+                else ni["img_tv_transformed"]
+                for ni in net_in
+            ],
+            dim=0,
+        )
+    else:
+        stacked = _stack_visual_imgs_from_net_in(net_in)
+    paths = [ni["img_path"] for ni in net_in]
+    return stacked.detach().cpu(), paths
+
+
+def _net_out_sample(net_out: Any, i: int) -> dict[str, Any]:
+    if isinstance(net_out, dict):
+        return {k: net_out[k][i] for k in net_out}
+    return net_out[i]
+
+
+def _gt_xyxy_cls_numpy(gt: Mapping[str, Any]) -> tuple[np.ndarray, np.ndarray]:
+    """单样本 ``net_out[i]``（collate 后一项）→ GT xyxy numpy、类别 id。"""
+    if not gt or "bboxes_xyxy_abs_tv_transformed" not in gt:
+        return (
+            np.zeros((0, 4), dtype=np.float32),
+            np.zeros((0,), dtype=np.int64),
+        )
+    bb = gt["bboxes_xyxy_abs_tv_transformed"]
+    cl = gt["cls_tv_transformed"]
+    if torch.is_tensor(bb):
+        bb = bb.detach().cpu().float().numpy()
+    if torch.is_tensor(cl):
+        cl = cl.detach().cpu().numpy().astype(np.int64).reshape(-1)
+    bb = np.asarray(bb, dtype=np.float32).reshape(-1, 4)
+    cl = np.asarray(cl).reshape(-1).astype(np.int64)
+    return bb, cl
+
+
+def _map_pred_box_format(pl_module: pl.LightningModule) -> str:
+    post = getattr(pl_module, "postprocess", None)
+    if post is not None and hasattr(post, "map_pred_box_format"):
+        return str(post.map_pred_box_format)
+    return "xyxy"
+
+
+def _write_detection_csv(save_dir: Path, filename: str, rows: list) -> None:
+    if not rows:
+        return
+    df = pd.DataFrame(rows)
+    path = save_dir / filename
+    df.to_csv(path, index=False)
+    print(f"检测结果已保存到: {path}")
 
 
 class SaveObjectDetectVisualizationCallback(pl.Callback):
@@ -150,25 +221,10 @@ class SaveObjectDetectVisualizationCallback(pl.Callback):
             return
         dataset: ObjectDetectDataset = trainer.test_dataloaders.dataset
         net_in, net_out = batch
-        post = getattr(pl_module, "postprocess", None)
-        box_fmt = str(post.map_pred_box_format) if post else "xyxy"
-
-        if isinstance(net_in, dict):
-            img_tv = net_in.get("img_tv_transformed", net_in.get("img"))
-            img_paths = net_in["img_path"]
-        else:
-            img_tv = torch.stack(
-                [
-                    ni["img_tv_transformed"].data
-                    if hasattr(ni["img_tv_transformed"], "data")
-                    else ni["img_tv_transformed"]
-                    for ni in net_in
-                ],
-                dim=0,
-            )
-            img_paths = [ni["img_path"] for ni in net_in]
-
-        img_tv = img_tv.detach().cpu()
+        box_fmt = _map_pred_box_format(pl_module)
+        img_tv, img_paths = _cpu_imgs_and_paths_from_net_in(
+            net_in, tuple_use_tv_stack=True
+        )
         B = len(map_preds)
 
         for i in range(B):
@@ -179,21 +235,7 @@ class SaveObjectDetectVisualizationCallback(pl.Callback):
                 map_preds[i], box_fmt, self.conf_thres
             )
 
-            if isinstance(net_out, dict):
-                no_i = {k: net_out[k][i] for k in net_out}
-            else:
-                no_i = net_out[i]
-
-            if no_i and "bboxes_xyxy_abs_tv_transformed" in no_i:
-                boxes = no_i["bboxes_xyxy_abs_tv_transformed"]
-                if hasattr(boxes, "data"):
-                    boxes = boxes.data.cpu().numpy()
-                else:
-                    boxes = boxes.cpu().numpy()
-                cls_ids = no_i["cls_tv_transformed"].cpu().numpy().reshape(-1)
-            else:
-                boxes = np.zeros((0, 4), dtype=np.float32)
-                cls_ids = np.zeros((0,), dtype=np.int32)
+            boxes, cls_ids = _gt_xyxy_cls_numpy(_net_out_sample(net_out, i))
 
             img_np = dataset.convert_img_from_tensor_to_numpy(img)
             names = dataset.map_class_id_to_class_name or None
@@ -252,11 +294,8 @@ class SaveObjectDetectVisualizationCallback(pl.Callback):
         return super().on_test_epoch_start(trainer, pl_module)
 
     def on_test_end(self, trainer, pl_module):
-        if self.save_dir is not None and self.csv_table_test:
-            df = pd.DataFrame(self.csv_table_test)
-            csv_save_path = self.save_dir / "test_results.csv"
-            df.to_csv(csv_save_path, index=False)
-            print(f"检测结果已保存到: {csv_save_path}")
+        if self.save_dir is not None:
+            _write_detection_csv(self.save_dir, "test_results.csv", self.csv_table_test)
 
     def on_predict_batch_end(
         self,
@@ -274,17 +313,10 @@ class SaveObjectDetectVisualizationCallback(pl.Callback):
             return
         dataset: ObjectDetectDataset = trainer.predict_dataloaders.dataset
         net_in, _net_out = batch
-        post = getattr(pl_module, "postprocess", None)
-        box_fmt = str(post.map_pred_box_format) if post else "xyxy"
-
-        if isinstance(net_in, dict):
-            img_tv = net_in.get("img_tv_transformed", net_in.get("img"))
-            img_paths = net_in["img_path"]
-        else:
-            img_tv = _stack_visual_imgs_from_net_in(net_in)
-            img_paths = [ni["img_path"] for ni in net_in]
-
-        img_tv = img_tv.detach().cpu()
+        box_fmt = _map_pred_box_format(pl_module)
+        img_tv, img_paths = _cpu_imgs_and_paths_from_net_in(
+            net_in, tuple_use_tv_stack=False
+        )
         B = len(map_preds)
 
         for i in range(B):
@@ -325,11 +357,10 @@ class SaveObjectDetectVisualizationCallback(pl.Callback):
         return super().on_predict_epoch_start(trainer, pl_module)
 
     def on_predict_end(self, trainer, pl_module):
-        if self.save_dir is not None and self.csv_table_pred:
-            df = pd.DataFrame(self.csv_table_pred)
-            csv_save_path = self.save_dir / "prediction_results.csv"
-            df.to_csv(csv_save_path, index=False)
-            print(f"检测结果已保存到: {csv_save_path}")
+        if self.save_dir is not None:
+            _write_detection_csv(
+                self.save_dir, "prediction_results.csv", self.csv_table_pred
+            )
 
 
 class LogObjectDetectVisualizationCallback(pl.Callback):
@@ -355,34 +386,6 @@ class LogObjectDetectVisualizationCallback(pl.Callback):
         self.nrow = int(nrow)
         self.match_iou_thres = float(match_iou_thres)
 
-    @staticmethod
-    def _net_out_i(net_out: Any, i: int) -> dict[str, Any]:
-        if isinstance(net_out, dict):
-            return {k: net_out[k][i] for k in net_out}
-        return net_out[i]
-
-    @staticmethod
-    def _gt_xyxy_cls_numpy(gt: Mapping[str, Any]) -> tuple[np.ndarray, np.ndarray]:
-        if not gt or "bboxes_xyxy_abs_tv_transformed" not in gt:
-            return (
-                np.zeros((0, 4), dtype=np.float32),
-                np.zeros((0,), dtype=np.int64),
-            )
-        bb = gt["bboxes_xyxy_abs_tv_transformed"]
-        cl = gt["cls_tv_transformed"]
-        if torch.is_tensor(bb):
-            bb = bb.detach().cpu().float().numpy()
-        if torch.is_tensor(cl):
-            cl = cl.detach().cpu().numpy().astype(np.int64).reshape(-1)
-        bb = np.asarray(bb, dtype=np.float32).reshape(-1, 4)
-        cl = np.asarray(cl).reshape(-1).astype(np.int64)
-        return bb, cl
-
-    def _pred_boxes_to_xyxy_numpy(
-        self, boxes: np.ndarray, box_format: str
-    ) -> np.ndarray:
-        return _boxes_layout_to_xyxy_numpy(boxes, box_format)
-
     def _log_sample_detections_tensorboard(
         self,
         pl_module: pl.LightningModule,
@@ -405,10 +408,7 @@ class LogObjectDetectVisualizationCallback(pl.Callback):
             return
 
         net_in, _ = batch
-        box_fmt = "xyxy"
-        post = getattr(pl_module, "postprocess", None)
-        if post is not None and hasattr(post, "map_pred_box_format"):
-            box_fmt = str(post.map_pred_box_format)
+        box_fmt = _map_pred_box_format(pl_module)
 
         n = min(self.max_images, len(map_preds), len(net_in))
         if n == 0:
@@ -422,10 +422,9 @@ class LogObjectDetectVisualizationCallback(pl.Callback):
             pb = pr["boxes"].detach().cpu().float().numpy()
             ps = pr["scores"].detach().cpu().float().numpy()
             plb = pr["labels"].detach().cpu().numpy().astype(np.int64)
-            pb_xyxy = self._pred_boxes_to_xyxy_numpy(pb, box_fmt)
+            pb_xyxy = _boxes_layout_to_xyxy_numpy(pb, box_fmt)
 
-            gt_dict = self._net_out_i(net_out, i)
-            gb, gl = self._gt_xyxy_cls_numpy(gt_dict)
+            gb, gl = _gt_xyxy_cls_numpy(_net_out_sample(net_out, i))
 
             panel = ObjectDetectDataset.draw_target_and_predict_label_on_numpy(
                 img_np,
