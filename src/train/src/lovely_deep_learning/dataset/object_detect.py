@@ -74,6 +74,55 @@ def cxcywh_pixels_to_xyxy(boxes: torch.Tensor) -> torch.Tensor:
     )
 
 
+def cxcywh_pixels_to_xyxy_numpy(boxes: np.ndarray) -> np.ndarray:
+    """``(N,4)`` 像素 cxcywh → xyxy（numpy，与 :func:`cxcywh_pixels_to_xyxy` 几何一致）。"""
+    cx, cy, w, h = boxes[:, 0], boxes[:, 1], boxes[:, 2], boxes[:, 3]
+    x1 = cx - w * 0.5
+    y1 = cy - h * 0.5
+    x2 = cx + w * 0.5
+    y2 = cy + h * 0.5
+    return np.stack([x1, y1, x2, y2], axis=1).astype(np.float32)
+
+
+def boxes_layout_to_xyxy_numpy(boxes: np.ndarray, box_format: str) -> np.ndarray:
+    """
+    后处理 / ``metric_preds`` 中 ``boxes`` ``(N,4)``（由 ``map_pred_box_format`` 约定）→ 像素 xyxy。
+
+    支持 ``xyxy``、``cxcywh``、``xywh``（左上角 + 宽高）；未知格式时原样返回 ``(N,4)``。
+    """
+    if boxes.size == 0:
+        return boxes.reshape(0, 4)
+    bf = box_format.lower()
+    b = boxes.reshape(-1, 4).astype(np.float32)
+    if bf == "xyxy":
+        return b
+    if bf == "cxcywh":
+        return cxcywh_pixels_to_xyxy_numpy(b)
+    if bf == "xywh":
+        x1, y1, w, h = b[:, 0], b[:, 1], b[:, 2], b[:, 3]
+        return np.stack([x1, y1, x1 + w, y1 + h], axis=1).astype(np.float32)
+    return b
+
+
+def metric_pred_item_to_xyxy_cls_score_numpy(
+    pr: dict[str, Any],
+    box_format: str,
+    conf_thres: float | None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    单张图的 ``metric_preds[i]``（``boxes``/``scores``/``labels``）→ 像素 xyxy、类别、分数；
+    可选再按 ``conf_thres`` 过滤。
+    """
+    pb = pr["boxes"].detach().cpu().float().numpy()
+    ps = pr["scores"].detach().cpu().float().numpy()
+    plb = pr["labels"].detach().cpu().numpy().astype(np.int32)
+    if conf_thres is not None:
+        m = ps >= float(conf_thres)
+        pb, ps, plb = pb[m], ps[m], plb[m]
+    pb_xyxy = boxes_layout_to_xyxy_numpy(pb, box_format)
+    return pb_xyxy, plb, ps
+
+
 def xyxy_abs_pixels_to_xywh_norm(
     xyxy: torch.Tensor, height: int, width: int
 ) -> torch.Tensor:

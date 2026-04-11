@@ -1,4 +1,3 @@
-import json
 import os
 from pathlib import Path
 from typing import Any, Mapping
@@ -6,97 +5,20 @@ from typing import Any, Mapping
 import cv2
 import lightning.pytorch as pl
 import numpy as np
-import pandas as pd
 import torch
 from torchvision.utils import make_grid
 
 from ..dataset.object_detect import (
     ObjectDetectDataset,
+    boxes_layout_to_xyxy_numpy,
     greedy_match_pred_gt_iou,
+    metric_pred_item_to_xyxy_cls_score_numpy,
 )
-
-
-def _class_name_lookup(names: Mapping[Any, str] | None, class_id: int) -> str | None:
-    if names is None:
-        return None
-    return names.get(class_id, names.get(str(class_id)))
-
-
-def _instances_to_json_str(
-    xyxy: np.ndarray,
-    cls_ids: np.ndarray,
-    class_names: Mapping[Any, str] | None,
-    scores: np.ndarray | None = None,
-) -> str:
-    """每张图的目标列表，写入 CSV 的一列（JSON 文本）。"""
-    rows: list[dict[str, Any]] = []
-    for j in range(xyxy.shape[0]):
-        cid = int(cls_ids[j])
-        item: dict[str, Any] = {
-            "class_id": cid,
-            "bbox_xyxy": [float(xyxy[j, k]) for k in range(4)],
-        }
-        cname = _class_name_lookup(class_names, cid)
-        if cname is not None:
-            item["class_name"] = cname
-        if scores is not None and j < len(scores):
-            item["confidence"] = float(scores[j])
-        rows.append(item)
-    return json.dumps(rows, ensure_ascii=False)
-
-
-def _side_by_side_bgr(left_bgr: np.ndarray, right_bgr: np.ndarray) -> np.ndarray:
-    """左右拼接两张同高 BGR 图；宽度不一致时将右侧缩放到与左侧同尺寸。"""
-    h, wl = left_bgr.shape[:2]
-    hr, wr = right_bgr.shape[:2]
-    if (h, wl) != (hr, wr):
-        right_bgr = cv2.resize(right_bgr, (wl, h), interpolation=cv2.INTER_LINEAR)
-    gap_w = 3
-    sep = np.full((h, gap_w, 3), 220, dtype=np.uint8)
-    return np.hstack([left_bgr, sep, right_bgr])
-
-
-def _cxcywh_to_xyxy(boxes: np.ndarray) -> np.ndarray:
-    cx, cy, w, h = boxes[:, 0], boxes[:, 1], boxes[:, 2], boxes[:, 3]
-    x1 = cx - w * 0.5
-    y1 = cy - h * 0.5
-    x2 = cx + w * 0.5
-    y2 = cy + h * 0.5
-    return np.stack([x1, y1, x2, y2], axis=1).astype(np.float32)
-
-
-def _boxes_layout_to_xyxy_numpy(boxes: np.ndarray, box_format: str) -> np.ndarray:
-    """``postprocess.run`` 的 ``boxes`` ``(N,4)``（由 ``map_pred_box_format`` 约定）→ 像素 xyxy。"""
-    if boxes.size == 0:
-        return boxes.reshape(0, 4)
-    bf = box_format.lower()
-    b = boxes.reshape(-1, 4).astype(np.float32)
-    if bf == "xyxy":
-        return b
-    if bf == "cxcywh":
-        return _cxcywh_to_xyxy(b)
-    if bf == "xywh":
-        x1, y1, w, h = b[:, 0], b[:, 1], b[:, 2], b[:, 3]
-        return np.stack([x1, y1, x1 + w, y1 + h], axis=1).astype(np.float32)
-    return b
-
-
-def _map_pred_item_to_pred_xyxy_cls_score(
-    pr: dict[str, Any],
-    box_format: str,
-    conf_thres: float | None,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """
-    单张图的 ``map_preds[i]`` → 像素 xyxy、类别、分数；可选再按 ``conf_thres`` 过滤。
-    """
-    pb = pr["boxes"].detach().cpu().float().numpy()
-    ps = pr["scores"].detach().cpu().float().numpy()
-    plb = pr["labels"].detach().cpu().numpy().astype(np.int32)
-    if conf_thres is not None:
-        m = ps >= float(conf_thres)
-        pb, ps, plb = pb[m], ps[m], plb[m]
-    pb_xyxy = _boxes_layout_to_xyxy_numpy(pb, box_format)
-    return pb_xyxy, plb, ps
+from ..utils.io import (
+    instances_to_json_str,
+    write_row_dicts_to_csv_path_skip_if_empty,
+)
+from ..utils.plot import hstack_bgr_left_right_resize_right_to_match_left_with_gray_separator
 
 
 def _stack_visual_imgs_from_net_in(net_in: Any) -> torch.Tensor:
@@ -171,15 +93,6 @@ def _map_pred_box_format(pl_module: pl.LightningModule) -> str:
     return "xyxy"
 
 
-def _write_detection_csv(save_dir: Path, filename: str, rows: list) -> None:
-    if not rows:
-        return
-    df = pd.DataFrame(rows)
-    path = save_dir / filename
-    df.to_csv(path, index=False)
-    print(f"检测结果已保存到: {path}")
-
-
 class SaveObjectDetectVisualizationCallback(pl.Callback):
     """保存目标检测可视化（仅 test / predict；训练与验证不写入）。测试阶段使用 :meth:`ObjectDetectDataset.draw_target_and_predict_label_on_numpy`（左=预测，右=GT，IoU 配色）；预测阶段为左=原图、右=预测框。"""
 
@@ -216,8 +129,8 @@ class SaveObjectDetectVisualizationCallback(pl.Callback):
     ):
         if self.save_dir is None or outputs is None:
             return
-        map_preds = outputs.get("map_preds")
-        if map_preds is None:
+        metric_preds = outputs.get("metric_preds")
+        if metric_preds is None:
             return
         dataset: ObjectDetectDataset = trainer.test_dataloaders.dataset
         net_in, net_out = batch
@@ -225,14 +138,14 @@ class SaveObjectDetectVisualizationCallback(pl.Callback):
         img_tv, img_paths = _cpu_imgs_and_paths_from_net_in(
             net_in, tuple_use_tv_stack=True
         )
-        B = len(map_preds)
+        B = len(metric_preds)
 
         for i in range(B):
             img_path = Path(img_paths[i])
             img = img_tv[i]
 
-            pred_xyxy, pred_cls, pred_score = _map_pred_item_to_pred_xyxy_cls_score(
-                map_preds[i], box_fmt, self.conf_thres
+            pred_xyxy, pred_cls, pred_score = metric_pred_item_to_xyxy_cls_score_numpy(
+                metric_preds[i], box_fmt, self.conf_thres
             )
 
             boxes, cls_ids = _gt_xyxy_cls_numpy(_net_out_sample(net_out, i))
@@ -273,13 +186,13 @@ class SaveObjectDetectVisualizationCallback(pl.Callback):
             self.csv_table_test.append(
                 {
                     "img_path": str(img_path),
-                    "ground_truth": _instances_to_json_str(
+                    "ground_truth": instances_to_json_str(
                         boxes.astype(np.float32),
                         cls_ids.astype(np.int32),
                         names,
                         scores=None,
                     ),
-                    "predictions": _instances_to_json_str(
+                    "predictions": instances_to_json_str(
                         pred_xyxy, pred_cls, names, scores=pred_score
                     ),
                     "num_gt": int(boxes.shape[0]),
@@ -295,7 +208,9 @@ class SaveObjectDetectVisualizationCallback(pl.Callback):
 
     def on_test_end(self, trainer, pl_module):
         if self.save_dir is not None:
-            _write_detection_csv(self.save_dir, "test_results.csv", self.csv_table_test)
+            write_row_dicts_to_csv_path_skip_if_empty(
+                self.save_dir / "test_results.csv", self.csv_table_test
+            )
 
     def on_predict_batch_end(
         self,
@@ -308,8 +223,8 @@ class SaveObjectDetectVisualizationCallback(pl.Callback):
     ):
         if self.save_dir is None or outputs is None:
             return
-        map_preds = outputs.get("map_preds")
-        if map_preds is None:
+        metric_preds = outputs.get("metric_preds")
+        if metric_preds is None:
             return
         dataset: ObjectDetectDataset = trainer.predict_dataloaders.dataset
         net_in, _net_out = batch
@@ -317,13 +232,13 @@ class SaveObjectDetectVisualizationCallback(pl.Callback):
         img_tv, img_paths = _cpu_imgs_and_paths_from_net_in(
             net_in, tuple_use_tv_stack=False
         )
-        B = len(map_preds)
+        B = len(metric_preds)
 
         for i in range(B):
             img_path = Path(img_paths[i])
             img = img_tv[i]
-            pred_xyxy, pred_cls, pred_score = _map_pred_item_to_pred_xyxy_cls_score(
-                map_preds[i], box_fmt, self.conf_thres
+            pred_xyxy, pred_cls, pred_score = metric_pred_item_to_xyxy_cls_score_numpy(
+                metric_preds[i], box_fmt, self.conf_thres
             )
 
             img_np = dataset.convert_img_from_tensor_to_numpy(img)
@@ -336,7 +251,9 @@ class SaveObjectDetectVisualizationCallback(pl.Callback):
                 class_names=names,
                 colors=[(0, 0, 255)],
             )
-            img_out = _side_by_side_bgr(panel_in, panel_pred)
+            img_out = hstack_bgr_left_right_resize_right_to_match_left_with_gray_separator(
+                panel_in, panel_pred
+            )
 
             save_path = self.save_dir_pred / (img_path.stem + ".jpg")
             cv2.imwrite(str(save_path), img_out)
@@ -344,7 +261,7 @@ class SaveObjectDetectVisualizationCallback(pl.Callback):
             self.csv_table_pred.append(
                 {
                     "img_path": str(img_path),
-                    "predictions": _instances_to_json_str(
+                    "predictions": instances_to_json_str(
                         pred_xyxy, pred_cls, names, scores=pred_score
                     ),
                     "num_pred": int(pred_xyxy.shape[0]),
@@ -358,8 +275,8 @@ class SaveObjectDetectVisualizationCallback(pl.Callback):
 
     def on_predict_end(self, trainer, pl_module):
         if self.save_dir is not None:
-            _write_detection_csv(
-                self.save_dir, "prediction_results.csv", self.csv_table_pred
+            write_row_dicts_to_csv_path_skip_if_empty(
+                self.save_dir / "prediction_results.csv", self.csv_table_pred
             )
 
 
@@ -369,8 +286,8 @@ class LogObjectDetectVisualizationCallback(pl.Callback):
     ``val/sample_detections``），均使用 **``batch_idx==0``** 的 batch。
 
     依赖 :class:`~lovely_deep_learning.module.object_detect.ObjectDetectModule`：``training_step``
-    返回 ``{"loss", "map_preds", "net_out"}``（``loss`` 供优化）；``validation_step`` 返回
-    ``{"map_preds", "net_out"}``（损失仅通过 ``self.log`` 记录）。
+    返回 ``{"loss", "metric_preds", "net_out"}``（``loss`` 供优化）；``validation_step`` 返回
+    ``{"metric_preds", "net_out"}``（损失仅通过 ``self.log`` 记录）。
 
     默认 ``max_images=4``、``nrow=2``，拼成 **2×2** 正方形网格。
     """
@@ -394,9 +311,9 @@ class LogObjectDetectVisualizationCallback(pl.Callback):
         dataset: ObjectDetectDataset,
         tb_tag: str,
     ) -> None:
-        map_preds = outputs.get("map_preds")
+        metric_preds = outputs.get("metric_preds")
         net_out = outputs.get("net_out")
-        if map_preds is None or net_out is None:
+        if metric_preds is None or net_out is None:
             return
         if getattr(pl_module, "logger", None) is None:
             return
@@ -410,7 +327,7 @@ class LogObjectDetectVisualizationCallback(pl.Callback):
         net_in, _ = batch
         box_fmt = _map_pred_box_format(pl_module)
 
-        n = min(self.max_images, len(map_preds), len(net_in))
+        n = min(self.max_images, len(metric_preds), len(net_in))
         if n == 0:
             return
 
@@ -418,11 +335,11 @@ class LogObjectDetectVisualizationCallback(pl.Callback):
         for i in range(n):
             img_tensor = net_in[i]["img_tv_transformed"]
             img_np = dataset.convert_img_from_tensor_to_numpy(img_tensor)
-            pr = map_preds[i]
+            pr = metric_preds[i]
             pb = pr["boxes"].detach().cpu().float().numpy()
             ps = pr["scores"].detach().cpu().float().numpy()
             plb = pr["labels"].detach().cpu().numpy().astype(np.int64)
-            pb_xyxy = _boxes_layout_to_xyxy_numpy(pb, box_fmt)
+            pb_xyxy = boxes_layout_to_xyxy_numpy(pb, box_fmt)
 
             gb, gl = _gt_xyxy_cls_numpy(_net_out_sample(net_out, i))
 

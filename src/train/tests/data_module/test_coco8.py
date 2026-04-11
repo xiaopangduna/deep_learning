@@ -6,7 +6,7 @@ import pandas as pd
 from torchvision.transforms import v2
 import torch
 
-from lovely_deep_learning.data_module.coco8 import COCO8DataModule, COCO80_CLASS_NAMES
+from lovely_deep_learning.data_module.coco import COCO8DataModule, COCO80_CLASS_NAMES
 
 # 与 ``COCO8DataModule`` 默认一致：``src/train/datasets/COCO8`` 下放 CSV，``coco8/`` 为图像与标签
 _COCO8_ROOT = Path(__file__).resolve().parents[2] / "datasets" / "COCO8"

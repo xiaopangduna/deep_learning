@@ -62,12 +62,12 @@ class ObjectDetectModule(pl.LightningModule):
         loss = self.criterion(preds, net_out=net_out, net_in=net_in)
 
         with torch.inference_mode():
-            map_preds = self.postprocess.run(preds)
-            self.metrics.update("train", map_preds, net_out)
+            metric_preds = self.postprocess.run(preds)
+            self.metrics.update("train", metric_preds, net_out)
 
         self.log("train_loss", loss, batch_size=batch_size,
                  on_step=False, on_epoch=True, prog_bar=True)
-        return {"loss": loss, "map_preds": map_preds, "net_out": net_out}
+        return {"loss": loss, "metric_preds": metric_preds, "net_out": net_out}
 
     def on_train_epoch_end(self):
         metrics = self.metrics.compute("train")
@@ -85,12 +85,12 @@ class ObjectDetectModule(pl.LightningModule):
         loss = self.criterion(preds, net_out=net_out, net_in=net_in)
 
         with torch.inference_mode():
-            map_preds = self.postprocess.run(preds)
-            self.metrics.update("val", map_preds, net_out)
+            metric_preds = self.postprocess.run(preds)
+            self.metrics.update("val", metric_preds, net_out)
 
         self.log("val_loss", loss, batch_size=batch_size,
                  on_step=False, on_epoch=True, prog_bar=True)
-        return {"map_preds": map_preds, "net_out": net_out}
+        return {"metric_preds": metric_preds, "net_out": net_out}
 
     def on_validation_epoch_end(self):
         metrics = self.metrics.compute("val")
@@ -108,12 +108,12 @@ class ObjectDetectModule(pl.LightningModule):
         loss = self.criterion(preds, net_out=net_out, net_in=net_in)
 
         with torch.inference_mode():
-            map_preds = self.postprocess.run(preds)
-            self.metrics.update("test", map_preds, net_out)
+            metric_preds = self.postprocess.run(preds)
+            self.metrics.update("test", metric_preds, net_out)
 
         self.log("test_loss", loss, batch_size=batch_size,
                  on_step=False, on_epoch=True, prog_bar=True)
-        return {"map_preds": map_preds, "net_out": net_out}
+        return {"metric_preds": metric_preds, "net_out": net_out}
 
     def on_test_epoch_end(self):
         metrics = self.metrics.compute("test")
@@ -126,8 +126,8 @@ class ObjectDetectModule(pl.LightningModule):
         imgs = torch.stack([item["img"] for item in net_in], dim=0)
         with torch.inference_mode():
             out = self(imgs)
-            map_preds = self.postprocess.run(out)
-        return {"map_preds": map_preds}
+            metric_preds = self.postprocess.run(out)
+        return {"metric_preds": metric_preds}
 
     def configure_optimizers(self):
         optimizer = instantiate_class(

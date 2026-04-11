@@ -1,6 +1,9 @@
-# COCO8 目标检测实验：DAGNet(YOLOv8n) + DetectionLossYOLOv8（内部为 Ultralytics v8DetectionLoss）
-# 用法（在 src/train 下）：lightning fit --config configs/experiments/object_detect_COCO8.yaml
-# 数据首次运行会由 COCO8DataModule.prepare_data 下载 coco8.zip 并生成 CSV / 类别映射表
+# COCO 2017 目标检测实验：DAGNet(YOLOv8n) + DetectionLossYOLOv8（内部为 Ultralytics v8DetectionLoss）
+# 用法（在 src/train 下）：
+#   python scripts/train.py fit --config configs/experiments/object_detect_COCO.yaml
+# 首次 fit 时 COCODataModule.prepare_data 解压数据并生成 CSV。
+# 可将 coco2017labels.zip、train2017.zip、val2017.zip（及可选 test2017.zip）提前放入 datasets/COCO/，则跳过对应下载；解压后不删 zip。
+# test2017 默认不自动下载，需手动放入 zip 或设 data.init_args.download_test2017: true
 
 trainer:
   max_epochs: 10
@@ -41,7 +44,7 @@ trainer:
     - class_path: lightning.pytorch.loggers.TensorBoardLogger
       init_args:
         save_dir: logs
-        name: object_detect_COCO8
+        name: object_detect_COCO
         version: null
   # profiler:
   #   class_path: lightning.pytorch.profilers.SimpleProfiler
@@ -50,19 +53,19 @@ trainer:
   #     extended: true
 
 data:
-  class_path: lovely_deep_learning.data_module.coco.COCO8DataModule
+  class_path: lovely_deep_learning.data_module.coco.COCODataModule
   init_args:
-    dataset_dir: datasets/COCO8/coco8
-    train_csv_paths: [datasets/COCO8/train.csv]
-    val_csv_paths: [datasets/COCO8/val.csv]
-    test_csv_paths: [datasets/COCO8/val.csv]
-    predict_csv_paths: [datasets/COCO8/predict.csv]
+    dataset_dir: datasets/COCO/coco
+    train_csv_paths: [datasets/COCO/train.csv]
+    val_csv_paths: [datasets/COCO/val.csv]
+    test_csv_paths: [datasets/COCO/val.csv]
+    predict_csv_paths: [datasets/COCO/predict.csv]
     key_map:
       img_path: path_img
       object_label_path: path_label_detect_yolo
     predict_key_map:
       img_path: path_img
-    map_class_id_to_class_name: datasets/COCO8/map_class_id_to_class_name.csv
+    map_class_id_to_class_name: datasets/COCO/map_class_id_to_class_name.csv
     norm_mean: null
     norm_std: null
     batch_size: 16
