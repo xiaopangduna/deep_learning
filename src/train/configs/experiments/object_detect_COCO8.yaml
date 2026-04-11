@@ -9,7 +9,7 @@ trainer:
     - class_path: lovely_deep_learning.callback.object_detect.SaveObjectDetectVisualizationCallback
       init_args:
         save_dir: tmp
-        test_only_save_mistake: false
+        test_only_save_mistake: true
         conf_thres: 0.25
         match_iou_thres: 0.5
     - class_path: lovely_deep_learning.callback.object_detect.LogObjectDetectVisualizationCallback

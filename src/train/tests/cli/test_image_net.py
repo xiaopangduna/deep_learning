@@ -3,7 +3,7 @@ import subprocess
 
 
 @pytest.mark.cli
-def test_ImageNette_fit():
+def test_ImageNet_image_classifier_fit():
     result = subprocess.run(
         [
             "python",

@@ -18,9 +18,6 @@ from ..utils.io import (
     instances_to_json_str,
     write_row_dicts_to_csv_path_skip_if_empty,
 )
-from ..utils.plot import hstack_bgr_left_right_resize_right_to_match_left_with_gray_separator
-
-
 def _stack_visual_imgs_from_net_in(net_in: Any) -> torch.Tensor:
     """tuple batch：按样本选用 ``img_tv_transformed`` 或 ``img``（predict 可能仅有 ``img``）。"""
     if isinstance(net_in, dict):
@@ -94,7 +91,7 @@ def _map_pred_box_format(pl_module: pl.LightningModule) -> str:
 
 
 class SaveObjectDetectVisualizationCallback(pl.Callback):
-    """保存目标检测可视化（仅 test / predict；训练与验证不写入）。测试阶段使用 :meth:`ObjectDetectDataset.draw_target_and_predict_label_on_numpy`（左=预测，右=GT，IoU 配色）；预测阶段为左=原图、右=预测框。"""
+    """保存目标检测可视化（仅 test / predict；训练与验证不写入）。测试阶段使用 :meth:`ObjectDetectDataset.draw_target_and_predict_label_on_numpy`（左=预测，右=GT，IoU 配色）；预测阶段无真值，仅绘制预测框单图。"""
 
     def __init__(
         self,
@@ -243,16 +240,12 @@ class SaveObjectDetectVisualizationCallback(pl.Callback):
 
             img_np = dataset.convert_img_from_tensor_to_numpy(img)
             names = dataset.map_class_id_to_class_name or None
-            panel_in = img_np.copy()
-            panel_pred = ObjectDetectDataset.draw_label_on_numpy(
+            img_out = ObjectDetectDataset.draw_label_on_numpy(
                 img_np.copy(),
                 pred_xyxy,
                 pred_cls,
                 class_names=names,
                 colors=[(0, 0, 255)],
-            )
-            img_out = hstack_bgr_left_right_resize_right_to_match_left_with_gray_separator(
-                panel_in, panel_pred
             )
 
             save_path = self.save_dir_pred / (img_path.stem + ".jpg")
