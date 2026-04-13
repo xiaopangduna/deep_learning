@@ -3097,6 +3097,22 @@ url = "https://pypi.tuna.tsinghua.edu.cn/simple"
 reference = "tuna"
 
 [[package]]
+name = "netron"
+version = "9.0.1"
+description = "Viewer for neural network, deep learning and machine learning models."
+optional = false
+python-versions = "*"
+groups = ["main"]
+files = [
+    {file = "netron-9.0.1-py3-none-any.whl", hash = "sha256:e586f63094f39a1082f7dfe1f126790c341524355076e64c15e5cd1df36ba890"},
+]
+
+[package.source]
+type = "legacy"
+url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+reference = "tuna"
+
+[[package]]
 name = "networkx"
 version = "3.4.2"
 description = "Python package for creating and manipulating graphs and networks"
@@ -6249,4 +6265,4 @@ reference = "tuna"
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.10,<3.14"
-content-hash = "19b8edede15cdae7debb434822cde4c7d8036c5c2b75f05fe99336ff104509c7"
+content-hash = "4e85feaa035b9c20261622171a81e73b1ed6d37acbd1225f6adbf8278ce93934"

@@ -142,6 +142,13 @@ python scripts/train.py predict \
     --ckpt_path logs/image_classifier/version_0/checkpoints/epoch\=25-step\=15392.ckpt
 ```
 
+## 7 导出模型（export）
+
+```
+python scripts/export.py export --format onnx --config configs/experiments/object_detect_COCO8.yaml
+python scripts/export.py export --format onnx --config configs/experiments/object_detect_COCO8.yaml --ckpt_path logs/object_detect_COCO8/version_7/checkpoints/epoch=00-val_loss=19.2245.ckpt
+```
+
 # 训练过程查看
 
 使用 TensorBoard 查看训练日志：

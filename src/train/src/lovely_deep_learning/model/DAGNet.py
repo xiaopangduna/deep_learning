@@ -17,7 +17,14 @@ class DAGNet(nn.Module):
     权重可通过构造参数 ``pretrained`` + ``weight`` 加载，或事后调用 :meth:`load_weights`。
     """
 
-    def __init__(self, structure, weight=None, pretrained=False, model_name="undefined"):
+    def __init__(
+        self,
+        structure,
+        weight=None,
+        pretrained=False,
+        model_name="undefined",
+        exporter: Any = None,
+    ):
         """
         Parameters
         ----------
@@ -46,6 +53,12 @@ class DAGNet(nn.Module):
         self.weight_config = weight
         self.pretrained = pretrained
         self.model_name = model_name
+        if isinstance(exporter, dict):
+            from lovely_deep_learning.export.yolov8 import YOLOv8Exporter
+
+            self.exporter = YOLOv8Exporter(**exporter)
+        else:
+            self.exporter = exporter
 
         self.inputs = self.structure_config["inputs"]
         self.outputs = self.structure_config["outputs"]
@@ -187,6 +200,26 @@ class DAGNet(nn.Module):
             outputs[name] = layer(inp)
 
         return tuple(outputs[n["from"][0]] for n in self.outputs)
+
+    def export(
+        self,
+        format: str = "onnx",
+        exporter: Any = None,
+    ) -> str:
+        """导出当前 DAGNet 模型。
+
+        Args:
+            format: 导出格式，当前仅支持 ``onnx``。
+            exporter: 可选导出器实例，优先级高于构造时传入的 ``self.exporter``。
+        """
+        active_exporter = exporter if exporter is not None else self.exporter
+        if active_exporter is None:
+            from lovely_deep_learning.export.yolov8 import YOLOv8Exporter
+
+            active_exporter = YOLOv8Exporter()
+        if hasattr(active_exporter, "bind"):
+            active_exporter.bind(self)
+        return active_exporter.export(format=format)
 
     def _check_config_is_valid(self, config):
         if "inputs" not in config:

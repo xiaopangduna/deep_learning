@@ -23,6 +23,7 @@ dependencies = [
     "pycocotools (>=2.0.8)",
     "onnx (==1.12.0)",
     "onnxruntime-gpu (==1.13.1)",
+    "netron (>=9.0.1,<10.0.0)",
 ]
 
 
