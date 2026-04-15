@@ -5406,6 +5406,75 @@ url = "https://pypi.tuna.tsinghua.edu.cn/simple"
 reference = "tuna"
 
 [[package]]
+name = "tensorrt-cu12"
+version = "10.15.1.29"
+description = "A high performance deep learning inference library"
+optional = false
+python-versions = ">=3.6"
+groups = ["main"]
+files = [
+    {file = "tensorrt_cu12-10.15.1.29.tar.gz", hash = "sha256:d28acc4d14804cac0b50c0c1fc58c0d25cb974aa4c53cda5cfd8c4a4154c45fe"},
+]
+
+[package.dependencies]
+tensorrt_cu12_bindings = "10.15.1.29"
+tensorrt_cu12_libs = "10.15.1.29"
+
+[package.extras]
+numpy = ["numpy"]
+
+[package.source]
+type = "legacy"
+url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+reference = "tuna"
+
+[[package]]
+name = "tensorrt-cu12-bindings"
+version = "10.15.1.29"
+description = "A high performance deep learning inference library"
+optional = false
+python-versions = "*"
+groups = ["main"]
+files = [
+    {file = "tensorrt_cu12_bindings-10.15.1.29-cp310-none-manylinux_2_28_x86_64.whl", hash = "sha256:1c108b0645452955c23b9e3fd7610af183dccf8ca5e5374be7f694161f604008"},
+    {file = "tensorrt_cu12_bindings-10.15.1.29-cp310-none-win_amd64.whl", hash = "sha256:ed8155c4feba035813c0f0ef59fa7ad207bc0f6b8264d0f609a037c51d99cba1"},
+    {file = "tensorrt_cu12_bindings-10.15.1.29-cp311-none-manylinux_2_28_x86_64.whl", hash = "sha256:394dc1e506fe40e554e9ed6ee9a892fef0897cbaa78bb77c7cb8778fd81fca02"},
+    {file = "tensorrt_cu12_bindings-10.15.1.29-cp311-none-win_amd64.whl", hash = "sha256:775d22f8425eb2484f649450d49e517d68efc48c7b381952bc523185cf8c8931"},
+    {file = "tensorrt_cu12_bindings-10.15.1.29-cp312-none-manylinux_2_28_x86_64.whl", hash = "sha256:627533cc801209887173b28137eb571e1cf52ecf2afb4c92c6cf29c41711f580"},
+    {file = "tensorrt_cu12_bindings-10.15.1.29-cp312-none-win_amd64.whl", hash = "sha256:39b348cf0ffc548e928b1d180649f9cfbf37563b128fc81b59c172722dc9f1c3"},
+    {file = "tensorrt_cu12_bindings-10.15.1.29-cp313-none-manylinux_2_28_x86_64.whl", hash = "sha256:b83e218d540f629d3fbc82904170839fa97c8fbd7fc280e0439ae147ea29df7d"},
+    {file = "tensorrt_cu12_bindings-10.15.1.29-cp313-none-win_amd64.whl", hash = "sha256:2dc3cf02ae8bdf8f078d7d95d9015d330835d47ef21d0b95a236fac56d0f301d"},
+    {file = "tensorrt_cu12_bindings-10.15.1.29-cp38-none-manylinux_2_28_x86_64.whl", hash = "sha256:ed6f27a6867c2d9c0e44108dcf34444aad4d57ec326a24e6082e013158f7646a"},
+    {file = "tensorrt_cu12_bindings-10.15.1.29-cp38-none-win_amd64.whl", hash = "sha256:803ab7e5b81256ec09baf470531fccd07acb6bf88991a8522127634a2ecbb706"},
+    {file = "tensorrt_cu12_bindings-10.15.1.29-cp39-none-manylinux_2_28_x86_64.whl", hash = "sha256:4b37977d1ecf1b9588fca1478215396fab7c5cdb2af3a5af1a420911a09121ee"},
+    {file = "tensorrt_cu12_bindings-10.15.1.29-cp39-none-win_amd64.whl", hash = "sha256:846eba17eb52aa3c8135b6fcdc768d19181e30c147d325ff1d186a187d5bcc68"},
+]
+
+[package.extras]
+numpy = ["numpy"]
+
+[package.source]
+type = "legacy"
+url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+reference = "tuna"
+
+[[package]]
+name = "tensorrt-cu12-libs"
+version = "10.15.1.29"
+description = "TensorRT Libraries"
+optional = false
+python-versions = "*"
+groups = ["main"]
+files = [
+    {file = "tensorrt_cu12_libs-10.15.1.29.tar.gz", hash = "sha256:b2a4ad7d46e6f1a43bb413cd8efc8ecd511a365beccd75515db5f65dacab6119"},
+]
+
+[package.source]
+type = "legacy"
+url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+reference = "tuna"
+
+[[package]]
 name = "terminado"
 version = "0.18.1"
 description = "Tornado websocket backend for the Xterm.js Javascript terminal emulator library."
@@ -6265,4 +6334,4 @@ reference = "tuna"
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.10,<3.14"
-content-hash = "4e85feaa035b9c20261622171a81e73b1ed6d37acbd1225f6adbf8278ce93934"
+content-hash = "61ced5fe3e817c9f5d856dd46f377f0086286c53c2ebba57234ab9c46df2f9ef"
