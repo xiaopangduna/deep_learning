@@ -54,9 +54,17 @@ class DAGNet(nn.Module):
         self.pretrained = pretrained
         self.model_name = model_name
         if isinstance(exporter, dict):
-            from lovely_deep_learning.export.yolov8 import YOLOv8Exporter
+            if "class_path" in exporter:
+                exporter_class_path = exporter["class_path"]
+                exporter_init_args = dict(exporter.get("init_args", {}))
+                self.exporter = dynamic_class_instantiate_from_string(
+                    exporter_class_path,
+                    **exporter_init_args,
+                )
+            else:
+                from lovely_deep_learning.export.yolov8 import YOLOv8Exporter
 
-            self.exporter = YOLOv8Exporter(**exporter)
+                self.exporter = YOLOv8Exporter(**exporter)
         else:
             self.exporter = exporter
 
@@ -72,6 +80,62 @@ class DAGNet(nn.Module):
 
     def load_weights(
         self,
+        path: Optional[str] = None,
+        path_custom: Optional[str] = None,
+        url: Optional[str] = None,
+        map_location: Optional[Union[str, torch.device]] = "cpu",
+        strict: bool = False,
+        src_key_prefix: str = "layers.",
+        src_key_slice_start: int = 0,
+    ) -> None:
+        """按来源路由加载权重：自定义 pt 直载或官方格式映射加载。"""
+        if path_custom:
+            self.load_custom_weights(
+                path_custom=path_custom,
+                map_location=map_location,
+                strict=strict,
+            )
+            return
+        if not path:
+            raise ValueError("Either 'path_custom' or 'path' must be provided.")
+        self.load_official_weights(
+            path=path,
+            url=url,
+            map_location=map_location,
+            strict=strict,
+            src_key_prefix=src_key_prefix,
+            src_key_slice_start=src_key_slice_start,
+        )
+
+    def load_custom_weights(
+        self,
+        path_custom: str,
+        map_location: Optional[Union[str, torch.device]] = "cpu",
+        strict: bool = False,
+    ) -> None:
+        print("============================================================================")
+        print(f"DAGNet: Loading weights from {path_custom} (map_location={map_location})")
+        print(f"DAGNet: Strict mode: {strict}")
+        if not os.path.isfile(path_custom):
+            raise FileNotFoundError(f"DAGNet: Custom weight file not found: {path_custom}")
+        try:
+            payload = torch.load(path_custom, map_location=map_location)
+            source_state_dict = self._extract_state_dict(payload)
+            print(f"DAGNet: Loading custom DAG weights from {path_custom} (strict={strict})...")
+            missing_keys, unexpected_keys = self.load_state_dict(source_state_dict, strict=strict)
+            if strict and (missing_keys or unexpected_keys):
+                print(f"Warning (Strict Mode): Missing keys: {missing_keys}, Unexpected keys: {unexpected_keys}")
+            elif not strict and missing_keys:
+                print(f"Info (Non-Strict): Missing keys (in model but not in custom weights): {missing_keys}")
+            print("DAGNet: Custom weights loading process completed.")
+            print("============================================================================")
+        except Exception as e:
+            error_msg = f"DAGNet: Error during custom loading from {path_custom}: {e}"
+            print(error_msg)
+            raise RuntimeError(error_msg) from e
+
+    def load_official_weights(
+        self,
         path: str,
         url: Optional[str] = None,
         map_location: Optional[Union[str, torch.device]] = "cpu",
@@ -79,34 +143,15 @@ class DAGNet(nn.Module):
         src_key_prefix: str = "layers.",
         src_key_slice_start: int = 0,
     ) -> None:
-        """从本地或 URL 加载权重，按键名截断与前缀规则映射到 ``self.layers.*`` 并 ``load_state_dict``。
-
-        Args:
-            path: 权重文件本地路径；不存在且提供 ``url`` 时会下载到此路径。
-            url: 可选下载地址。
-            map_location: ``torch.load`` 的 ``map_location``。
-            strict: 是否严格匹配全部参数。
-            src_key_prefix: 映射到 DAGNet 参数名时添加的前缀（默认 ``layers.``）。
-            src_key_slice_start: 源键名截断起始下标（如 YOLO 常为 12）。
-
-        Raises:
-            ValueError: ``path`` 为空或 ``src_key_slice_start < 0``。
-            FileNotFoundError: 本地无文件且未提供 ``url``。
-        """
-        print(f"============================================================================")
+        print("============================================================================")
         print(f"DAGNet: Loading weights from {path} (map_location={map_location})")
         print(f"DAGNet: Strict mode: {strict}")
         print(f"DAGNet: Source key prefix: {src_key_prefix}")
         print(f"DAGNet: Source key slice start: {src_key_slice_start}")
-
-        if not path:
-            raise ValueError("'path' must be provided as the target file location.")
-
         if src_key_slice_start < 0:
             raise ValueError("'src_key_slice_start' must be a non-negative integer.")
 
         final_path = path
-
         if os.path.isfile(path):
             print(f"DAGNet: Found local weight file at {path}. Using it.")
         elif url:
@@ -122,9 +167,7 @@ class DAGNet(nn.Module):
                 print(error_msg)
                 raise RuntimeError(error_msg) from e
         else:
-            error_msg = (
-                f"DAGNet: Weight file not found at {path} and no 'url' provided for download."
-            )
+            error_msg = f"DAGNet: Weight file not found at {path} and no 'url' provided for download."
             print(error_msg)
             raise FileNotFoundError(error_msg)
 
@@ -132,10 +175,11 @@ class DAGNet(nn.Module):
             print(f"DAGNet: Loading weights from {final_path} (map_location={map_location})")
             if "yolo" in path.lower():
                 source_state_dict: Dict[str, Any] = YOLO(path).state_dict()
-                print(f"DAGNet: Loaded weights for YOLO model")
+                print("DAGNet: Loaded weights for YOLO model")
             else:
-                source_state_dict = torch.load(final_path, map_location=map_location)
-                print(f"DAGNet: Loaded weights for PyTorch model")
+                payload = torch.load(final_path, map_location=map_location)
+                source_state_dict = self._extract_state_dict(payload)
+                print("DAGNet: Loaded weights for PyTorch model")
             mapped_state_dict: Dict[str, Any] = {}
             model_state_dict = self.state_dict()
             model_state_keys = set(model_state_dict.keys())
@@ -156,30 +200,29 @@ class DAGNet(nn.Module):
                             f"Expected: {model_state_dict[dag_net_key].shape}, Got: {value.shape}. Skipping."
                         )
                 else:
-                    print(
-                        f"Info: Mapped key '{dag_net_key}' (from '{src_key}') not found in model. Skipping."
-                    )
+                    print(f"Info: Mapped key '{dag_net_key}' (from '{src_key}') not found in model. Skipping.")
 
             print(f"DAGNet: Mapped {len(mapped_state_dict)} compatible keys.")
-
-            print(
-                f"DAGNet: Loading {len(mapped_state_dict)} mapped keys into model (strict={strict})..."
-            )
+            print(f"DAGNet: Loading {len(mapped_state_dict)} mapped keys into model (strict={strict})...")
             missing_keys, unexpected_keys = self.load_state_dict(mapped_state_dict, strict=strict)
-
             if strict and (missing_keys or unexpected_keys):
                 print(f"Warning (Strict Mode): Missing keys: {missing_keys}, Unexpected keys: {unexpected_keys}")
-            elif not strict:
-                if missing_keys:
-                    print(f"Info (Non-Strict): Missing keys (in model but not in mapped weights): {missing_keys}")
-
+            elif not strict and missing_keys:
+                print(f"Info (Non-Strict): Missing keys (in model but not in mapped weights): {missing_keys}")
             print("DAGNet: Weights loading process completed.")
-            print(f"============================================================================")
-
+            print("============================================================================")
         except Exception as e:
             error_msg = f"DAGNet: Error during loading from {final_path}: {e}"
             print(error_msg)
             raise RuntimeError(error_msg) from e
+
+    @staticmethod
+    def _extract_state_dict(payload: Any) -> Dict[str, Any]:
+        if isinstance(payload, dict) and "state_dict" in payload and isinstance(payload["state_dict"], dict):
+            return payload["state_dict"]
+        if isinstance(payload, dict):
+            return payload
+        raise ValueError("Weight format invalid: expected a state_dict dict or a dict containing key `state_dict`.")
 
     def forward(self, x: List[torch.Tensor]):
         outputs = {}
@@ -204,15 +247,13 @@ class DAGNet(nn.Module):
     def export(
         self,
         format: str = "onnx",
-        exporter: Any = None,
     ) -> str:
         """导出当前 DAGNet 模型。
 
         Args:
-            format: 导出格式，当前仅支持 ``onnx``。
-            exporter: 可选导出器实例，优先级高于构造时传入的 ``self.exporter``。
+            format: 导出格式（如 ``onnx`` 或 ``pt``）。
         """
-        active_exporter = exporter if exporter is not None else self.exporter
+        active_exporter = self.exporter
         if active_exporter is None:
             from lovely_deep_learning.export.yolov8 import YOLOv8Exporter
 

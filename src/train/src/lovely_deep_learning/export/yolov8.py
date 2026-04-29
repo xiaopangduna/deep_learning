@@ -6,6 +6,7 @@ from typing import Any
 import torch
 import torch.nn as nn
 
+from lovely_deep_learning.export.base import BaseExporter
 from lovely_deep_learning.model.DAGNet import DAGNet
 
 
@@ -18,18 +19,17 @@ class _DAGNetExportWrapper(nn.Module):
         return self.model([images])
 
 
-class YOLOv8Exporter:
+class YOLOv8Exporter(BaseExporter):
     def __init__(
         self,
         onnx_cfg: dict[str, Any] | None = None,
         trt_cfg: dict[str, Any] | None = None,
+        pt_cfg: dict[str, Any] | None = None,
     ):
+        super().__init__(pt_cfg=pt_cfg)
         self.onnx_cfg = onnx_cfg or {}
         self.trt_cfg = trt_cfg or {}
         self.model: DAGNet | None = None
-
-    def bind(self, model: DAGNet) -> None:
-        self.model = model
 
     def export(
         self,
@@ -44,9 +44,11 @@ class YOLOv8Exporter:
         if fmt == "tensorrt":
             fmt = "engine"
 
+        if fmt == "pt":
+            return self.export_pt()
         if fmt == "onnx":
             return self.export_onnx()
-        raise ValueError(f"当前仅支持 format=onnx，收到: {fmt!r}")
+        raise ValueError(f"当前仅支持 format=onnx/pt，收到: {fmt!r}")
 
     def export_onnx(self) -> str:
         if self.model is None:

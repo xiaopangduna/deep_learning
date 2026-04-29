@@ -1,5 +1,5 @@
 trainer:
-  max_epochs: 100
+  max_epochs: 10
   accelerator: auto
   callbacks:
     - class_path: lovely_deep_learning.callback.image_classifier.ImageClassifierCallback
@@ -109,6 +109,22 @@ model:
     model:
       model_name: mobilenet_v3_large
       pretrained: true
+      exporter:
+        class_path: lovely_deep_learning.export.base.BaseExporter
+        init_args:
+          onnx_cfg:
+            input_shape: [1, 3, 224, 224]
+            opset: 17
+          trt_cfg: {}
+      weight:
+        path_custom: null   # 自己保存的权重路径，优先加载自己训练的权重，如果没有则加载预训练权重
+        path: pretrained_models/mobilenet_v3_large-5c1a4163.pth  # 存放官方预训练权重的路径
+        url: https://download.pytorch.org/models/mobilenet_v3_large-5c1a4163.pth
+        map_location: cpu
+        strict: false
+        src_key_prefix: layers.
+        src_key_slice_start: 0
+
       structure:
         inputs: [{name: input, shape: [3, 224, 224]}]
         outputs: [{name: classification, from: [classifier]}]
@@ -185,13 +201,7 @@ model:
               - {name: "1", module: torch.nn.Hardswish, args: {inplace: true}}
               - {name: "2", module: torch.nn.Dropout, args: {p: 0.2, inplace: true}}
               - {name: "3", module: torch.nn.Linear, args: {in_features: 1280, out_features: 10}}
-      weight:
-        path: pretrained_models/mobilenet_v3_large-5c1a4163.pth
-        url: https://download.pytorch.org/models/mobilenet_v3_large-5c1a4163.pth
-        map_location: cpu
-        strict: false
-        src_key_prefix: layers.
-        src_key_slice_start: 0
+
 
 
 

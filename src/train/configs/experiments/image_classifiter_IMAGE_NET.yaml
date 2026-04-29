@@ -1,7 +1,7 @@
 trainer:
-  max_epochs: 600 
+  max_epochs: 50 
   accelerator: auto
-  accumulate_grad_batches: 4
+  accumulate_grad_batches: 32
   callbacks:
     - class_path: lovely_deep_learning.callback.image_classifier.ImageClassifierCallback
       init_args:
@@ -14,11 +14,12 @@ trainer:
         log_every_n_steps: 5000
     - class_path: lightning.pytorch.callbacks.EarlyStopping
       init_args:
-        monitor: "val_loss"
+        monitor: "train_loss"
         min_delta: 0.00
         patience: 10
         verbose: true
         mode: min
+    # 新增一个功能单独保存模型，最优和最后一个模型
     - class_path: lightning.pytorch.callbacks.ModelCheckpoint
       init_args:
         monitor: "val_acc"
@@ -26,6 +27,11 @@ trainer:
         save_top_k: 1
         save_last: true
         mode: max
+    - class_path: lightning.pytorch.callbacks.LearningRateMonitor
+      init_args:
+        logging_interval: epoch   # 可选: "step" / "epoch" / null
+        log_momentum: false      # 是否记录 momentum（一般不用）
+        log_weight_decay: false  # 是否记录 weight decay
   logger:
     - class_path: lightning.pytorch.loggers.TensorBoardLogger
       init_args:
@@ -106,8 +112,9 @@ model:
     optimizer:
       class_path: torch.optim.RMSprop
       init_args:
+        # 0.064×0.9732600​=0.064×0.973300=0.00317
         # 预训练微调：0.064 适合从零训 ImageNet，会迅速破坏预训练权重；0.001～1e-4 更稳妥，适合验证预训练模型
-        lr: 0.0001  # 0.064
+        lr: 0.00001  # 0.064
         momentum: 0.9
         weight_decay: 0.00001
         eps: 0.0316
@@ -119,7 +126,7 @@ model:
         gamma: 0.973
     model:
       model_name: mobilenet_v3_large
-      pretrained: false
+      pretrained: true
       structure:
         inputs: [{name: input, shape: [3, 224, 224]}]
         outputs: [{name: classification, from: [classifier]}]

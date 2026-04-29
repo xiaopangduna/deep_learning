@@ -192,8 +192,10 @@ class ImageClassifierModule(pl.LightningModule):
         self.logger.experiment.add_image(f"{log_prefix}/sample_batch", img_grid, global_step=self.global_step)
 
     def on_train_epoch_end(self):
-        try:
-            # 记录权重和梯度直方图
-            self.logger.experiment.add_histogram("fc/weights", self.model.layers.fc.weight, self.global_step)
-        except Exception as e:
-            print(f"Warning: failed to log histogram at step {self.global_step}, {e}")
+        # try:
+        #     # 记录权重和梯度直方图
+        #     self.logger.experiment.add_histogram("fc/weights", self.model.layers.fc.weight, self.global_step)
+        # except Exception as e:
+        #     print(f"Warning: failed to log histogram at step {self.global_step}, {e}")
+
+        pass

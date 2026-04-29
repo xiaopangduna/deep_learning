@@ -41,7 +41,7 @@ def run_export(
 
     exporter_cfg = init_args["model"].get("exporter", {}) or {}
     fmt = str(format).lower()
-    suffix_by_format = {"onnx": ".onnx", "engine": ".engine", "trt": ".engine", "tensorrt": ".engine"}
+    suffix_by_format = {"onnx": ".onnx", "pt": ".pt", "engine": ".engine", "trt": ".engine", "tensorrt": ".engine"}
     default_suffix = suffix_by_format.get(fmt, f".{fmt}")
     if ckpt_path is not None:
         ckpt = Path(ckpt_path).resolve()
@@ -50,10 +50,29 @@ def run_export(
         model_name = init_args["model"].get("model_name", "undefined")
         default_output = Path.cwd() / f"{model_name}{default_suffix}"
 
-    onnx_cfg = dict(exporter_cfg.get("onnx_cfg", {}))
-    onnx_cfg.setdefault("output_path", str(default_output))
-    exporter_cfg["onnx_cfg"] = onnx_cfg
-    init_args["model"]["exporter"] = exporter_cfg
+    if isinstance(exporter_cfg, dict) and "class_path" in exporter_cfg:
+        exporter_spec = dict(exporter_cfg)
+        exporter_init_args = dict(exporter_spec.get("init_args") or {})
+        if fmt == "pt":
+            pt_cfg = dict(exporter_init_args.get("pt_cfg") or {})
+            pt_cfg.setdefault("output_path", str(default_output))
+            exporter_init_args["pt_cfg"] = pt_cfg
+        else:
+            onnx_cfg = dict(exporter_init_args.get("onnx_cfg") or {})
+            onnx_cfg.setdefault("output_path", str(default_output))
+            exporter_init_args["onnx_cfg"] = onnx_cfg
+        exporter_spec["init_args"] = exporter_init_args
+        init_args["model"]["exporter"] = exporter_spec
+    else:
+        if fmt == "pt":
+            pt_cfg = dict(exporter_cfg.get("pt_cfg") or {})
+            pt_cfg.setdefault("output_path", str(default_output))
+            exporter_cfg["pt_cfg"] = pt_cfg
+        else:
+            onnx_cfg = dict(exporter_cfg.get("onnx_cfg") or {})
+            onnx_cfg.setdefault("output_path", str(default_output))
+            exporter_cfg["onnx_cfg"] = onnx_cfg
+        init_args["model"]["exporter"] = exporter_cfg
 
     for key in ("criterion", "postprocess", "metrics"):
         spec = init_args.get(key)
@@ -92,7 +111,7 @@ def export_main(argv: list[str]) -> None:
         help="实验配置 YAML（默认 configs/experiments/object_detect_COCO8.yaml）。",
     )
     parser.add_argument("--ckpt_path", type=Path, default=None, help="可选训练 checkpoint 路径；不传则导出当前初始化权重。")
-    parser.add_argument("--format", type=str, default="onnx", help="导出格式，当前仅支持 onnx。")
+    parser.add_argument("--format", type=str, default="onnx", help="导出格式，支持 onnx / pt。")
     args = parser.parse_args(argv)
     output = run_export(
         config_path=args.config,
