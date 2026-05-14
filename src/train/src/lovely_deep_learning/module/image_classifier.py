@@ -9,8 +9,9 @@ from typing import Any
 from torchvision.utils import make_grid
 from lovely_deep_learning.model.DAGNet import DAGNet
 from ..dataset.image_classifier import ImageClassifierDataset
+from .base import BaseModule
 
-class ImageClassifierModule(pl.LightningModule):
+class ImageClassifierModule(BaseModule):
     def __init__(
         self,
         learning_rate=1e-3,

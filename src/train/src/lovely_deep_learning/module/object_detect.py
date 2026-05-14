@@ -1,18 +1,18 @@
 from __future__ import annotations
 
-import lightning.pytorch as pl
 import torch
 from lightning.pytorch.cli import instantiate_class
 from typing import Any
 
 from lovely_deep_learning.model.DAGNet import DAGNet
 
+from .base import BaseModule
 from ..loss.object_detect import DetectionLossYOLOv8
 from ..metric.object_detect import ObjectDetectMetric
 from ..postprocess.yolov8 import YOLOv8PostProcessor
 
 
-class ObjectDetectModule(pl.LightningModule):
+class ObjectDetectModule(BaseModule):
     def __init__(
         self,
         model: Any = None,

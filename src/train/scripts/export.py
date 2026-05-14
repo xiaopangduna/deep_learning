@@ -5,16 +5,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
-_TRAIN_ROOT = Path(__file__).resolve().parents[1]
-_SRC = _TRAIN_ROOT / "src"
-if str(_SRC) not in sys.path:
-    sys.path.insert(0, str(_SRC))
-
-import torch
 import yaml
 from lightning.pytorch.cli import instantiate_class
-
-from lovely_deep_learning.model.DAGNet import DAGNet
 
 
 def _load_experiment_yaml(config_path: Path) -> dict[str, Any]:
@@ -28,7 +20,7 @@ def _load_experiment_yaml(config_path: Path) -> dict[str, Any]:
 def run_export(
     config_path: str | Path,
     ckpt_path: str | Path | None = None,
-    format: str = "onnx",
+    export_format: str = "onnx",
 ) -> str:
     config = _load_experiment_yaml(Path(config_path))
     model_block = config.get("model", {})
@@ -39,41 +31,6 @@ def run_export(
     if "model" not in init_args:
         raise ValueError("配置中缺少 model.init_args.model。")
 
-    exporter_cfg = init_args["model"].get("exporter", {}) or {}
-    fmt = str(format).lower()
-    suffix_by_format = {"onnx": ".onnx", "pt": ".pt", "engine": ".engine", "trt": ".engine", "tensorrt": ".engine"}
-    default_suffix = suffix_by_format.get(fmt, f".{fmt}")
-    if ckpt_path is not None:
-        ckpt = Path(ckpt_path).resolve()
-        default_output = ckpt.parent / f"{ckpt.stem}{default_suffix}"
-    else:
-        model_name = init_args["model"].get("model_name", "undefined")
-        default_output = Path.cwd() / f"{model_name}{default_suffix}"
-
-    if isinstance(exporter_cfg, dict) and "class_path" in exporter_cfg:
-        exporter_spec = dict(exporter_cfg)
-        exporter_init_args = dict(exporter_spec.get("init_args") or {})
-        if fmt == "pt":
-            pt_cfg = dict(exporter_init_args.get("pt_cfg") or {})
-            pt_cfg.setdefault("output_path", str(default_output))
-            exporter_init_args["pt_cfg"] = pt_cfg
-        else:
-            onnx_cfg = dict(exporter_init_args.get("onnx_cfg") or {})
-            onnx_cfg.setdefault("output_path", str(default_output))
-            exporter_init_args["onnx_cfg"] = onnx_cfg
-        exporter_spec["init_args"] = exporter_init_args
-        init_args["model"]["exporter"] = exporter_spec
-    else:
-        if fmt == "pt":
-            pt_cfg = dict(exporter_cfg.get("pt_cfg") or {})
-            pt_cfg.setdefault("output_path", str(default_output))
-            exporter_cfg["pt_cfg"] = pt_cfg
-        else:
-            onnx_cfg = dict(exporter_cfg.get("onnx_cfg") or {})
-            onnx_cfg.setdefault("output_path", str(default_output))
-            exporter_cfg["onnx_cfg"] = onnx_cfg
-        init_args["model"]["exporter"] = exporter_cfg
-
     for key in ("criterion", "postprocess", "metrics"):
         spec = init_args.get(key)
         if isinstance(spec, dict) and "class_path" in spec:
@@ -83,23 +40,12 @@ def run_export(
         (),
         {"class_path": class_path, "init_args": init_args},
     )
-    if not hasattr(module, "model") or not isinstance(module.model, DAGNet):
-        raise ValueError(f"{class_path} 未暴露 DAGNet 到 `model` 属性，无法导出。")
-    dagnet = module.model
-
-    if ckpt_path is not None:
-        checkpoint = torch.load(str(ckpt_path), map_location="cpu")
-        state_dict = checkpoint.get("state_dict", {})
-        if not state_dict:
-            raise ValueError(f"checkpoint 中缺少 `state_dict`: {ckpt_path}")
-        model_state = {
-            key.removeprefix("model."): value for key, value in state_dict.items() if key.startswith("model.")
-        }
-        if not model_state:
-            raise ValueError("checkpoint 中未找到 `model.` 前缀权重。")
-        dagnet.load_state_dict(model_state, strict=False)
-
-    return dagnet.export(format=format)
+    export_fn = getattr(module, "export", None)
+    if not callable(export_fn):
+        raise ValueError(
+            f"{class_path} 实例未提供 export()；请使用继承 BaseModule 的 LightningModule。"
+        )
+    return export_fn(ckpt_path=ckpt_path, export_format=export_format)
 
 
 def export_main(argv: list[str]) -> None:
@@ -116,7 +62,7 @@ def export_main(argv: list[str]) -> None:
     output = run_export(
         config_path=args.config,
         ckpt_path=args.ckpt_path,
-        format=args.format,
+        export_format=args.format,
     )
     print(f"导出完成: {output}")
 

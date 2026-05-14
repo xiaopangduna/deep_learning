@@ -8,6 +8,7 @@ import torch.nn as nn
 from ultralytics import YOLO
 
 from lovely_deep_learning.utils.factory import dynamic_class_instantiate_from_string
+from lovely_deep_learning.export.base import BaseExporter
 
 
 class DAGNet(nn.Module):
@@ -23,7 +24,7 @@ class DAGNet(nn.Module):
         weight=None,
         pretrained=False,
         model_name="undefined",
-        exporter: Any = None,
+        exporter: BaseExporter | None = None,
     ):
         """
         Parameters
@@ -53,20 +54,7 @@ class DAGNet(nn.Module):
         self.weight_config = weight
         self.pretrained = pretrained
         self.model_name = model_name
-        if isinstance(exporter, dict):
-            if "class_path" in exporter:
-                exporter_class_path = exporter["class_path"]
-                exporter_init_args = dict(exporter.get("init_args", {}))
-                self.exporter = dynamic_class_instantiate_from_string(
-                    exporter_class_path,
-                    **exporter_init_args,
-                )
-            else:
-                from lovely_deep_learning.export.yolov8 import YOLOv8Exporter
-
-                self.exporter = YOLOv8Exporter(**exporter)
-        else:
-            self.exporter = exporter
+        self.exporter = exporter
 
         self.inputs = self.structure_config["inputs"]
         self.outputs = self.structure_config["outputs"]
@@ -74,8 +62,6 @@ class DAGNet(nn.Module):
         self.layers = nn.ModuleDict()
         self._init_layers()
         if pretrained:
-            if weight is None:
-                raise ValueError("pretrained=True requires a non-None weight config dict.")
             self.load_weights(**self.weight_config)
 
     def load_weights(
@@ -97,7 +83,8 @@ class DAGNet(nn.Module):
             )
             return
         if not path:
-            raise ValueError("Either 'path_custom' or 'path' must be provided.")
+            raise ValueError(
+                "Either 'path_custom' or 'path' must be provided.")
         self.load_official_weights(
             path=path,
             url=url,
@@ -113,22 +100,30 @@ class DAGNet(nn.Module):
         map_location: Optional[Union[str, torch.device]] = "cpu",
         strict: bool = False,
     ) -> None:
-        print("============================================================================")
-        print(f"DAGNet: Loading weights from {path_custom} (map_location={map_location})")
+        print(
+            "============================================================================")
+        print(
+            f"DAGNet: Loading weights from {path_custom} (map_location={map_location})")
         print(f"DAGNet: Strict mode: {strict}")
         if not os.path.isfile(path_custom):
-            raise FileNotFoundError(f"DAGNet: Custom weight file not found: {path_custom}")
+            raise FileNotFoundError(
+                f"DAGNet: Custom weight file not found: {path_custom}")
         try:
             payload = torch.load(path_custom, map_location=map_location)
             source_state_dict = self._extract_state_dict(payload)
-            print(f"DAGNet: Loading custom DAG weights from {path_custom} (strict={strict})...")
-            missing_keys, unexpected_keys = self.load_state_dict(source_state_dict, strict=strict)
+            print(
+                f"DAGNet: Loading custom DAG weights from {path_custom} (strict={strict})...")
+            missing_keys, unexpected_keys = self.load_state_dict(
+                source_state_dict, strict=strict)
             if strict and (missing_keys or unexpected_keys):
-                print(f"Warning (Strict Mode): Missing keys: {missing_keys}, Unexpected keys: {unexpected_keys}")
+                print(
+                    f"Warning (Strict Mode): Missing keys: {missing_keys}, Unexpected keys: {unexpected_keys}")
             elif not strict and missing_keys:
-                print(f"Info (Non-Strict): Missing keys (in model but not in custom weights): {missing_keys}")
+                print(
+                    f"Info (Non-Strict): Missing keys (in model but not in custom weights): {missing_keys}")
             print("DAGNet: Custom weights loading process completed.")
-            print("============================================================================")
+            print(
+                "============================================================================")
         except Exception as e:
             error_msg = f"DAGNet: Error during custom loading from {path_custom}: {e}"
             print(error_msg)
@@ -143,19 +138,23 @@ class DAGNet(nn.Module):
         src_key_prefix: str = "layers.",
         src_key_slice_start: int = 0,
     ) -> None:
-        print("============================================================================")
-        print(f"DAGNet: Loading weights from {path} (map_location={map_location})")
+        print(
+            "============================================================================")
+        print(
+            f"DAGNet: Loading official weights from {path} (map_location={map_location})")
         print(f"DAGNet: Strict mode: {strict}")
         print(f"DAGNet: Source key prefix: {src_key_prefix}")
         print(f"DAGNet: Source key slice start: {src_key_slice_start}")
         if src_key_slice_start < 0:
-            raise ValueError("'src_key_slice_start' must be a non-negative integer.")
+            raise ValueError(
+                "'src_key_slice_start' must be a non-negative integer.")
 
         final_path = path
         if os.path.isfile(path):
             print(f"DAGNet: Found local weight file at {path}. Using it.")
         elif url:
-            print(f"DAGNet: Local file {path} not found. Downloading from {url}...")
+            print(
+                f"DAGNet: Local file {path} not found. Downloading from {url}...")
             try:
                 parent = os.path.dirname(path)
                 if parent:
@@ -172,7 +171,8 @@ class DAGNet(nn.Module):
             raise FileNotFoundError(error_msg)
 
         try:
-            print(f"DAGNet: Loading weights from {final_path} (map_location={map_location})")
+            print(
+                f"DAGNet: Loading weights from {final_path} (map_location={map_location})")
             if "yolo" in path.lower():
                 source_state_dict: Dict[str, Any] = YOLO(path).state_dict()
                 print("DAGNet: Loaded weights for YOLO model")
@@ -200,17 +200,23 @@ class DAGNet(nn.Module):
                             f"Expected: {model_state_dict[dag_net_key].shape}, Got: {value.shape}. Skipping."
                         )
                 else:
-                    print(f"Info: Mapped key '{dag_net_key}' (from '{src_key}') not found in model. Skipping.")
+                    print(
+                        f"Info: Mapped key '{dag_net_key}' (from '{src_key}') not found in model. Skipping.")
 
             print(f"DAGNet: Mapped {len(mapped_state_dict)} compatible keys.")
-            print(f"DAGNet: Loading {len(mapped_state_dict)} mapped keys into model (strict={strict})...")
-            missing_keys, unexpected_keys = self.load_state_dict(mapped_state_dict, strict=strict)
+            print(
+                f"DAGNet: Loading {len(mapped_state_dict)} mapped keys into model (strict={strict})...")
+            missing_keys, unexpected_keys = self.load_state_dict(
+                mapped_state_dict, strict=strict)
             if strict and (missing_keys or unexpected_keys):
-                print(f"Warning (Strict Mode): Missing keys: {missing_keys}, Unexpected keys: {unexpected_keys}")
+                print(
+                    f"Warning (Strict Mode): Missing keys: {missing_keys}, Unexpected keys: {unexpected_keys}")
             elif not strict and missing_keys:
-                print(f"Info (Non-Strict): Missing keys (in model but not in mapped weights): {missing_keys}")
+                print(
+                    f"Info (Non-Strict): Missing keys (in model but not in mapped weights): {missing_keys}")
             print("DAGNet: Weights loading process completed.")
-            print("============================================================================")
+            print(
+                "============================================================================")
         except Exception as e:
             error_msg = f"DAGNet: Error during loading from {final_path}: {e}"
             print(error_msg)
@@ -222,7 +228,8 @@ class DAGNet(nn.Module):
             return payload["state_dict"]
         if isinstance(payload, dict):
             return payload
-        raise ValueError("Weight format invalid: expected a state_dict dict or a dict containing key `state_dict`.")
+        raise ValueError(
+            "Weight format invalid: expected a state_dict dict or a dict containing key `state_dict`.")
 
     def forward(self, x: List[torch.Tensor]):
         outputs = {}
@@ -246,21 +253,17 @@ class DAGNet(nn.Module):
 
     def export(
         self,
-        format: str = "onnx",
+        export_format: str = "onnx",
     ) -> str:
         """导出当前 DAGNet 模型。
 
         Args:
-            format: 导出格式（如 ``onnx`` 或 ``pt``）。
+            export_format: 导出格式（如 ``onnx`` 或 ``pt``）。
         """
-        active_exporter = self.exporter
-        if active_exporter is None:
-            from lovely_deep_learning.export.yolov8 import YOLOv8Exporter
+        if self.exporter is None:
+            raise ValueError("exporter is None, please set exporter in the constructor")
 
-            active_exporter = YOLOv8Exporter()
-        if hasattr(active_exporter, "bind"):
-            active_exporter.bind(self)
-        return active_exporter.export(format=format)
+        return self.exporter.export(model=self, export_format=export_format)
 
     def _check_config_is_valid(self, config):
         if "inputs" not in config:
@@ -268,7 +271,8 @@ class DAGNet(nn.Module):
         if not isinstance(config["inputs"], list) or not all(
             isinstance(n, dict) for n in config["inputs"]
         ):
-            raise TypeError("'inputs' must be a list of dicts with at least 'name' key")
+            raise TypeError(
+                "'inputs' must be a list of dicts with at least 'name' key")
         for n in config["inputs"]:
             if "name" not in n:
                 raise ValueError("Each input node must have a 'name' key")

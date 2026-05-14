@@ -33,22 +33,25 @@ class YOLOv8Exporter(BaseExporter):
 
     def export(
         self,
-        format: str = "onnx",
+        model: Any | None = None,
+        export_format: str = "onnx",
     ) -> str:
+        if model is not None:
+            self.model = model
         if self.model is None:
-            raise ValueError("exporter 尚未绑定模型，请先调用 bind(model)。")
+            raise ValueError("exporter 尚未绑定模型；DAGNet 会通过 export(model=self, ...) 传入。")
 
-        fmt = str(format).lower()
+        fmt = str(export_format).lower()
         if fmt == "trt":
             fmt = "engine"
         if fmt == "tensorrt":
             fmt = "engine"
 
         if fmt == "pt":
-            return self.export_pt()
+            return self.export_pt(self.model)
         if fmt == "onnx":
             return self.export_onnx()
-        raise ValueError(f"当前仅支持 format=onnx/pt，收到: {fmt!r}")
+        raise ValueError(f"当前仅支持 export_format=onnx/pt，收到: {fmt!r}")
 
     def export_onnx(self) -> str:
         if self.model is None:
