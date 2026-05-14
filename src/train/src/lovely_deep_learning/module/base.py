@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional, Union
+from typing import Any, Optional, Union
 
 import lightning.pytorch as pl
+import torch
 
 from lovely_deep_learning.model.DAGNet import DAGNet
 
@@ -11,8 +12,57 @@ from lovely_deep_learning.model.DAGNet import DAGNet
 class BaseModule(pl.LightningModule):
     """项目内 LightningModule 基类。
 
+    **YAML 共性**（与检测 / 分类实验对齐）：由 Lightning CLI 注入 ``model``、
+    ``optimizer``、``lr_scheduler``、``criterion``、``postprocess``、``metrics``，
+    在本类 ``__init__`` 中校验并挂载为 ``self.*``。
+
     导出（第一版）：仅 ``ckpt_path``（可选）与 ``export_format``；其余依赖 YAML 中的 ``exporter``。
     """
+
+    def __init__(
+        self,
+        model: Any = None,
+        optimizer: dict[str, Any] | None = None,
+        lr_scheduler: dict[str, Any] | None = None,
+        criterion: Any = None,
+        postprocess: Any = None,
+        metrics: Any = None,
+    ) -> None:
+        super().__init__()
+        if model is None:
+            raise ValueError(
+                "`model` config is required in YAML (model.init_args.model / DAGNet)."
+            )
+        if optimizer is None:
+            raise ValueError(
+                "`optimizer` config is required in YAML (model.init_args.optimizer)."
+            )
+        if lr_scheduler is None:
+            raise ValueError(
+                "`lr_scheduler` config is required in YAML (model.init_args.lr_scheduler)."
+            )
+        if criterion is None:
+            raise ValueError(
+                "`criterion` config is required in YAML (model.init_args.criterion)."
+            )
+        if postprocess is None:
+            raise ValueError(
+                "`postprocess` config is required in YAML (model.init_args.postprocess)."
+            )
+        if metrics is None:
+            raise ValueError(
+                "`metrics` config is required in YAML (model.init_args.metrics)."
+            )
+
+        self.optimizer_cfg = optimizer
+        self.lr_scheduler_cfg = lr_scheduler
+        self.model: DAGNet = DAGNet(**model)
+        self.criterion = criterion
+        self.postprocess = postprocess
+        self.metrics = metrics
+
+    def forward(self, x: torch.Tensor) -> Any:
+        return self.model([x])
 
     def export(
         self,

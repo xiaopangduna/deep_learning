@@ -2,7 +2,8 @@ trainer:
   max_epochs: 10
   accelerator: auto
   callbacks:
-    - class_path: lovely_deep_learning.callback.image_classifier.ImageClassifierCallback
+    - class_path: lovely_deep_learning.callback.image_classifier.ImageClassifierTensorBoardImageLogCallback
+    - class_path: lovely_deep_learning.callback.image_classifier.ImageClassifierTestAndPredictionWriterCallback
       init_args:
         save_dir: tmp       # 保存测试和预测结果的目录
         test_only_save_mistake: true  # 只保存测试和预测结果的错误样本
@@ -20,6 +21,11 @@ trainer:
         save_top_k: 1
         save_last: true
         mode: max
+    ## 冻结训练
+    - class_path: lovely_deep_learning.callback.finetuning.DAGNetMilestoneUnfreezeFinetuning
+      init_args:
+        unfreeze_layers: ["classifier"]   # 自始可训的层（少）；其余 DAGNet.layers 先冻，到 unfreeze_epoch 一并解冻
+        unfreeze_epoch: 5           # 须 < max_epochs；本配置 max_epochs=10 → current_epoch 为 0..9
 
   logger:
     - class_path: lightning.pytorch.loggers.TensorBoardLogger
@@ -106,6 +112,18 @@ model:
       init_args:
         step_size: 5
         gamma: 0.1
+    criterion:
+      class_path: lovely_deep_learning.loss.image_classifier.ImageClassifierCriterion
+      init_args:
+        label_smoothing: 0.0
+    postprocess:
+      class_path: lovely_deep_learning.postprocess.image_classifier.ImageClassifierPostProcessor
+      init_args:
+        temperature: 1.0
+    metrics:
+      class_path: lovely_deep_learning.metric.image_classifier.ImageClassifierMetric
+      init_args:
+        num_classes: 10
     model:
       model_name: mobilenet_v3_large
       pretrained: true

@@ -1,4 +1,4 @@
-    - class_path: lovely_deep_learning.callback.image_classifier.ImageClassifierCallback
+    - class_path: lovely_deep_learning.callback.image_classifier.ImageClassifierTestAndPredictionWriterCallback
       init_args:
         save_dir: tmp       # 保存测试和预测结果的目录
         test_only_save_mistake: true  # 只保存测试和预测结果的错误样本

@@ -1,22 +1,151 @@
-import os
+"""图像分类相关 Lightning 回调（TensorBoard 图像记录；测试与 predict 阶段 Writer 落盘与 CSV）。"""
 
-import lightning.pytorch as pl
-import cv2
+from __future__ import annotations
+
+import os
 from pathlib import Path
+from typing import Any
+
+import cv2
+import lightning.pytorch as pl
 import pandas as pd
+import torch
+from lightning.pytorch.loggers.tensorboard import TensorBoardLogger
+from torchvision.utils import make_grid
 
 from ..dataset.image_classifier import ImageClassifierDataset
 
 
-class ImageClassifierCallback(pl.Callback):
+def _tensorboard_experiment(trainer: pl.Trainer):
+    seen: set[int] = set()
+    candidates: list[Any] = []
+    loggers = getattr(trainer, "loggers", None)
+    if loggers:
+        candidates.extend(loggers)
+    if trainer.logger is not None:
+        candidates.insert(0, trainer.logger)
+    for lg in candidates:
+        oid = id(lg)
+        if oid in seen:
+            continue
+        seen.add(oid)
+        if isinstance(lg, TensorBoardLogger):
+            return lg.experiment
+    return None
+
+
+class ImageClassifierTensorBoardImageLogCallback(pl.Callback):
+    """将 ``ImageClassifierModule`` 在 ``batch_idx==0`` 返回的 ``tb_sample`` 写入 TensorBoard（记录图像）。"""
+
+    def on_train_batch_end(
+        self,
+        trainer: pl.Trainer,
+        pl_module: pl.LightningModule,
+        outputs: dict[str, Any] | None,
+        batch: Any,
+        batch_idx: int,
+        dataloader_idx: int = 0,
+    ) -> None:
+        self._maybe_log_sample(trainer, pl_module, outputs, split="train")
+
+    def on_validation_batch_end(
+        self,
+        trainer: pl.Trainer,
+        pl_module: pl.LightningModule,
+        outputs: dict[str, Any] | None,
+        batch: Any,
+        batch_idx: int,
+        dataloader_idx: int = 0,
+    ) -> None:
+        self._maybe_log_sample(trainer, pl_module, outputs, split="val")
+
+    def _maybe_log_sample(
+        self,
+        trainer: pl.Trainer,
+        pl_module: pl.LightningModule,
+        outputs: dict[str, Any] | None,
+        split: str,
+    ) -> None:
+        if not isinstance(outputs, dict):
+            return
+        sample = outputs.get("tb_sample")
+        if sample is None or sample.get("split") != split:
+            return
+        experiment = _tensorboard_experiment(trainer)
+        if experiment is None:
+            return
+        try:
+            dm = trainer.datamodule
+            if split == "train":
+                dataset: ImageClassifierDataset = dm.train_dataset
+            else:
+                dataset = dm.val_dataset
+            self._log_images_with_target_and_predictions(
+                experiment=experiment,
+                global_step=int(pl_module.global_step),
+                img=sample["img"],
+                net_out=sample["net_out"],
+                preds=sample["pred_ids"],
+                class_id_conf=sample["pred_conf"],
+                dataset=dataset,
+                log_prefix=split,
+            )
+        except Exception as e:
+            print(
+                f"Warning: TensorBoard image log ({split}) failed at "
+                f"global_step={pl_module.global_step}, {e}"
+            )
+
+    @staticmethod
+    def _log_images_with_target_and_predictions(
+        experiment: Any,
+        global_step: int,
+        img: torch.Tensor,
+        net_out: dict[str, Any],
+        preds: torch.Tensor,
+        class_id_conf: torch.Tensor,
+        dataset: ImageClassifierDataset,
+        log_prefix: str,
+    ) -> None:
+        imgs_with_label = []
+        for i in range(min(9, img.shape[0])):
+            img_tensor = img[i]
+            class_name = net_out["class_name"][i]
+            class_id = net_out["class_id"][i]
+            class_id_pred = preds[i].item()
+            class_name_pred = dataset.map_class_id_to_class_name[class_id_pred]
+            confidence_pred = class_id_conf[i].item()
+
+            img_np = dataset.convert_img_from_tensor_to_numpy(img_tensor)
+
+            img_np = dataset.draw_target_and_predict_label_on_numpy(
+                img_np,
+                class_name=class_name,
+                class_id=class_id,
+                class_name_pred=class_name_pred,
+                class_id_pred=class_id_pred,
+                class_id_conf=confidence_pred,
+            )
+            img_with_label_tensor = dataset.convert_img_from_numpy_to_tensor_uint8(
+                img_np
+            )
+            imgs_with_label.append(img_with_label_tensor)
+        img_grid = make_grid(imgs_with_label, nrow=3)
+        experiment.add_image(
+            f"{log_prefix}/sample_batch", img_grid, global_step=global_step
+        )
+
+
+class ImageClassifierTestAndPredictionWriterCallback(pl.Callback):
     """
-    用于保存图像分类模型预测结果的回调函数
+    将 **test** 与 **predict** 阶段的标注图与结果表写入本地目录（``cv2.imwrite`` + CSV）。
     """
 
     def __init__(self, save_dir: str = None, test_only_save_mistake=True):
         """
         Args:
-            output_dir: 保存预测结果的目录
+            save_dir: 写入根目录；为 ``None`` 时不写入。
+            test_only_save_mistake: 测试时是否仅保存预测错误样本图。
         """
         super().__init__()
         self.test_only_save_mistake = test_only_save_mistake

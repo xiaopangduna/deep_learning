@@ -2,56 +2,11 @@ from __future__ import annotations
 
 import torch
 from lightning.pytorch.cli import instantiate_class
-from typing import Any
-
-from lovely_deep_learning.model.DAGNet import DAGNet
 
 from .base import BaseModule
-from ..loss.object_detect import DetectionLossYOLOv8
-from ..metric.object_detect import ObjectDetectMetric
-from ..postprocess.yolov8 import YOLOv8PostProcessor
 
 
 class ObjectDetectModule(BaseModule):
-    def __init__(
-        self,
-        model: Any = None,
-        optimizer: dict[str, Any] | None = None,
-        lr_scheduler: dict[str, Any] | None = None,
-        criterion: Any = None,
-        postprocess: Any = None,
-        metrics: Any = None,
-    ):
-        super().__init__()
-        self.optimizer_cfg = optimizer
-        self.lr_scheduler_cfg = lr_scheduler
-        if model is None:
-            raise ValueError(
-                "`model` config is required (DAGNet / yolov8_n.yaml 字段).")
-        if self.optimizer_cfg is None:
-            raise ValueError(
-                "`optimizer` config is required in YAML (model.init_args.optimizer).")
-        if self.lr_scheduler_cfg is None:
-            raise ValueError(
-                "`lr_scheduler` config is required in YAML (model.init_args.lr_scheduler).")
-        if criterion is None:
-            raise ValueError(
-                "`criterion` config is required in YAML (model.init_args.criterion).")
-        if postprocess is None:
-            raise ValueError(
-                "`postprocess` config is required in YAML (model.init_args.postprocess).")
-        if metrics is None:
-            raise ValueError(
-                "`metrics` config is required in YAML (model.init_args.metrics).")
-
-        self.model: DAGNet = DAGNet(**model)
-        self.criterion: DetectionLossYOLOv8 = criterion
-        self.postprocess: YOLOv8PostProcessor = postprocess
-        self.metrics: ObjectDetectMetric = metrics
-
-    def forward(self, x: torch.Tensor):
-        return self.model([x])
-
     def training_step(self, batch, batch_idx):
         net_in, net_out = batch
         imgs = torch.stack([item["img_tv_transformed"]
@@ -131,6 +86,8 @@ class ObjectDetectModule(BaseModule):
 
     def configure_optimizers(self):
         optimizer = instantiate_class(
-            self.model.parameters(), self.optimizer_cfg)
+            filter(lambda p: p.requires_grad, self.model.parameters()),
+            self.optimizer_cfg,
+        )
         scheduler = instantiate_class(optimizer, self.lr_scheduler_cfg)
         return {"optimizer": optimizer, "lr_scheduler": scheduler}

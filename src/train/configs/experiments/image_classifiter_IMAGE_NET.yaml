@@ -3,7 +3,8 @@ trainer:
   accelerator: auto
   accumulate_grad_batches: 32
   callbacks:
-    - class_path: lovely_deep_learning.callback.image_classifier.ImageClassifierCallback
+    - class_path: lovely_deep_learning.callback.image_classifier.ImageClassifierTensorBoardImageLogCallback
+    - class_path: lovely_deep_learning.callback.image_classifier.ImageClassifierTestAndPredictionWriterCallback
       init_args:
         save_dir: tmp  # 在测试和预测时使用，保存预测的结果，一般指向logs目录
         test_only_save_mistake: true  
@@ -124,6 +125,18 @@ model:
       init_args:
         step_size: 2
         gamma: 0.973
+    criterion:
+      class_path: lovely_deep_learning.loss.image_classifier.ImageClassifierCriterion
+      init_args:
+        label_smoothing: 0.0
+    postprocess:
+      class_path: lovely_deep_learning.postprocess.image_classifier.ImageClassifierPostProcessor
+      init_args:
+        temperature: 1.0
+    metrics:
+      class_path: lovely_deep_learning.metric.image_classifier.ImageClassifierMetric
+      init_args:
+        num_classes: 1000
     model:
       model_name: mobilenet_v3_large
       pretrained: true
