@@ -8,7 +8,7 @@ from lovely_deep_learning.cli.trainer import LovelyTrainer
 
 
 class LovelyLightningCLI(LightningCLI):
-    """CLI with ``fit`` / ``validate`` / ``test`` / ``predict`` / ``export``."""
+    """CLI with ``fit`` / ``validate`` / ``test`` / ``predict`` / ``export`` / ``prune``."""
 
     def __init__(self, *args, **kwargs):
         kwargs.setdefault("trainer_class", LovelyTrainer)
@@ -18,4 +18,5 @@ class LovelyLightningCLI(LightningCLI):
     def subcommands():
         commands = dict(LightningCLI.subcommands())
         commands["export"] = {"model", "datamodule"}
+        commands["prune"] = {"model", "datamodule"}
         return commands

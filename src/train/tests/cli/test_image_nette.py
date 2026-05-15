@@ -7,10 +7,10 @@ python scripts/train.py fit \
   --config configs/experiments/image_classifiter_IMAGE_NETTE.yaml \
   --trainer.fast_dev_run true
 
-二、``fit`` + ``--trainer.max_epochs 5`` — 短程完整训练并产出 ``.ckpt``（module fixture，供场景三～七）。
+二、``fit`` + ``--trainer.max_epochs 1`` — 短程训练并产出 ``.ckpt``（module fixture，供场景三～七及剪枝测试）。
 python scripts/train.py fit \
   --config configs/experiments/image_classifiter_IMAGE_NETTE.yaml \
-  --trainer.max_epochs 3
+  --trainer.max_epochs 1
 
 三、``fit`` + ``--ckpt_path`` — 从已有 ckpt 断点续训。
 python scripts/train.py fit \
@@ -45,99 +45,18 @@ python scripts/train.py export \
   --config logs/image_classifiter_IMAGE_NETTE/version_0/config.yaml \
   --export_format pt
 
-**产物位置**：均在仓库根下 ``.cli_test_imagenette/``（及配置里相对 cwd 的 ``logs/`` 等），不使用系统临时目录；可自行删除。
+**产物位置**：训练 checkpoint 等写在仓库根下 ``logs/``（由 YAML 中 logger 配置决定）；可自行删除。
 """
 
 from __future__ import annotations
 
+import json
 import re
-import subprocess
-import time
 from pathlib import Path
 
 import pytest
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-CONFIG = "configs/experiments/image_classifiter_IMAGE_NETTE.yaml"
-NUM_WORKERS_0 = ["--data.init_args.num_workers", "0"]
-# 固定写在项目内，便于查看与手动清理（见模块说明）。
-CLI_TEST_ROOT = REPO_ROOT / ".cli_test_imagenette"
-FIT_EP5_DIR = CLI_TEST_ROOT / "fit_ep5"
-FASTDEV_DIR = CLI_TEST_ROOT / "fastdev"
-RESUME_FIT_DIR = CLI_TEST_ROOT / "resume_fit"
-
-
-def _imagenette_data_ready(root: Path) -> bool:
-    return (root / "datasets/IMAGENETTE/imagenette2-320").is_dir() and (
-        root / "datasets/IMAGENETTE/train.csv"
-    ).is_file()
-
-
-def _run_cli(args: list[str], *, timeout: int) -> subprocess.CompletedProcess[str]:
-    result = subprocess.run(
-        args,
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-    )
-    if result.returncode != 0:
-        print(result.stdout)
-        print(result.stderr)
-    return result
-
-
-def _pick_latest_ckpt_after_fit(*, run_root: Path, not_before: float) -> Path:
-    """Lightning 常把 ckpt 写在 ``logs/``（相对 cwd），不一定在 ``default_root_dir`` 下。"""
-    candidates: list[Path] = []
-    if run_root.is_dir():
-        candidates.extend(run_root.rglob("*.ckpt"))
-    logs = REPO_ROOT / "logs"
-    if logs.is_dir():
-        candidates.extend(logs.rglob("*.ckpt"))
-    skew = 5.0
-    fresh = [
-        p
-        for p in candidates
-        if p.is_file() and p.stat().st_mtime >= not_before - skew
-    ]
-    if not fresh:
-        raise AssertionError(
-            f"在 {run_root} 与 {logs} 下未找到 mtime>={not_before - skew} 的 .ckpt"
-        )
-    return max(fresh, key=lambda p: p.stat().st_mtime)
-
-
-@pytest.fixture(scope="module")
-def imagenette_ckpt() -> str:
-    """场景二：``fit`` + ``max_epochs=5`` 产出 ckpt，供场景三～七复用。"""
-    if not _imagenette_data_ready(REPO_ROOT):
-        pytest.skip("缺少 datasets/IMAGENETTE（imagenette2-320 与 train.csv）")
-
-    FIT_EP5_DIR.mkdir(parents=True, exist_ok=True)
-    fit_args = [
-        "python",
-        "scripts/train.py",
-        "fit",
-        "--config",
-        CONFIG,
-        "--trainer.max_epochs",
-        "3",
-        *NUM_WORKERS_0,
-    ]
-    not_before = time.time()
-    result = _run_cli(fit_args, timeout=3600)
-    if result.returncode != 0:
-        pytest.fail(f"fit 失败:\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}")
-
-    try:
-        ckpt = _pick_latest_ckpt_after_fit(run_root=FIT_EP5_DIR, not_before=not_before)
-    except AssertionError as e:
-        pytest.fail(
-            "fit 后未找到本次运行产生的 .ckpt；stdout:\n"
-            f"{result.stdout}\nstderr:\n{result.stderr}\n{e}"
-        )
-    return str(ckpt)
+from tests.cli.conftest import CONFIG, NUM_WORKERS_0, REPO_ROOT, _imagenette_data_ready, _run_cli
 
 
 @pytest.mark.cli
@@ -146,7 +65,6 @@ def test_cli_01_fit_fast_dev_run_exits_ok() -> None:
     if not _imagenette_data_ready(REPO_ROOT):
         pytest.skip("缺少 datasets/IMAGENETTE（imagenette2-320 与 train.csv）")
 
-    FASTDEV_DIR.mkdir(parents=True, exist_ok=True)
     result = _run_cli(
         [
             "python",
@@ -164,7 +82,7 @@ def test_cli_01_fit_fast_dev_run_exits_ok() -> None:
 
 @pytest.mark.cli
 def test_cli_02_fit_max_epochs_five_produces_ckpt(imagenette_ckpt: str) -> None:
-    """二：fit + max_epochs=5 产生 .ckpt（由 module fixture 执行一次 fit）。"""
+    """二：fit + max_epochs=1 产生 .ckpt（由 module fixture 执行一次 fit）。"""
     path = Path(imagenette_ckpt)
     assert path.is_file()
     assert path.suffix == ".ckpt"
@@ -173,7 +91,6 @@ def test_cli_02_fit_max_epochs_five_produces_ckpt(imagenette_ckpt: str) -> None:
 @pytest.mark.cli
 def test_cli_03_fit_resume_with_ckpt_path(imagenette_ckpt: str) -> None:
     """三：fit + --ckpt_path 断点续训（ckpt 来自 5 epoch；``max_epochs=7`` 再训至多 7 轮）。"""
-    RESUME_FIT_DIR.mkdir(parents=True, exist_ok=True)
     result = _run_cli(
         [
             "python",
@@ -301,3 +218,74 @@ def test_cli_08_export_without_ckpt_path() -> None:
     m = re.search(r"导出完成:\s*(.+)", combined)
     assert m, f"未找到「导出完成」日志:\n{combined}"
     assert Path(m.group(1).strip()).is_file()
+
+
+PRUNED_OUT = REPO_ROOT / "pretrained_models" / "mobilenet_v3_large_pruned_30_test.pth"
+
+
+@pytest.mark.cli
+def test_cli_09_prune_mobilenet_v3(imagenette_ckpt: str) -> None:
+    """九：prune 导出 tp.state_dict 与 meta.json。"""
+    pytest.importorskip("torch_pruning")
+    if not _imagenette_data_ready(REPO_ROOT):
+        pytest.skip("缺少 datasets/IMAGENETTE")
+
+    PRUNED_OUT.parent.mkdir(parents=True, exist_ok=True)
+    for p in (PRUNED_OUT, PRUNED_OUT.with_suffix(".meta.json")):
+        if p.is_file():
+            p.unlink()
+
+    result = _run_cli(
+        [
+            "python",
+            "scripts/train.py",
+            "prune",
+            "--config",
+            CONFIG,
+            "--ckpt_path",
+            imagenette_ckpt,
+            "--pruning_ratio",
+            "0.30",
+            "--output_path",
+            str(PRUNED_OUT),
+            "--ignored_layer_names+",
+            "classifier",
+            *NUM_WORKERS_0,
+        ],
+        timeout=600,
+    )
+    assert result.returncode == 0, f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    assert PRUNED_OUT.is_file()
+    meta_path = PRUNED_OUT.with_suffix(".meta.json")
+    assert meta_path.is_file()
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    assert meta["load_pruned"] is True
+    assert meta["pruned_nparams"] < meta["base_nparams"]
+    assert re.search(r"剪枝完成:", result.stdout + result.stderr)
+
+
+@pytest.mark.cli
+def test_cli_10_fit_after_prune(imagenette_ckpt: str) -> None:
+    """十：剪枝后微调（path_custom 指向 pruned.pth；同目录 .meta.json 触发 tp 加载）。"""
+    pytest.importorskip("torch_pruning")
+    if not _imagenette_data_ready(REPO_ROOT):
+        pytest.skip("缺少 datasets/IMAGENETTE")
+    if not PRUNED_OUT.is_file():
+        test_cli_09_prune_mobilenet_v3(imagenette_ckpt)
+
+    result = _run_cli(
+        [
+            "python",
+            "scripts/train.py",
+            "fit",
+            "--config",
+            CONFIG,
+            "--model.init_args.model.weight.path_custom",
+            str(PRUNED_OUT.relative_to(REPO_ROOT)),
+            "--trainer.fast_dev_run",
+            "true",
+            *NUM_WORKERS_0,
+        ],
+        timeout=300,
+    )
+    assert result.returncode == 0, f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"

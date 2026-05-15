@@ -44,3 +44,33 @@ class LovelyTrainer(Trainer):
         out: str = export_fn(ckpt_path=ckpt_path, export_format=export_format)
         rank_zero_info(f"导出完成: {out}")
         return out
+
+    def prune(
+        self,
+        model: LightningModule,
+        datamodule: Optional[LightningDataModule] = None,
+        ckpt_path: Optional[str] = None,
+        pruning_ratio: float = 0.3,
+        output_path: Optional[str] = None,
+        global_pruning: bool = True,
+        round_to: int = 8,
+        ignored_layer_names: Optional[list[str]] = None,
+    ) -> str:
+        """剪枝导出，返回 pruned.pth 路径。"""
+        _ = datamodule
+        prune_fn = getattr(model, "prune", None)
+        if not callable(prune_fn):
+            raise TypeError(
+                f"{type(model).__name__} 未实现 prune(ckpt_path=..., ...)。"
+                "请继承 BaseModule 或自行实现。"
+            )
+        out: str = prune_fn(
+            ckpt_path=ckpt_path,
+            pruning_ratio=pruning_ratio,
+            output_path=output_path,
+            global_pruning=global_pruning,
+            round_to=round_to,
+            ignored_layer_names=ignored_layer_names,
+        )
+        rank_zero_info(f"剪枝完成: {out}")
+        return out

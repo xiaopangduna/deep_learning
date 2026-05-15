@@ -139,9 +139,18 @@ model:
               input_names: ["images"]
               output_names: ["classification"]
           trt_cfg: {}
+      pruner:
+        class_path: lovely_deep_learning.pruning.image_classifier.ImageClassifierPruner
+        init_args:
+          pruning_ratio: 0.50
+          global_pruning: true
+          round_to: 8
+          ignored_layer_names: [classifier]
+          num_classes: 10
       weight:
-        path_custom: null   # 自己保存的权重路径，优先加载自己训练的权重，如果没有则加载预训练权重
-        path: pretrained_models/mobilenet_v3_large-5c1a4163.pth  # 存放官方预训练权重的路径
+        path_custom: null   # 自训 ckpt 或剪枝产物 pruned.pth；剪枝后微调示例见下方注释
+        load_pruned: false  # 加载 tp.state_dict 剪枝权重时改为 true
+        path: pretrained_models/mobilenet_v3_large-5c1a4163.pth
         url: https://download.pytorch.org/models/mobilenet_v3_large-5c1a4163.pth
         map_location: cpu
         strict: false

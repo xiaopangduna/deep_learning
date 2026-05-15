@@ -25,6 +25,7 @@ dependencies = [
     "onnxruntime-gpu (==1.13.1)",
     "netron (>=9.0.1,<10.0.0)",
     "tensorrt-cu12 (==10.15.1.29)",
+    "torch-pruning (>=1.6.1,<2.0.0)"
 ]
 
 

@@ -8,8 +8,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional, Union
 
-import torch
-
 from lovely_deep_learning.model.DAGNet import DAGNet
 
 _SUFFIX_BY_FORMAT: dict[str, str] = {
@@ -71,15 +69,7 @@ def ensure_exporter_output_paths(
 
 
 def load_pl_checkpoint_into_dagnet(dagnet: DAGNet, ckpt_path: Union[str, Path]) -> None:
-    path = str(ckpt_path)
-    checkpoint = torch.load(path, map_location="cpu", weights_only=False)
-    state_dict = checkpoint.get("state_dict", {})
-    if not state_dict:
-        raise ValueError(f"checkpoint 中缺少 state_dict: {path}")
-    model_state = {k.removeprefix("model."): v for k, v in state_dict.items() if k.startswith("model.")}
-    if not model_state:
-        raise ValueError("checkpoint 中未找到 `model.` 前缀权重。")
-    dagnet.load_state_dict(model_state, strict=False)
+    dagnet.load_from_checkpoint(ckpt_path, strict=False)
 
 
 def export_dagnet(

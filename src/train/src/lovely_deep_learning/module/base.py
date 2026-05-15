@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any, Dict, Optional, Union
 
 import lightning.pytorch as pl
 import torch
@@ -21,7 +21,7 @@ class BaseModule(pl.LightningModule):
 
     def __init__(
         self,
-        model: Any = None,
+        model: Dict[str, Any],
         optimizer: dict[str, Any] | None = None,
         lr_scheduler: dict[str, Any] | None = None,
         criterion: Any = None,
@@ -79,3 +79,15 @@ class BaseModule(pl.LightningModule):
         from lovely_deep_learning.export.pipeline import export_dagnet
 
         return export_dagnet(model, ckpt_path=ckpt_path, export_format=export_format)
+
+    def prune(
+        self,
+        ckpt_path: Optional[Union[str, Path]] = None,
+        **kwargs: Any,
+    ) -> str:
+        """剪枝导出，返回 pruned.pth 路径；其余参数委托 YAML ``pruner`` 或 CLI 覆盖。"""
+        if not isinstance(self.model, DAGNet):
+            raise TypeError(
+                f"{type(self).__name__}.prune 要求 `self.model` 为 DAGNet，当前为 {type(self.model).__name__!r}。"
+            )
+        return self.model.prune(ckpt_path=ckpt_path, **kwargs)
