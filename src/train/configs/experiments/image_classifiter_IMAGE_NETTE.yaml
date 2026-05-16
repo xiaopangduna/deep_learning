@@ -22,10 +22,10 @@ trainer:
         save_last: true
         mode: max
     ## 冻结训练
-    - class_path: lovely_deep_learning.callback.finetuning.DAGNetMilestoneUnfreezeFinetuning
-      init_args:
-        unfreeze_layers: ["classifier"]   # 自始可训的层（少）；其余 DAGNet.layers 先冻，到 unfreeze_epoch 一并解冻
-        unfreeze_epoch: 5           # 须 < max_epochs；本配置 max_epochs=10 → current_epoch 为 0..9
+    # - class_path: lovely_deep_learning.callback.finetuning.DAGNetMilestoneUnfreezeFinetuning
+    #   init_args:
+    #     unfreeze_layers: ["classifier"]   # 自始可训的层（少）；其余 DAGNet.layers 先冻，到 unfreeze_epoch 一并解冻
+    #     unfreeze_epoch: 5           # 须 < max_epochs；本配置 max_epochs=10 → current_epoch 为 0..9
 
   logger:
     - class_path: lightning.pytorch.loggers.TensorBoardLogger
@@ -106,7 +106,7 @@ model:
     optimizer:
       class_path: torch.optim.Adam
       init_args:
-        lr: 2e-4
+        lr: 1e-5
     lr_scheduler:
       class_path: torch.optim.lr_scheduler.StepLR
       init_args:
@@ -142,14 +142,23 @@ model:
       pruner:
         class_path: lovely_deep_learning.pruning.image_classifier.ImageClassifierPruner
         init_args:
-          pruning_ratio: 0.50
-          global_pruning: true
-          round_to: 8
-          ignored_layer_names: [classifier]
-          num_classes: 10
+          ignored_layer_names: [classifier]  # DAGNet.layers 顶层键，非 torch_pruning 参数
+          importance_cfg:
+            class_name: GroupMagnitudeImportance
+            init_args:
+              p: 2
+          tp_pruner_cfg:
+            class_name: GroupNormPruner
+            init_args:
+              pruning_ratio: 0.25
+              global_pruning: false
+              round_to: null
+              iterative_steps: 1
       weight:
-        path_custom: null   # 自训 ckpt 或剪枝产物 pruned.pth；剪枝后微调示例见下方注释
-        load_pruned: false  # 加载 tp.state_dict 剪枝权重时改为 true
+        # path_custom: logs/image_classifiter_IMAGE_NETTE/version_0/checkpoints/pruning0p25_last.pth   # 自训 ckpt 或剪枝产物 *.pth（与 checkpoints 同目录的 pruning*.pth）
+        # load_pruned: true  # 剪枝后微调：与 path_custom 同段改为 true，并指向 pruning*.pth（建议改 YAML，勿拆成多条 CLI 改 weight 以免 jsonargparse 合并丢键）
+        path_custom: null
+        load_pruned: false
         path: pretrained_models/mobilenet_v3_large-5c1a4163.pth
         url: https://download.pytorch.org/models/mobilenet_v3_large-5c1a4163.pth
         map_location: cpu

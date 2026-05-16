@@ -1,4 +1,3 @@
-import json
 import os
 import urllib.request
 from collections import OrderedDict
@@ -143,18 +142,6 @@ class DAGNet(nn.Module):
             load_pruned=load_pruned if load_pruned else None,
         )
 
-    @staticmethod
-    def read_prune_meta(path: Union[str, Path]) -> Optional[dict[str, Any]]:
-        p = Path(path)
-        meta_path = (
-            p.with_suffix(".meta.json")
-            if p.suffix in (".pth", ".pt", ".ckpt")
-            else p
-        )
-        if not meta_path.is_file():
-            return None
-        return json.loads(meta_path.read_text(encoding="utf-8"))
-
     def _load_weights_from_file(
         self,
         source_path: Path,
@@ -221,9 +208,7 @@ class DAGNet(nn.Module):
     ) -> bool:
         if explicit is True:
             return True
-        meta = self.read_prune_meta(source_path)
-        if meta and meta.get("load_pruned"):
-            return True
+        # 显式 false：仅走普通 state_dict 映射，不推断为 tp。
         if explicit is False:
             return False
         if checkpoint and self._weight_cfg_from_ckpt(checkpoint).get("load_pruned"):
@@ -333,18 +318,13 @@ class DAGNet(nn.Module):
         )
 
     # ------------------------------------------------------------------ prune / export
-    def prune(
-        self,
-        ckpt_path: Optional[Union[str, Path]] = None,
-        output_path: Optional[Union[str, Path]] = None,
-        **kwargs: Any,
-    ) -> str:
-        """剪枝并导出 tp.state_dict 产物（需配置 ``pruner``）。"""
+    def prune(self, ckpt_path: Union[str, Path]) -> str:
+        """剪枝并导出 tp.state_dict 产物（需配置 ``pruner``；其余参数见 YAML）。"""
         if self.pruner is None:
             raise ValueError("pruner is None，请在 YAML 中配置 model.init_args.model.pruner。")
-        return self.pruner.prune(
-            self, ckpt_path=ckpt_path, output_path=output_path, **kwargs
-        )
+        if ckpt_path is None:
+            raise ValueError("prune 需要 --ckpt_path。")
+        return self.pruner.prune(self, ckpt_path=ckpt_path)
 
     def export(self, export_format: str = "onnx") -> str:
         if self.exporter is None:

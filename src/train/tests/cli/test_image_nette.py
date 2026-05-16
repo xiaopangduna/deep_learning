@@ -7,10 +7,10 @@ python scripts/train.py fit \
   --config configs/experiments/image_classifiter_IMAGE_NETTE.yaml \
   --trainer.fast_dev_run true
 
-二、``fit`` + ``--trainer.max_epochs 1`` — 短程训练并产出 ``.ckpt``（module fixture，供场景三～七及剪枝测试）。
+二、``fit`` + ``--trainer.max_epochs 3`` — 短程训练并产出 ``.ckpt``（module fixture，供场景三～九）。
 python scripts/train.py fit \
   --config configs/experiments/image_classifiter_IMAGE_NETTE.yaml \
-  --trainer.max_epochs 1
+  --trainer.max_epochs 3
 
 三、``fit`` + ``--ckpt_path`` — 从已有 ckpt 断点续训。
 python scripts/train.py fit \
@@ -45,18 +45,42 @@ python scripts/train.py export \
   --config logs/image_classifiter_IMAGE_NETTE/version_0/config.yaml \
   --export_format pt
 
+九、``prune`` + ``--ckpt_path``：产物为 ckpt 同目录 ``pruning{{率}}_{{stem}}.pth``（率来自 YAML ``pruner``；规则见 ``BasePruner.default_output_path_for_ratio``）。
+python scripts/train.py prune \
+  --config logs/image_classifiter_IMAGE_NETTE/version_0/config.yaml \
+  --ckpt_path logs/image_classifiter_IMAGE_NETTE/version_0/checkpoints/last.ckpt
+
+十、剪枝后微调：不在本文件做 CLI 自动化（避免 jsonargparse 对 ``weight`` 多键合并顺序敏感）；本地请改 YAML 的 ``weight.path_custom`` 与 ``weight.load_pruned: true`` 后执行 ``fit``，或复制一份专用微调配置。
+修改image_classifiter_IMAGE_NETTE.yaml中的weight.path_custom为pruning0.50_mobilenet_v3_large.pth
+修改image_classifiter_IMAGE_NETTE.yaml中的weight.load_pruned为true
+python scripts/train.py fit \
+  --config logs/image_classifiter_IMAGE_NETTE/version_0/config.yaml \
+  --trainer.max_epochs 3
+
 **产物位置**：训练 checkpoint 等写在仓库根下 ``logs/``（由 YAML 中 logger 配置决定）；可自行删除。
 """
 
 from __future__ import annotations
 
-import json
 import re
 from pathlib import Path
 
 import pytest
+import yaml
+
+from lovely_deep_learning.pruning.base import BasePruner
 
 from tests.cli.conftest import CONFIG, NUM_WORKERS_0, REPO_ROOT, _imagenette_data_ready, _run_cli
+
+
+def _default_pruned_pth_next_to_ckpt(ckpt_str: str) -> Path:
+    """与 ``CONFIG`` 中 ``tp_pruner_cfg.pruning_ratio`` + :meth:`BasePruner.default_output_path_for_ratio` 一致。"""
+    with (REPO_ROOT / CONFIG).open(encoding="utf-8") as f:
+        cfg = yaml.safe_load(f)
+    tp_cfg = cfg["model"]["init_args"]["model"]["pruner"]["init_args"]["tp_pruner_cfg"]
+    tp_init = tp_cfg.get("init_args", tp_cfg)
+    ratio = float(tp_init["pruning_ratio"])
+    return BasePruner.default_output_path_for_ratio(ckpt_str, ratio)
 
 
 @pytest.mark.cli
@@ -82,7 +106,7 @@ def test_cli_01_fit_fast_dev_run_exits_ok() -> None:
 
 @pytest.mark.cli
 def test_cli_02_fit_max_epochs_five_produces_ckpt(imagenette_ckpt: str) -> None:
-    """二：fit + max_epochs=1 产生 .ckpt（由 module fixture 执行一次 fit）。"""
+    """二：fit + max_epochs=3 产生 .ckpt（由 module fixture 执行一次 fit）。"""
     path = Path(imagenette_ckpt)
     assert path.is_file()
     assert path.suffix == ".ckpt"
@@ -121,8 +145,6 @@ def test_cli_04_validate_with_ckpt_path(imagenette_ckpt: str) -> None:
             CONFIG,
             "--ckpt_path",
             imagenette_ckpt,
-            "--trainer.limit_val_batches",
-            "2",
             *NUM_WORKERS_0,
         ],
         timeout=120,
@@ -220,20 +242,16 @@ def test_cli_08_export_without_ckpt_path() -> None:
     assert Path(m.group(1).strip()).is_file()
 
 
-PRUNED_OUT = REPO_ROOT / "pretrained_models" / "mobilenet_v3_large_pruned_30_test.pth"
-
-
 @pytest.mark.cli
 def test_cli_09_prune_mobilenet_v3(imagenette_ckpt: str) -> None:
-    """九：prune 导出 tp.state_dict 与 meta.json。"""
+    """九：prune 在 ckpt 同目录写出 ``pruning{{率}}_{{stem}}.pth``（tp.state_dict）。"""
     pytest.importorskip("torch_pruning")
     if not _imagenette_data_ready(REPO_ROOT):
         pytest.skip("缺少 datasets/IMAGENETTE")
 
-    PRUNED_OUT.parent.mkdir(parents=True, exist_ok=True)
-    for p in (PRUNED_OUT, PRUNED_OUT.with_suffix(".meta.json")):
-        if p.is_file():
-            p.unlink()
+    pruned_out = _default_pruned_pth_next_to_ckpt(imagenette_ckpt)
+    if pruned_out.is_file():
+        pruned_out.unlink()
 
     result = _run_cli(
         [
@@ -244,48 +262,14 @@ def test_cli_09_prune_mobilenet_v3(imagenette_ckpt: str) -> None:
             CONFIG,
             "--ckpt_path",
             imagenette_ckpt,
-            "--pruning_ratio",
-            "0.30",
-            "--output_path",
-            str(PRUNED_OUT),
-            "--ignored_layer_names+",
-            "classifier",
             *NUM_WORKERS_0,
         ],
         timeout=600,
     )
     assert result.returncode == 0, f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
-    assert PRUNED_OUT.is_file()
-    meta_path = PRUNED_OUT.with_suffix(".meta.json")
-    assert meta_path.is_file()
-    meta = json.loads(meta_path.read_text(encoding="utf-8"))
-    assert meta["load_pruned"] is True
-    assert meta["pruned_nparams"] < meta["base_nparams"]
-    assert re.search(r"剪枝完成:", result.stdout + result.stderr)
+    assert pruned_out.is_file()
+    assert pruned_out.stat().st_size > 0
+    combined = result.stdout + result.stderr
+    assert re.search(r"剪枝完成:", combined)
+    assert re.search(r"Params:", combined) and re.search(r"MACs:", combined)
 
-
-@pytest.mark.cli
-def test_cli_10_fit_after_prune(imagenette_ckpt: str) -> None:
-    """十：剪枝后微调（path_custom 指向 pruned.pth；同目录 .meta.json 触发 tp 加载）。"""
-    pytest.importorskip("torch_pruning")
-    if not _imagenette_data_ready(REPO_ROOT):
-        pytest.skip("缺少 datasets/IMAGENETTE")
-    if not PRUNED_OUT.is_file():
-        test_cli_09_prune_mobilenet_v3(imagenette_ckpt)
-
-    result = _run_cli(
-        [
-            "python",
-            "scripts/train.py",
-            "fit",
-            "--config",
-            CONFIG,
-            "--model.init_args.model.weight.path_custom",
-            str(PRUNED_OUT.relative_to(REPO_ROOT)),
-            "--trainer.fast_dev_run",
-            "true",
-            *NUM_WORKERS_0,
-        ],
-        timeout=300,
-    )
-    assert result.returncode == 0, f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"

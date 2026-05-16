@@ -80,14 +80,10 @@ class BaseModule(pl.LightningModule):
 
         return export_dagnet(model, ckpt_path=ckpt_path, export_format=export_format)
 
-    def prune(
-        self,
-        ckpt_path: Optional[Union[str, Path]] = None,
-        **kwargs: Any,
-    ) -> str:
-        """剪枝导出，返回 pruned.pth 路径；其余参数委托 YAML ``pruner`` 或 CLI 覆盖。"""
+    def prune(self, ckpt_path: Optional[Union[str, Path]] = None) -> str:
+        """剪枝导出；剪枝超参见 YAML ``pruner.init_args``，仅 ``ckpt_path`` 由 CLI 传入。"""
         if not isinstance(self.model, DAGNet):
             raise TypeError(
                 f"{type(self).__name__}.prune 要求 `self.model` 为 DAGNet，当前为 {type(self.model).__name__!r}。"
             )
-        return self.model.prune(ckpt_path=ckpt_path, **kwargs)
+        return self.model.prune(ckpt_path=ckpt_path)

@@ -63,7 +63,7 @@ def imagenette_ckpt() -> str:
         "--config",
         CONFIG,
         "--trainer.max_epochs",
-        "1",
+        "3",
         *NUM_WORKERS_0,
     ]
     not_before = time.time()
