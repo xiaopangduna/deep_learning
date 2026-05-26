@@ -1,12 +1,15 @@
 model_name: regnet_y_32gf
 pretrained: true
 weight:
-  path: pretrained_models/regnet_y_32gf-8db6d4b5.pth
-  url: https://download.pytorch.org/models/regnet_y_32gf-8db6d4b5.pth
   map_location: cpu
   strict: false
-  src_key_prefix: layers.
-  src_key_slice_start: 0
+  stages:
+    - format: official
+      path: pretrained_models/regnet_y_32gf-8db6d4b5.pth
+      opts:
+        url: https://download.pytorch.org/models/regnet_y_32gf-8db6d4b5.pth
+        src_key_prefix: layers.
+        src_key_slice_start: 0
 
 structure:
   inputs: [{name: input, shape: [3, 224, 224]}]

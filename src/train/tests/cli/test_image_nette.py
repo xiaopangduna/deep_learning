@@ -50,12 +50,17 @@ python scripts/train.py prune \
   --config logs/image_classifiter_IMAGE_NETTE/version_0/config.yaml \
   --ckpt_path logs/image_classifiter_IMAGE_NETTE/version_0/checkpoints/last.ckpt
 
-十、剪枝后微调：不在本文件做 CLI 自动化（避免 jsonargparse 对 ``weight`` 多键合并顺序敏感）；本地请改 YAML 的 ``weight.path_custom`` 与 ``weight.load_pruned: true`` 后执行 ``fit``，或复制一份专用微调配置。
-修改image_classifiter_IMAGE_NETTE.yaml中的weight.path_custom为pruning0.50_mobilenet_v3_large.pth
-修改image_classifiter_IMAGE_NETTE.yaml中的weight.load_pruned为true
+十、剪枝后微调：不在本文件做 CLI 自动化（避免 jsonargparse 对 ``weight`` 多键合并顺序敏感）；本地请改 YAML 的 ``weight.stages``（例如单步 ``format: torch_pruning`` + ``path: pruning*.pth``）后执行 ``fit``，或复制一份专用微调配置。
+修改 image_classifiter_IMAGE_NETTE.yaml 中 weight.stages 为 torch_pruning 步，path 指向 pruning0.50_*.pth
 python scripts/train.py fit \
-  --config logs/image_classifiter_IMAGE_NETTE/version_0/config.yaml \
-  --trainer.max_epochs 3
+  --config configs/experiments/image_classifiter_IMAGE_NETTE.yaml \
+  --trainer.max_epochs 5
+
+python scripts/train.py fit \
+  --config logs/image_classifiter_IMAGE_NETTE/version_5/config.yaml \
+  --ckpt_path logs/image_classifiter_IMAGE_NETTE/version_5/checkpoints/last.ckpt \
+  --trainer.max_epochs 10
+
 
 **产物位置**：训练 checkpoint 等写在仓库根下 ``logs/``（由 YAML 中 logger 配置决定）；可自行删除。
 """

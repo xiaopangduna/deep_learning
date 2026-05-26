@@ -1,4 +1,4 @@
-"""Shared export path: default output locations, PL ckpt → DAGNet, DAGNet.export.
+"""Shared export path: default output locations, PL ckpt → DAGNet, exporter.export.
 
 第一版对外只暴露 ``ckpt_path``（可选）与 ``export_format``；由 :class:`~lovely_deep_learning.module.base.BaseModule` / CLI 传入。
 """
@@ -69,7 +69,11 @@ def ensure_exporter_output_paths(
 
 
 def load_pl_checkpoint_into_dagnet(dagnet: DAGNet, ckpt_path: Union[str, Path]) -> None:
-    dagnet.load_from_checkpoint(ckpt_path, strict=False)
+    dagnet.load_weights(
+        map_location="cpu",
+        strict=False,
+        stages=[{"format": "dense", "path": str(ckpt_path)}],
+    )
 
 
 def export_dagnet(
@@ -82,4 +86,6 @@ def export_dagnet(
     if ckpt_path is not None:
         load_pl_checkpoint_into_dagnet(dagnet, ckpt_path)
     fmt = normalize_export_format(export_format)
-    return dagnet.export(export_format=fmt)
+    if dagnet.exporter is None:
+        raise ValueError("DAGNet.exporter 为 None，请在 YAML 中配置 model.init_args.model.exporter。")
+    return dagnet.exporter.export(model=dagnet, export_format=fmt)

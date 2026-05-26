@@ -86,4 +86,8 @@ class BaseModule(pl.LightningModule):
             raise TypeError(
                 f"{type(self).__name__}.prune 要求 `self.model` 为 DAGNet，当前为 {type(self.model).__name__!r}。"
             )
-        return self.model.prune(ckpt_path=ckpt_path)
+        if self.model.pruner is None:
+            raise ValueError("pruner is None，请在 YAML 中配置 model.init_args.model.pruner。")
+        if ckpt_path is None:
+            raise ValueError("prune 需要 --ckpt_path。")
+        return self.model.pruner.prune(self.model, ckpt_path=ckpt_path)

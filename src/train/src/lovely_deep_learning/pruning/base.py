@@ -37,7 +37,7 @@ def _tp_component(cfg: Any, module: Any, *, field: str) -> tuple[type, dict[str,
 
 
 class BasePruner:
-    """可插拔剪枝策略，由 DAGNet.pruner 持有并调用。"""
+    """可插拔剪枝策略，由 YAML 注入 DAGNet.pruner，经 Module 调用。"""
 
     def __init__(
         self,
@@ -94,6 +94,7 @@ class BasePruner:
     def run_pruning(
         self, dagnet: DAGNet, pruner: Any, example_inputs: torch.Tensor
     ) -> tuple[int, int, float, float]:
+        dagnet.eval()
         base_macs, base_nparams = tp.utils.count_ops_and_params(dagnet, example_inputs)
         for _ in range(pruner.iterative_steps):
             pruner.step()
@@ -121,7 +122,11 @@ class BasePruner:
         """执行剪枝。``ckpt_path`` 由 CLI ``--ckpt_path`` 传入；其余见 YAML ``init_args``。"""
         ratio = float(self.tp_pruner_cfg["pruning_ratio"])
 
-        model.load_from_checkpoint(ckpt_path, load_pruned=False, strict=False)
+        model.load_weights(
+            map_location="cpu",
+            strict=False,
+            stages=[{"format": "dense", "path": str(ckpt_path)}],
+        )
         example_inputs = self.example_inputs(model)
         ignored_layers = self.collect_ignored_layers(model)
         tp_pruner = self.build_pruner(model, example_inputs, ignored_layers)

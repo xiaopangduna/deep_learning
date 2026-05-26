@@ -218,12 +218,15 @@ model:
               - {name: "3", module: torch.nn.Linear, args: {in_features: 1280, out_features: 1000}}
 
       weight:
-        path: pretrained_models/mobilenet_v3_large-5c1a4163.pth
-        url: https://download.pytorch.org/models/mobilenet_v3_large-5c1a4163.pth
         map_location: cpu
         strict: false
-        src_key_prefix: layers.
-        src_key_slice_start: 0
+        stages:
+          - format: official
+            path: pretrained_models/mobilenet_v3_large-5c1a4163.pth
+            opts:
+              url: https://download.pytorch.org/models/mobilenet_v3_large-5c1a4163.pth
+              src_key_prefix: layers.
+              src_key_slice_start: 0
 
 
 
