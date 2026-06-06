@@ -1,6 +1,7 @@
 trainer:
-  max_epochs: 10
+  max_epochs: 50
   accelerator: auto
+  # accumulate_grad_batches: 8
   callbacks:
     - class_path: lovely_deep_learning.callback.image_classifier.ImageClassifierTensorBoardImageLogCallback
     - class_path: lovely_deep_learning.callback.image_classifier.ImageClassifierTestAndPredictionWriterCallback
@@ -9,9 +10,9 @@ trainer:
         test_only_save_mistake: true  # 只保存测试和预测结果的错误样本
     - class_path: lightning.pytorch.callbacks.EarlyStopping
       init_args:
-        monitor: "val_loss"
+        monitor: train_loss
         min_delta: 0.00
-        patience: 10
+        patience: 15
         verbose: true
         mode: min
     - class_path: lightning.pytorch.callbacks.ModelCheckpoint
@@ -21,11 +22,16 @@ trainer:
         save_top_k: 1
         save_last: true
         mode: max
+    - class_path: lightning.pytorch.callbacks.LearningRateMonitor
+      init_args:
+        logging_interval: epoch   # 可选: "step" / "epoch" / null
+        log_momentum: false      # 是否记录 momentum（一般不用）
+        log_weight_decay: false  # 是否记录 weight decay
     # 冻结训练
     - class_path: lovely_deep_learning.callback.finetuning.DAGNetMilestoneUnfreezeFinetuning
       init_args:
         unfreeze_layers: ["classifier"]   # 自始可训的层（少）；其余 DAGNet.layers 先冻，到 unfreeze_epoch 一并解冻
-        unfreeze_epoch: 10           # 须 < max_epochs；本配置 max_epochs=10 → current_epoch 为 0..9
+        unfreeze_epoch: 50           # 须 < max_epochs；本配置 max_epochs=10 → current_epoch 为 0..9
 
   logger:
     - class_path: lightning.pytorch.loggers.TensorBoardLogger
@@ -98,20 +104,19 @@ data:
             init_args:
               mean: [0.485, 0.456, 0.406]
               std: [0.229, 0.224, 0.225]
-        
-        
+          
 model:
   class_path: lovely_deep_learning.module.image_classifier.ImageClassifierModule
   init_args:
     optimizer:
       class_path: torch.optim.Adam
       init_args:
-        lr: 1e-4 # 训练时学习率1e-4
+        lr: 1e-4 # 随机初始化1e-2,微调1e-4
     lr_scheduler:
       class_path: torch.optim.lr_scheduler.StepLR
       init_args:
-        step_size: 5
-        gamma: 0.1
+        step_size: 10
+        gamma: 0.5
     criterion:
       class_path: lovely_deep_learning.loss.image_classifier.ImageClassifierCriterion
       init_args:
@@ -127,6 +132,19 @@ model:
     model:
       model_name: mobilenet_v3_large
       pretrained: true
+      weight:
+        map_location: cpu
+        strict: false
+        stages: 
+          - format: official
+            path: pretrained_models/mobilenet_v3_large-5c1a4163.pth
+            opts:
+              url: https://download.pytorch.org/models/mobilenet_v3_large-5c1a4163.pth
+              src_key_prefix: layers.
+              src_key_slice_start: 0
+        # 剪枝后微调：在 stages 中追加或替换，例如::
+          # - format: torch_pruning
+          #   path: logs/image_classifiter_IMAGE_NETTE/version_0/checkpoints/pruning0p25_epoch=02-val_acc=0.96.pth
       exporter:
         class_path: lovely_deep_learning.export.base.BaseExporter
         init_args:
@@ -154,19 +172,6 @@ model:
               global_pruning: false
               round_to: null
               iterative_steps: 1
-      weight:
-        map_location: cpu
-        strict: false
-        stages:
-          - format: official
-            path: pretrained_models/mobilenet_v3_large-5c1a4163.pth
-            opts:
-              url: https://download.pytorch.org/models/mobilenet_v3_large-5c1a4163.pth
-              src_key_prefix: layers.
-              src_key_slice_start: 0
-        # 剪枝后微调：在 stages 中追加或替换，例如::
-          # - format: torch_pruning
-          #   path: logs/image_classifiter_IMAGE_NETTE/version_0/checkpoints/pruning0p25_epoch=02-val_acc=0.96.pth
 
       structure:
         inputs: [{name: input, shape: [3, 224, 224]}]

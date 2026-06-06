@@ -1,0 +1,113 @@
+class_path: torch.optim.lr_scheduler.StepLR
+init_args:
+  step_size: 10
+  gamma: 0.5
+  last_epoch: -1
+# 未测试
+class_path: torch.optim.lr_scheduler.MultiStepLR
+init_args:
+  milestones: [30, 60, 90]
+  gamma: 0.1
+  last_epoch: -1
+
+class_path: torch.optim.lr_scheduler.ConstantLR
+init_args:
+  factor: 0.3333333333333333
+  total_iters: 5
+  last_epoch: -1
+
+class_path: torch.optim.lr_scheduler.LinearLR
+init_args:
+  start_factor: 0.3333333333333333
+  end_factor: 1.0
+  total_iters: 5
+  last_epoch: -1
+
+class_path: torch.optim.lr_scheduler.ExponentialLR
+init_args:
+  gamma: 0.95
+  last_epoch: -1
+
+class_path: torch.optim.lr_scheduler.SequentialLR
+init_args:
+  schedulers:
+    - class_path: torch.optim.lr_scheduler.LinearLR
+      init_args:
+        start_factor: 0.1
+        total_iters: 5
+    - class_path: torch.optim.lr_scheduler.StepLR
+      init_args:
+        step_size: 10
+        gamma: 0.5
+  milestones: [5]
+  last_epoch: -1
+
+class_path: torch.optim.lr_scheduler.CosineAnnealingLR
+init_args:
+  T_max: 100
+  eta_min: 0.0
+  last_epoch: -1
+
+class_path: torch.optim.lr_scheduler.ChainedScheduler
+init_args:
+  schedulers:
+    - class_path: torch.optim.lr_scheduler.LinearLR
+      init_args:
+        start_factor: 0.1
+        total_iters: 5
+    - class_path: torch.optim.lr_scheduler.CosineAnnealingLR
+      init_args:
+        T_max: 95
+        eta_min: 1.0e-6
+
+class_path: torch.optim.lr_scheduler.ReduceLROnPlateau
+init_args:
+  mode: min
+  factor: 0.1
+  patience: 10
+  threshold: 1.0e-4
+  threshold_mode: rel
+  cooldown: 0
+  min_lr: 0
+  eps: 1.0e-8
+
+class_path: torch.optim.lr_scheduler.CyclicLR
+init_args:
+  base_lr: 1.0e-4
+  max_lr: 1.0e-2
+  step_size_up: 2000
+  step_size_down: null
+  mode: triangular
+  gamma: 1.0
+  scale_mode: cycle
+  cycle_momentum: true
+  base_momentum: 0.8
+  max_momentum: 0.9
+  last_epoch: -1
+
+class_path: torch.optim.lr_scheduler.CosineAnnealingWarmRestarts
+init_args:
+  T_0: 10
+  T_mult: 1
+  eta_min: 0.0
+  last_epoch: -1
+
+class_path: torch.optim.lr_scheduler.OneCycleLR
+init_args:
+  max_lr: 1.0e-2
+  total_steps: 10000
+  pct_start: 0.3
+  anneal_strategy: cos
+  cycle_momentum: true
+  base_momentum: 0.85
+  max_momentum: 0.95
+  div_factor: 25.0
+  final_div_factor: 10000.0
+  three_phase: false
+  last_epoch: -1
+
+class_path: torch.optim.lr_scheduler.PolynomialLR
+init_args:
+  total_iters: 5
+  power: 1.0
+  last_epoch: -1

@@ -94,7 +94,7 @@ class ImageClassifierModule(BaseModule):
             self.optimizer_cfg,
         )
         scheduler = instantiate_class(optimizer, self.lr_scheduler_cfg)
-        return {"optimizer": optimizer, "lr_scheduler": scheduler}
+        return {"optimizer": optimizer, "lr_scheduler": scheduler, "monitor": "train_loss"}
 
     def on_fit_start(self):
         pass
