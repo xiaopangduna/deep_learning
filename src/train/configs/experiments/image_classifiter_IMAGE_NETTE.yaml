@@ -1,7 +1,7 @@
 trainer:
-  max_epochs: 50
+  max_epochs: 50 # 随机初始化500，微调50
   accelerator: auto
-  # accumulate_grad_batches: 8
+  accumulate_grad_batches: 8
   callbacks:
     - class_path: lovely_deep_learning.callback.image_classifier.ImageClassifierTensorBoardImageLogCallback
     - class_path: lovely_deep_learning.callback.image_classifier.ImageClassifierTestAndPredictionWriterCallback
@@ -12,7 +12,7 @@ trainer:
       init_args:
         monitor: train_loss
         min_delta: 0.00
-        patience: 15
+        patience: 10  # 总轮次的 5-10%
         verbose: true
         mode: min
     - class_path: lightning.pytorch.callbacks.ModelCheckpoint
@@ -27,11 +27,11 @@ trainer:
         logging_interval: epoch   # 可选: "step" / "epoch" / null
         log_momentum: false      # 是否记录 momentum（一般不用）
         log_weight_decay: false  # 是否记录 weight decay
-    # 冻结训练
+    # 冻结训练,随机初始化则不冻结，剪枝后不冻结
     - class_path: lovely_deep_learning.callback.finetuning.DAGNetMilestoneUnfreezeFinetuning
       init_args:
         unfreeze_layers: ["classifier"]   # 自始可训的层（少）；其余 DAGNet.layers 先冻，到 unfreeze_epoch 一并解冻
-        unfreeze_epoch: 50           # 须 < max_epochs；本配置 max_epochs=10 → current_epoch 为 0..9
+        unfreeze_epoch: 50           # 微调与max_epochs一致,剪枝后不冻结
 
   logger:
     - class_path: lightning.pytorch.loggers.TensorBoardLogger
@@ -45,7 +45,7 @@ trainer:
   #     filename: profiler
   #     extended: true
 
-        
+
 data:
   class_path: lovely_deep_learning.data_module.image_nette.ImageNetteDataModule
   init_args:
@@ -75,11 +75,17 @@ data:
       class_path: torchvision.transforms.v2.Compose
       init_args:
         transforms:
-          - class_path: torchvision.transforms.v2.Resize
+          - class_path: torchvision.transforms.v2.RandomResizedCrop
             init_args:
-              size: [224,224]
-              interpolation: 2 # bilinear
-          - class_path: torchvision.transforms.v2.TrivialAugmentWide
+              size: 224
+              interpolation: 2
+          - class_path: torchvision.transforms.v2.RandomHorizontalFlip
+            init_args:
+              p: 0.5
+          - class_path: torchvision.transforms.v2.RandAugment
+            init_args:
+              num_ops: 2
+              magnitude: 9
           - class_path: torchvision.transforms.v2.ToDtype
             init_args:
               dtype: torch.float32
@@ -88,6 +94,17 @@ data:
             init_args:
               mean: [0.485, 0.456, 0.406]
               std: [0.229, 0.224, 0.225]
+          - class_path: torchvision.transforms.v2.RandomErasing
+            init_args:
+              p: 0.25
+              scale:
+              - 0.02
+              - 0.33
+              ratio:
+              - 0.3
+              - 3.3
+              value: 0.0
+              inplace: false
     transform_val:
       class_path: torchvision.transforms.v2.Compose
       init_args:
@@ -109,14 +126,14 @@ model:
   class_path: lovely_deep_learning.module.image_classifier.ImageClassifierModule
   init_args:
     optimizer:
-      class_path: torch.optim.Adam
+      class_path: torch.optim.RAdam
       init_args:
-        lr: 1e-4 # 随机初始化1e-2,微调1e-4
+        lr: 1e-2 # 随机初始化1e-2,微调1e-2，剪枝
     lr_scheduler:
-      class_path: torch.optim.lr_scheduler.StepLR
+      class_path: torch.optim.lr_scheduler.CosineAnnealingLR
       init_args:
-        step_size: 10
-        gamma: 0.5
+        T_max: 50  # 一般等于max_epochs
+        eta_min: 1.0e-4 # 随机初始化1e-4,微调1e-4
     criterion:
       class_path: lovely_deep_learning.loss.image_classifier.ImageClassifierCriterion
       init_args:
@@ -142,9 +159,9 @@ model:
               url: https://download.pytorch.org/models/mobilenet_v3_large-5c1a4163.pth
               src_key_prefix: layers.
               src_key_slice_start: 0
-        # 剪枝后微调：在 stages 中追加或替换，例如::
+        # # 剪枝后微调：在 stages 中追加或替换，例如::
           # - format: torch_pruning
-          #   path: logs/image_classifiter_IMAGE_NETTE/version_0/checkpoints/pruning0p25_epoch=02-val_acc=0.96.pth
+          #   path: logs/image_classifiter_IMAGE_NETTE/unfreeze/checkpoints/pruning0p25_epoch=27-val_acc=0.99.pth
       exporter:
         class_path: lovely_deep_learning.export.base.BaseExporter
         init_args:
@@ -232,7 +249,6 @@ model:
               - name: "16"
                 module: lovely_deep_learning.nn.mobilenet_v3.Conv2dNormActivation
                 args: {in_channels: 160, out_channels: 960, kernel_size: 1, stride: 1, bn_eps: 0.001, bn_momentum: 0.01, activation_layer: hswish}
-
           - name: avgpool
             from: [features]
             module: torch.nn.AdaptiveAvgPool2d

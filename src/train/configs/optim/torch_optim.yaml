@@ -6,6 +6,14 @@ class_path: torch.optim.AdamW
 init_args:
   lr: 2e-4
 
+class_path: torch.optim.ASGD
+init_args:
+  lr: 1e-2
+  lambd: 1e-4
+  alpha: 0.75
+  t0: 1e6
+  weight_decay: 0.0
+
 class_path: torch.optim.SGD
 init_args:
   lr: 2e-4
@@ -34,13 +42,6 @@ class_path: torch.optim.Adadelta
 init_args:
   lr: 0.5
 
-class_path: torch.optim.ASGD
-init_args:
-  lr: 1e-2
-  lambd: 1e-4
-  alpha: 0.75
-  t0: 1e6
-  weight_decay: 0.0
 
 class_path: torch.optim.Rprop
 init_args:
@@ -60,6 +61,7 @@ init_args:
   max_iter: 20
   history_size: 100
 
+# 自适应学习率和学习率表冲突，需要注意参数配置
 class_path: torch.optim.Adafactor
 init_args:
   lr: null   # 通常使用相对学习率

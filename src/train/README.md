@@ -149,6 +149,10 @@ python scripts/export.py export --format onnx --config configs/experiments/objec
 python scripts/export.py export --format onnx --config configs/experiments/object_detect_COCO8.yaml --ckpt_path logs/object_detect_COCO8/version_7/checkpoints/epoch=00-val_loss=19.2245.ckpt
 ```
 
+# 剪枝,修改权重加载的路径，然后正常使用之前的指令
+python scripts/train.py prune --config logs/image_classifiter_IMAGE_NETTE/baseline/config.yaml --ckpt_path logs/image_classifiter_IMAGE_NETTE/baseline/checkpoints/epoch=42-val_acc=0.99.ckpt
+
+
 # 训练过程查看
 
 使用 TensorBoard 查看训练日志：

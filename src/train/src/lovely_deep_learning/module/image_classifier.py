@@ -88,15 +88,10 @@ class ImageClassifierModule(BaseModule):
             "class_id_conf": post_out["pred_conf"],
         }
 
-    def configure_optimizers(self):
-        optimizer = instantiate_class(
-            filter(lambda p: p.requires_grad, self.parameters()),
-            self.optimizer_cfg,
-        )
-        scheduler = instantiate_class(optimizer, self.lr_scheduler_cfg)
-        return {"optimizer": optimizer, "lr_scheduler": scheduler, "monitor": "train_loss"}
+
 
     def on_fit_start(self):
+        self.model.train()
         pass
 
     def on_train_epoch_end(self):

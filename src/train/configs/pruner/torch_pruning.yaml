@@ -1,0 +1,122 @@
+# torch_pruning 剪枝配置参考（torch_pruning==1.6.x）
+#
+# 用法：复制下方块到实验 YAML 的 ``model.init_args.model.pruner.init_args``，
+# 替换 ``importance_cfg`` / ``tp_pruner_cfg``，或整段复制 ``strategies`` 预设。
+#
+# ``ignored_layer_names`` 为 DAGNet.layers 顶层键（如 classifier），在实验 YAML 中单独配置。
+#
+# 常用可调参数（CLI 或实验 YAML 覆盖）：
+#   tp_pruner_cfg.init_args.pruning_ratio      默认 0.25
+#   tp_pruner_cfg.init_args.global_pruning     默认 false（true 为全局剪枝）
+#   tp_pruner_cfg.init_args.iterative_steps    GrowingRegPruner 建议 5~10
+#   importance_cfg.init_args.p                 GroupMagnitudeImportance：1 或 2
+#   importance_cfg.init_args.num_classes       OBDCImportance：须与数据集一致
+#
+# CLI 改剪枝率示例::
+#
+#   python scripts/train.py prune \
+#     --config configs/experiments/image_classifiter_IMAGE_NETTE.yaml \
+#     --ckpt_path logs/.../last.ckpt \
+#     --model.init_args.model.pruner.init_args.tp_pruner_cfg.init_args.pruning_ratio 0.5
+#
+# 说明：
+# - Taylor / Hessian 类重要性需 forward + backward，较慢。
+# - BNScalePruner 通常搭配 BNScaleImportance。
+
+
+# ---------------------------------------------------------------------------
+# importance_cfg — 对应 tp.importance
+# ---------------------------------------------------------------------------
+
+GroupMagnitudeImportance:
+  class_name: GroupMagnitudeImportance
+  init_args:
+    p: 1  # L2 则改为 2
+
+MagnitudeImportance:
+  class_name: MagnitudeImportance
+  init_args:
+    p: 2
+
+LAMPImportance:
+  class_name: LAMPImportance
+  init_args:
+    p: 2
+    normalizer: lamp
+
+FPGMImportance:
+  class_name: FPGMImportance
+  init_args:
+    p: 2
+
+BNScaleImportance:
+  class_name: BNScaleImportance
+  init_args: {}
+
+ActivationImportance:
+  class_name: ActivationImportance
+  init_args:
+    p: 2
+
+GroupTaylorImportance:
+  class_name: GroupTaylorImportance
+  init_args:
+    multivariable: false
+
+GroupHessianImportance:
+  class_name: GroupHessianImportance
+  init_args: {}
+
+OBDCImportance:
+  class_name: OBDCImportance
+  init_args:
+    num_classes: 10  # ImageNet=1000
+
+RandomImportance:
+  class_name: RandomImportance
+  init_args: {}
+
+
+# ---------------------------------------------------------------------------
+# tp_pruner_cfg — 对应 tp.pruner（每类剪枝器一个默认项）
+# ---------------------------------------------------------------------------
+
+MagnitudePruner:
+  class_name: MagnitudePruner
+  init_args:
+    pruning_ratio: 0.25
+    global_pruning: false
+    round_to: null
+    iterative_steps: 1
+
+GroupNormPruner:
+  class_name: GroupNormPruner
+  init_args:
+    pruning_ratio: 0.25
+    global_pruning: false
+    round_to: null
+    iterative_steps: 1
+    reg: 0.0001
+    alpha: 4
+
+BNScalePruner:
+  class_name: BNScalePruner
+  init_args:
+    pruning_ratio: 0.25
+    global_pruning: false
+    round_to: null
+    iterative_steps: 1
+    reg: 1.0e-5
+    group_lasso: false
+
+GrowingRegPruner:
+  class_name: GrowingRegPruner
+  init_args:
+    pruning_ratio: 0.25
+    global_pruning: false
+    round_to: null
+    iterative_steps: 5
+    reg: 1.0e-5
+    delta_reg: 1.0e-5
+
+

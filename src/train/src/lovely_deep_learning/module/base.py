@@ -4,7 +4,9 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Union
 
 import lightning.pytorch as pl
+from lightning.pytorch.cli import instantiate_class
 import torch
+
 
 from lovely_deep_learning.model.DAGNet import DAGNet
 
@@ -79,6 +81,14 @@ class BaseModule(pl.LightningModule):
         from lovely_deep_learning.export.pipeline import export_dagnet
 
         return export_dagnet(model, ckpt_path=ckpt_path, export_format=export_format)
+
+    def configure_optimizers(self):
+        optimizer = instantiate_class(
+            filter(lambda p: p.requires_grad, self.parameters()),
+            self.optimizer_cfg,
+        )
+        scheduler = instantiate_class(optimizer, self.lr_scheduler_cfg)
+        return {"optimizer": optimizer, "lr_scheduler": scheduler, "monitor": "train_loss"}
 
     def prune(self, ckpt_path: Optional[Union[str, Path]] = None) -> str:
         """剪枝导出；剪枝超参见 YAML ``pruner.init_args``，仅 ``ckpt_path`` 由 CLI 传入。"""
