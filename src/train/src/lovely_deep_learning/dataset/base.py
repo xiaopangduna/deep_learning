@@ -367,9 +367,41 @@ class BaseDataset(Dataset):
         return img_np
 
     @staticmethod
+    def unwrap_tv_tensor(tensor_or_tv: Any) -> torch.Tensor:
+        if hasattr(tensor_or_tv, "data"):
+            return tensor_or_tv.data
+        return tensor_or_tv
+
+    @staticmethod
+    def prepare_net_in_sample(ni: dict[str, Any]) -> dict[str, Any]:
+        """单样本 ``net_in`` → collate 后形态（写入 plain ``img``，与检测侧一致）。"""
+        ni = dict(ni)
+        ni["img"] = BaseDataset.unwrap_tv_tensor(ni["img_tv_transformed"])
+        return ni
+
+    @staticmethod
+    def collate_net_in_tuple(
+        samples: Sequence[tuple[dict[str, Any], Any]],
+    ) -> tuple[dict[str, Any], ...]:
+        net_in_tuple, _ = zip(*samples)
+        return tuple(BaseDataset.prepare_net_in_sample(ni) for ni in net_in_tuple)
+
+    @staticmethod
+    def stack_batch_images(net_in: Sequence[dict[str, Any]]) -> torch.Tensor:
+        tensors = []
+        for ni in net_in:
+            if "img" in ni:
+                tensors.append(ni["img"])
+            else:
+                tensors.append(
+                    BaseDataset.unwrap_tv_tensor(ni["img_tv_transformed"])
+                )
+        return torch.stack(tensors, dim=0)
+
+    @staticmethod
     def get_collate_fn_for_dataloader():
         def collate_fn(x):
-            return list(zip(*x))
+            return BaseDataset.collate_net_in_tuple(x), tuple(no for _, no in x)
 
         return collate_fn
 

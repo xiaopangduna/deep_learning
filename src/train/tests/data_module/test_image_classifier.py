@@ -94,10 +94,12 @@ def test_ImageClassifierDataModule_train_dataloader():
     train_dataloader = data_module.train_dataloader()
     net_in, net_out = next(iter(train_dataloader))
 
-    assert ("img_tv_transformed" in net_in.keys()) == True
+    assert isinstance(net_in, tuple)
+    assert "img_tv_transformed" in net_in[0]
+    assert "img" in net_in[0]
     assert ("class_id" in net_out.keys()) == True
 
-    assert net_in["img_tv_transformed"].shape == (BATCH_SIZE, 3, 224, 224)
+    assert net_in[0]["img_tv_transformed"].shape == (3, 224, 224)
     assert net_out["class_id"].shape == (BATCH_SIZE,)
 
 
@@ -121,6 +123,7 @@ def test_ImageClassifierDataModule_predict_dataloader():
     pred_dataloader = data_module.predict_dataloader()
     net_in, net_out = next(iter(pred_dataloader))
 
-    assert ("img_tv_transformed" in net_in.keys()) == True
-    assert net_in["img_tv_transformed"].shape == (BATCH_SIZE, 3, 224, 224)
+    assert isinstance(net_in, tuple)
+    assert "img_tv_transformed" in net_in[0]
+    assert net_in[0]["img_tv_transformed"].shape == (3, 224, 224)
     assert net_out == {}

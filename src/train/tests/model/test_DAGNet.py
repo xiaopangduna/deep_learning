@@ -89,11 +89,11 @@ def test_DAGWeightLoader_yolov8_n():
     official_model.eval()
     net.eval()
     x = torch.randn(1, 3, 640, 640)
-    official_out = official_model.model(x)
-    dag_out = net([x])[0]
+    with torch.no_grad():
+        official_out = official_model.model(x)
+        dag_out = net([x])[0]
 
-    assert torch.allclose(dag_out[1][0], official_out[1][0], atol=1e-6)
-    assert torch.allclose(dag_out[1][1], official_out[1][1], atol=1e-6)
-    assert torch.allclose(dag_out[1][2], official_out[1][2], atol=1e-6)
-
-    assert torch.allclose(official_out[0], dag_out[0], atol=1e-4)
+    # 官方 eval 返回 (inference, raw_list)；DAG Detect.forward 仅返回 raw_list
+    assert len(dag_out) == 3
+    for i in range(3):
+        assert torch.allclose(dag_out[i], official_out[1][i], atol=1e-6)

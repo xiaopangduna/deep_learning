@@ -3,6 +3,8 @@ from typing import Any
 
 import pandas as pd
 
+from torch.utils.data import DataLoader
+
 from .base import BaseDataModule
 from ..dataset.image_classifier import ImageClassifierDataset
 
@@ -153,3 +155,12 @@ class ImageClassifierDataModule(BaseDataModule):
         rows = sorted((idx, name) for name, idx in class_name_to_idx.items())
         pd.DataFrame(rows, columns=["class_id", "class_name"]).to_csv(
             path, index=False)
+
+    def predict_dataloader(self):
+        return DataLoader(
+            self.pred_dataset,
+            batch_size=self.batch_size,
+            shuffle=False,
+            num_workers=self.num_workers,
+            collate_fn=self.pred_dataset.get_collate_fn_for_dataloader(),
+        )

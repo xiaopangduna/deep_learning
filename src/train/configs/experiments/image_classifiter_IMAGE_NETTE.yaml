@@ -1,9 +1,12 @@
 trainer:
-  max_epochs: 50 # 随机初始化500，微调50
+  max_epochs: 5 # 随机初始化500，微调50
   accelerator: auto
   accumulate_grad_batches: 8
   callbacks:
-    - class_path: lovely_deep_learning.callback.image_classifier.ImageClassifierTensorBoardImageLogCallback
+    - class_path: lovely_deep_learning.callback.image_classifier.LogImageClassifierVisualizationCallback
+      init_args:
+        max_images: 4
+        nrow: 2
     - class_path: lovely_deep_learning.callback.image_classifier.ImageClassifierTestAndPredictionWriterCallback
       init_args:
         save_dir: tmp       # 保存测试和预测结果的目录

@@ -277,13 +277,7 @@ class ObjectDetectDataset(BaseDataset):
             net_in_list: list[Dict[str, Any]] = []
             net_out_list: list[Dict[str, Any]] = []
             for i, (ni0, no0) in enumerate(zip(net_in_tuple, net_out_tuple)):
-                ni = dict(ni0)
-                img_t = (
-                    ni["img_tv_transformed"].data
-                    if hasattr(ni["img_tv_transformed"], "data")
-                    else ni["img_tv_transformed"]
-                )
-                ni["img"] = img_t
+                ni = BaseDataset.prepare_net_in_sample(ni0)
                 if not no0:
                     net_in_list.append(ni)
                     net_out_list.append({})

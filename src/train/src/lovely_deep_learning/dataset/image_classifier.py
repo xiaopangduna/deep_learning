@@ -79,8 +79,23 @@ class ImageClassifierDataset(BaseDataset):
 
         return net_in, net_out
     
-    def get_collate_fn_for_dataloader(self):
-        return None
+    @staticmethod
+    def get_collate_fn_for_dataloader():
+        def collate_fn(samples):
+            net_in = BaseDataset.collate_net_in_tuple(samples)
+            net_out_tuple = tuple(no for _, no in samples)
+            if not net_out_tuple or all(not no for no in net_out_tuple):
+                return net_in, {}
+            if "class_id" not in net_out_tuple[0]:
+                return net_in, {}
+            return net_in, {
+                "class_id": torch.tensor(
+                    [no["class_id"] for no in net_out_tuple], dtype=torch.long
+                ),
+                "class_name": [no["class_name"] for no in net_out_tuple],
+            }
+
+        return collate_fn
 
     def convert_img_from_tensor_to_numpy(self, img: torch.Tensor) -> np.ndarray:
         """

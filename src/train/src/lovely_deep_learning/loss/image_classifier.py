@@ -36,7 +36,7 @@ class ImageClassifierCriterion(nn.Module):
         preds: list[torch.Tensor] | tuple[torch.Tensor, ...] | torch.Tensor,
         *,
         net_out: dict[str, Any],
-        net_in: dict[str, Any] | None = None,
+        net_in: Sequence[dict[str, Any]] | None = None,
     ) -> torch.Tensor:
         _ = net_in
         if isinstance(preds, torch.Tensor):
