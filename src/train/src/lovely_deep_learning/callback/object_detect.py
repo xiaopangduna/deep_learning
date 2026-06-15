@@ -1,3 +1,17 @@
+"""目标检测 Lightning 回调。
+
+命名约定（与 ``callback.image_classifier`` 对称）：
+
+- ``Log*TrainVal*``：train / val → TensorBoard 图像
+- ``Save*TestPredict*``：test / predict → 本地目录（标注图 + CSV）
+
+两类 Callback 均依赖 :class:`~lovely_deep_learning.module.base.BaseModule` 的 step 返回值
+（``metric_preds`` / ``net_out``）及 collate 后的 ``net_in: tuple[dict]``。
+
+检测侧 ``metric_preds`` 为 **每图一个 dict** 的 list（``boxes`` / ``scores`` / ``labels``）；
+``net_out`` 为 ``tuple[dict]``（变长 GT 框）。
+"""
+
 import os
 from pathlib import Path
 from typing import Any, Mapping
@@ -8,6 +22,7 @@ import numpy as np
 import torch
 from torchvision.utils import make_grid
 
+from ..dataset.base import BaseDataset
 from ..dataset.object_detect import (
     ObjectDetectDataset,
     boxes_layout_to_xyxy_numpy,
@@ -18,50 +33,10 @@ from ..utils.io import (
     instances_to_json_str,
     write_row_dicts_to_csv_path_skip_if_empty,
 )
-def _stack_visual_imgs_from_net_in(net_in: Any) -> torch.Tensor:
-    """tuple batch：按样本选用 ``img_tv_transformed`` 或 ``img``（predict 可能仅有 ``img``）。"""
-    if isinstance(net_in, dict):
-        key = "img_tv_transformed" if "img_tv_transformed" in net_in else "img"
-        return net_in[key]
-    first = net_in[0]
-    key = "img_tv_transformed" if "img_tv_transformed" in first else "img"
-    return torch.stack([ni[key] for ni in net_in], dim=0)
 
 
-def _cpu_imgs_and_paths_from_net_in(
-    net_in: Any,
-    *,
-    tuple_use_tv_stack: bool,
-) -> tuple[torch.Tensor, list[Any]]:
-    """
-    collate 后的 ``net_in`` → CPU 上 ``(B,C,H,W)`` 与路径列表。
-
-    ``tuple_use_tv_stack=True``：tuple batch 时只堆叠 ``img_tv_transformed``（test）；
-    ``False``：与 :func:`_stack_visual_imgs_from_net_in` 一致（predict）。
-    """
-    if isinstance(net_in, dict):
-        img = net_in.get("img_tv_transformed", net_in.get("img"))
-        paths = net_in["img_path"]
-        return img.detach().cpu(), paths
-    if tuple_use_tv_stack:
-        stacked = torch.stack(
-            [
-                ni["img_tv_transformed"].data
-                if hasattr(ni["img_tv_transformed"], "data")
-                else ni["img_tv_transformed"]
-                for ni in net_in
-            ],
-            dim=0,
-        )
-    else:
-        stacked = _stack_visual_imgs_from_net_in(net_in)
-    paths = [ni["img_path"] for ni in net_in]
-    return stacked.detach().cpu(), paths
-
-
-def _net_out_sample(net_out: Any, i: int) -> dict[str, Any]:
-    if isinstance(net_out, dict):
-        return {k: net_out[k][i] for k in net_out}
+def _net_out_sample(net_out: tuple[dict[str, Any], ...], i: int) -> dict[str, Any]:
+    """取 collate 后 ``net_out`` 中第 ``i`` 个样本。"""
     return net_out[i]
 
 
@@ -84,14 +59,193 @@ def _gt_xyxy_cls_numpy(gt: Mapping[str, Any]) -> tuple[np.ndarray, np.ndarray]:
 
 
 def _map_pred_box_format(pl_module: pl.LightningModule) -> str:
+    """读取 postprocess 的 ``map_pred_box_format``，默认 ``xyxy``。"""
     post = getattr(pl_module, "postprocess", None)
     if post is not None and hasattr(post, "map_pred_box_format"):
         return str(post.map_pred_box_format)
     return "xyxy"
 
 
-class SaveObjectDetectVisualizationCallback(pl.Callback):
-    """保存目标检测可视化（仅 test / predict；训练与验证不写入）。测试阶段使用 :meth:`ObjectDetectDataset.draw_target_and_predict_label_on_numpy`（左=预测，右=GT，IoU 配色）；预测阶段无真值，仅绘制预测框单图。"""
+class LogObjectDetectTrainValVisualizationCallback(pl.Callback):
+    """train / val 阶段将检测可视化写入 TensorBoard（``train/val`` 不落盘）。
+
+    每个 epoch 在 **train** 与 **val** 各记录一次（``batch_idx==0``），tag 为
+    ``train/sample_detections``、``val/sample_detections``。
+
+    依赖 :class:`~lovely_deep_learning.module.object_detect.ObjectDetectModule`
+    （继承 :class:`~lovely_deep_learning.module.base.BaseModule`）：
+
+    - ``training_step`` → ``{"loss", "metric_preds", "net_out"}``
+    - ``validation_step`` → ``{"metric_preds", "net_out"}``
+
+    默认 ``max_images=4``、``nrow=2``；``match_iou_thres`` 控制 GT/预测框 IoU 配色。
+    """
+
+    def __init__(
+        self,
+        max_images: int = 4,
+        nrow: int = 2,
+        match_iou_thres: float = 0.5,
+    ) -> None:
+        super().__init__()
+        self.max_images = int(max_images)
+        self.nrow = int(nrow)
+        self.match_iou_thres = float(match_iou_thres)
+
+    def _log_sample_detections_tensorboard(
+        self,
+        pl_module: pl.LightningModule,
+        batch: Any,
+        outputs: dict[str, Any],
+        dataset: ObjectDetectDataset,
+        tb_tag: str,
+    ) -> None:
+        """从 step ``outputs`` 与 ``batch`` 绘制左预测右 GT 网格并 ``add_image``。"""
+        metric_preds = outputs.get("metric_preds")
+        net_out = outputs.get("net_out")
+        if metric_preds is None or net_out is None:
+            return
+        if getattr(pl_module, "logger", None) is None:
+            return
+        try:
+            experiment = pl_module.logger.experiment
+        except Exception:
+            return
+        if not hasattr(experiment, "add_image"):
+            return
+
+        net_in, _ = batch
+        box_fmt = _map_pred_box_format(pl_module)
+
+        n = min(self.max_images, len(metric_preds), len(net_in))
+        if n == 0:
+            return
+
+        panels: list[torch.Tensor] = []
+        for i in range(n):
+            img_tensor = net_in[i]["img_tv_transformed"]
+            img_np = dataset.convert_img_from_tensor_to_numpy(img_tensor)
+            pr = metric_preds[i]
+            pb = pr["boxes"].detach().cpu().float().numpy()
+            ps = pr["scores"].detach().cpu().float().numpy()
+            plb = pr["labels"].detach().cpu().numpy().astype(np.int64)
+            pb_xyxy = boxes_layout_to_xyxy_numpy(pb, box_fmt)
+
+            gb, gl = _gt_xyxy_cls_numpy(_net_out_sample(net_out, i))
+
+            panel = ObjectDetectDataset.draw_target_and_predict_label_on_numpy(
+                img_np,
+                bboxes_pred=pb_xyxy,
+                classes_pred=plb,
+                bboxes_gt=gb,
+                classes_gt=gl,
+                class_names=dataset.map_class_id_to_class_name,
+                pred_scores=ps,
+                match_by_iou=True,
+                iou_match_threshold=self.match_iou_thres,
+            )
+            t = ObjectDetectDataset.convert_img_from_numpy_to_tensor_uint8(panel)
+            panels.append(t)
+
+        img_grid = make_grid(panels, nrow=self.nrow)
+        experiment.add_image(
+            tb_tag,
+            img_grid,
+            global_step=pl_module.global_step,
+        )
+
+    def _try_log_batch(
+        self,
+        trainer: pl.Trainer,
+        pl_module: pl.LightningModule,
+        outputs: Any,
+        batch: Any,
+        batch_idx: int,
+        dataset_name: str,
+        tb_tag: str,
+        phase_label: str,
+    ) -> None:
+        """仅在 rank0 且 ``batch_idx==0`` 时尝试写 TensorBoard。"""
+        if not trainer.is_global_zero or batch_idx != 0:
+            return
+        if outputs is None or not isinstance(outputs, dict):
+            return
+        dm = trainer.datamodule
+        if dm is None:
+            return
+        dataset = getattr(dm, dataset_name, None)
+        if dataset is None:
+            return
+        try:
+            self._log_sample_detections_tensorboard(
+                pl_module, batch, outputs, dataset, tb_tag
+            )
+        except Exception as e:
+            print(
+                f"Warning: failed to log {phase_label} detection visualization at step "
+                f"{pl_module.global_step}, {e}"
+            )
+
+    def on_train_batch_end(
+        self,
+        trainer: pl.Trainer,
+        pl_module: pl.LightningModule,
+        outputs: Any,
+        batch: Any,
+        batch_idx: int,
+        dataloader_idx: int = 0,
+    ) -> None:
+        self._try_log_batch(
+            trainer,
+            pl_module,
+            outputs,
+            batch,
+            batch_idx,
+            "train_dataset",
+            "train/sample_detections",
+            "train",
+        )
+
+    def on_validation_batch_end(
+        self,
+        trainer: pl.Trainer,
+        pl_module: pl.LightningModule,
+        outputs: Any,
+        batch: Any,
+        batch_idx: int,
+        dataloader_idx: int = 0,
+    ) -> None:
+        if dataloader_idx != 0:
+            return
+        self._try_log_batch(
+            trainer,
+            pl_module,
+            outputs,
+            batch,
+            batch_idx,
+            "val_dataset",
+            "val/sample_detections",
+            "val",
+        )
+
+class SaveObjectDetectTestPredictVisualizationCallback(pl.Callback):
+    """test / predict 阶段将检测可视化与结果表写入本地（``cv2.imwrite`` + CSV）。
+
+    与 :class:`LogObjectDetectTrainValVisualizationCallback` 分工：后者仅 train/val → TensorBoard。
+
+    依赖 ``BaseModule.test_step`` / ``predict_step`` 返回的
+    ``{"metric_preds", "net_out"}``；``metric_preds[i]`` 为单张图的框/分/类 dict。
+
+    目录结构（``save_dir`` 非空时）::
+
+        {save_dir}/test/*.jpg          # 左预测右 GT，IoU 配色
+        {save_dir}/test_results.csv
+        {save_dir}/predict/*.jpg       # 仅预测框
+        {save_dir}/prediction_results.csv
+
+    测试阶段使用 :meth:`ObjectDetectDataset.draw_target_and_predict_label_on_numpy`；
+    ``test_only_save_mistake=True`` 时仅保存 IoU 匹配失败样本图（CSV 仍记录全部）。
+    """
 
     def __init__(
         self,
@@ -100,6 +254,13 @@ class SaveObjectDetectVisualizationCallback(pl.Callback):
         conf_thres: float = 0.25,
         match_iou_thres: float = 0.5,
     ):
+        """
+        Args:
+            save_dir: 写入根目录；为 ``None`` 时不写入。
+            test_only_save_mistake: 测试时是否仅保存预测/GT 不完全匹配的样本图。
+            conf_thres: 可视化与 CSV 中保留预测的置信度阈值。
+            match_iou_thres: 测试阶段 IoU 匹配与配色的阈值。
+        """
         super().__init__()
         self.test_only_save_mistake = test_only_save_mistake
         self.conf_thres = conf_thres
@@ -124,6 +285,7 @@ class SaveObjectDetectVisualizationCallback(pl.Callback):
         batch_idx,
         dataloader_idx=0,
     ):
+        """逐样本 IoU 匹配、绘制双栏对比图，按 ``test_only_save_mistake`` 决定是否写图。"""
         if self.save_dir is None or outputs is None:
             return
         metric_preds = outputs.get("metric_preds")
@@ -132,9 +294,8 @@ class SaveObjectDetectVisualizationCallback(pl.Callback):
         dataset: ObjectDetectDataset = trainer.test_dataloaders.dataset
         net_in, net_out = batch
         box_fmt = _map_pred_box_format(pl_module)
-        img_tv, img_paths = _cpu_imgs_and_paths_from_net_in(
-            net_in, tuple_use_tv_stack=True
-        )
+        img_tv = BaseDataset.stack_batch_images(net_in).detach().cpu()
+        img_paths = [ni["img_path"] for ni in net_in]
         B = len(metric_preds)
 
         for i in range(B):
@@ -218,6 +379,7 @@ class SaveObjectDetectVisualizationCallback(pl.Callback):
         batch_idx,
         dataloader_idx=0,
     ):
+        """预测阶段无 GT，仅绘制预测框并写入 ``predict/``。"""
         if self.save_dir is None or outputs is None:
             return
         metric_preds = outputs.get("metric_preds")
@@ -226,9 +388,8 @@ class SaveObjectDetectVisualizationCallback(pl.Callback):
         dataset: ObjectDetectDataset = trainer.predict_dataloaders.dataset
         net_in, _net_out = batch
         box_fmt = _map_pred_box_format(pl_module)
-        img_tv, img_paths = _cpu_imgs_and_paths_from_net_in(
-            net_in, tuple_use_tv_stack=False
-        )
+        img_tv = BaseDataset.stack_batch_images(net_in).detach().cpu()
+        img_paths = [ni["img_path"] for ni in net_in]
         B = len(metric_preds)
 
         for i in range(B):
@@ -273,159 +434,3 @@ class SaveObjectDetectVisualizationCallback(pl.Callback):
             )
 
 
-class LogObjectDetectVisualizationCallback(pl.Callback):
-    """
-    训练 / 验证每个 epoch **各记录一次**检测可视化到 TensorBoard（``train/sample_detections``、
-    ``val/sample_detections``），均使用 **``batch_idx==0``** 的 batch。
-
-    依赖 :class:`~lovely_deep_learning.module.object_detect.ObjectDetectModule`：``training_step``
-    返回 ``{"loss", "metric_preds", "net_out"}``（``loss`` 供优化）；``validation_step`` 返回
-    ``{"metric_preds", "net_out"}``（损失仅通过 ``self.log`` 记录）。
-
-    默认 ``max_images=4``、``nrow=2``，拼成 **2×2** 正方形网格。
-    """
-
-    def __init__(
-        self,
-        max_images: int = 4,
-        nrow: int = 2,
-        match_iou_thres: float = 0.5,
-    ) -> None:
-        super().__init__()
-        self.max_images = int(max_images)
-        self.nrow = int(nrow)
-        self.match_iou_thres = float(match_iou_thres)
-
-    def _log_sample_detections_tensorboard(
-        self,
-        pl_module: pl.LightningModule,
-        batch: Any,
-        outputs: dict[str, Any],
-        dataset: ObjectDetectDataset,
-        tb_tag: str,
-    ) -> None:
-        metric_preds = outputs.get("metric_preds")
-        net_out = outputs.get("net_out")
-        if metric_preds is None or net_out is None:
-            return
-        if getattr(pl_module, "logger", None) is None:
-            return
-        try:
-            experiment = pl_module.logger.experiment
-        except Exception:
-            return
-        if not hasattr(experiment, "add_image"):
-            return
-
-        net_in, _ = batch
-        box_fmt = _map_pred_box_format(pl_module)
-
-        n = min(self.max_images, len(metric_preds), len(net_in))
-        if n == 0:
-            return
-
-        panels: list[torch.Tensor] = []
-        for i in range(n):
-            img_tensor = net_in[i]["img_tv_transformed"]
-            img_np = dataset.convert_img_from_tensor_to_numpy(img_tensor)
-            pr = metric_preds[i]
-            pb = pr["boxes"].detach().cpu().float().numpy()
-            ps = pr["scores"].detach().cpu().float().numpy()
-            plb = pr["labels"].detach().cpu().numpy().astype(np.int64)
-            pb_xyxy = boxes_layout_to_xyxy_numpy(pb, box_fmt)
-
-            gb, gl = _gt_xyxy_cls_numpy(_net_out_sample(net_out, i))
-
-            panel = ObjectDetectDataset.draw_target_and_predict_label_on_numpy(
-                img_np,
-                bboxes_pred=pb_xyxy,
-                classes_pred=plb,
-                bboxes_gt=gb,
-                classes_gt=gl,
-                class_names=dataset.map_class_id_to_class_name,
-                pred_scores=ps,
-                match_by_iou=True,
-                iou_match_threshold=self.match_iou_thres,
-            )
-            t = ObjectDetectDataset.convert_img_from_numpy_to_tensor_uint8(panel)
-            panels.append(t)
-
-        img_grid = make_grid(panels, nrow=self.nrow)
-        experiment.add_image(
-            tb_tag,
-            img_grid,
-            global_step=pl_module.global_step,
-        )
-
-    def _try_log_batch(
-        self,
-        trainer: pl.Trainer,
-        pl_module: pl.LightningModule,
-        outputs: Any,
-        batch: Any,
-        batch_idx: int,
-        dataset_name: str,
-        tb_tag: str,
-        phase_label: str,
-    ) -> None:
-        if not trainer.is_global_zero or batch_idx != 0:
-            return
-        if outputs is None or not isinstance(outputs, dict):
-            return
-        dm = trainer.datamodule
-        if dm is None:
-            return
-        dataset = getattr(dm, dataset_name, None)
-        if dataset is None:
-            return
-        try:
-            self._log_sample_detections_tensorboard(
-                pl_module, batch, outputs, dataset, tb_tag
-            )
-        except Exception as e:
-            print(
-                f"Warning: failed to log {phase_label} detection visualization at step "
-                f"{pl_module.global_step}, {e}"
-            )
-
-    def on_train_batch_end(
-        self,
-        trainer: pl.Trainer,
-        pl_module: pl.LightningModule,
-        outputs: Any,
-        batch: Any,
-        batch_idx: int,
-        dataloader_idx: int = 0,
-    ) -> None:
-        self._try_log_batch(
-            trainer,
-            pl_module,
-            outputs,
-            batch,
-            batch_idx,
-            "train_dataset",
-            "train/sample_detections",
-            "train",
-        )
-
-    def on_validation_batch_end(
-        self,
-        trainer: pl.Trainer,
-        pl_module: pl.LightningModule,
-        outputs: Any,
-        batch: Any,
-        batch_idx: int,
-        dataloader_idx: int = 0,
-    ) -> None:
-        if dataloader_idx != 0:
-            return
-        self._try_log_batch(
-            trainer,
-            pl_module,
-            outputs,
-            batch,
-            batch_idx,
-            "val_dataset",
-            "val/sample_detections",
-            "val",
-        )

@@ -1,4 +1,11 @@
-"""图像分类相关 Lightning 回调（TensorBoard 图像记录；测试与 predict 阶段 Writer 落盘与 CSV）。"""
+"""图像分类 Lightning 回调。
+
+- ``Log*TrainVal*``：train / val → TensorBoard 图像
+- ``Save*TestPredict*``：test / predict → 本地目录（标注图 + CSV）
+
+两类 Callback 均依赖 :class:`~lovely_deep_learning.module.base.BaseModule` 的 step 返回值
+（``metric_preds`` / ``net_out``）及 collate 后的 ``net_in: tuple[dict]``。
+"""
 
 from __future__ import annotations
 
@@ -15,16 +22,41 @@ from torchvision.utils import make_grid
 from ..dataset.image_classifier import ImageClassifierDataset
 
 
-class LogImageClassifierVisualizationCallback(pl.Callback):
-    """
-    训练 / 验证每个 epoch **各记录一次**分类可视化到 TensorBoard（``train/sample_classifications``、
-    ``val/sample_classifications``），均使用 **``batch_idx==0``** 的 batch。
+class LogImageClassifierTrainValVisualizationCallback(pl.Callback):
+    """train / val 阶段将分类可视化写入 TensorBoard（不落盘）。
 
-    依赖 :class:`~lovely_deep_learning.module.image_classifier.ImageClassifierModule`：
-    ``training_step`` 返回 ``{"loss", "metric_preds", "net_out"}``（``loss`` 供优化）；
-    ``validation_step`` 返回 ``{"metric_preds", "net_out"}``（损失仅通过 ``self.log`` 记录）。
+    **触发时机**
 
-    默认 ``max_images=4``、``nrow=2``，拼成 **2×2** 正方形网格。
+    - :meth:`on_train_batch_end` / :meth:`on_validation_batch_end`（val 仅 ``dataloader_idx==0``）
+    - 仅 ``trainer.is_global_zero`` 且 ``batch_idx==0`` 时执行（每 epoch train/val 各记一次）
+    - TensorBoard tag：``train/sample_classifications``、``val/sample_classifications``
+
+    **调用链**
+
+    ``on_*_batch_end`` → :meth:`_try_log_batch` → :meth:`_log_sample_classifications_tensorboard`
+
+    **数据契约**
+
+    Module（:class:`~lovely_deep_learning.module.image_classifier.ImageClassifierModule`，
+    继承 :class:`~lovely_deep_learning.module.base.BaseModule`）：
+
+    - ``training_step`` → ``{"loss", "metric_preds", "net_out"}``
+    - ``validation_step`` → ``{"metric_preds", "net_out"}``
+    - ``metric_preds["pred_ids"]`` / ``["pred_conf"]``：postprocess 的 batch 级预测
+    - ``net_out["class_id"]`` / ``["class_name"]``：collate 后的 GT（batched dict）
+
+    Batch（:class:`ImageClassifierDataset` collate）：``(net_in, net_out)``；
+    ``net_in`` 为 ``tuple[dict]``，绘制时取 ``net_in[i]["img_tv_transformed"]``。
+
+    Datamodule：``trainer.datamodule.train_dataset`` / ``val_dataset``（:class:`ImageClassifierDataset`），
+    提供 ``map_class_id_to_class_name`` 及 tensor ↔ numpy 绘制工具。
+
+    Logger：``pl_module.logger.experiment`` 须支持 ``add_image``（如 TensorBoardLogger）；
+    无 logger 或不支持时静默跳过。
+
+    **参数**
+
+    ``max_images``（默认 4）、``nrow``（默认 2）：经 :func:`~torchvision.utils.make_grid` 拼成网格后写入。
     """
 
     def __init__(
@@ -44,6 +76,15 @@ class LogImageClassifierVisualizationCallback(pl.Callback):
         dataset: ImageClassifierDataset,
         tb_tag: str,
     ) -> None:
+        """绘制单 batch 样本面板并 ``experiment.add_image``。
+
+        数据契约见 :class:`LogImageClassifierTrainValVisualizationCallback`。
+        ``dataset`` 由 :meth:`_try_log_batch` 从 datamodule 注入，使用：
+
+        - :meth:`~lovely_deep_learning.dataset.image_classifier.ImageClassifierDataset.convert_img_from_tensor_to_numpy`
+        - :meth:`~lovely_deep_learning.dataset.image_classifier.ImageClassifierDataset.draw_target_and_predict_label_on_numpy`
+        - :meth:`~lovely_deep_learning.dataset.base.BaseDataset.convert_img_from_numpy_to_tensor_uint8`
+        """
         metric_preds = outputs.get("metric_preds")
         net_out = outputs.get("net_out")
         if metric_preds is None or net_out is None:
@@ -104,6 +145,11 @@ class LogImageClassifierVisualizationCallback(pl.Callback):
         tb_tag: str,
         phase_label: str,
     ) -> None:
+        """rank0 / ``batch_idx==0`` 门禁；通过后调用 :meth:`_log_sample_classifications_tensorboard`。
+
+        数据契约见 :class:`LogImageClassifierTrainValVisualizationCallback`。
+        ``dataset_name`` 为 ``"train_dataset"`` 或 ``"val_dataset"``。
+        """
         if not trainer.is_global_zero or batch_idx != 0:
             return
         if outputs is None or not isinstance(outputs, dict):
@@ -167,9 +213,44 @@ class LogImageClassifierVisualizationCallback(pl.Callback):
         )
 
 
-class ImageClassifierTestAndPredictionWriterCallback(pl.Callback):
-    """
-    将 **test** 与 **predict** 阶段的标注图与结果表写入本地目录（``cv2.imwrite`` + CSV）。
+class SaveImageClassifierTestPredictVisualizationCallback(pl.Callback):
+    """test / predict 阶段将分类可视化与结果表写入本地（``cv2.imwrite`` + CSV）。
+
+    与 :class:`LogImageClassifierTrainValVisualizationCallback` 分工：后者仅 train/val → TensorBoard。
+
+    **触发时机**
+
+    - :meth:`on_test_batch_end`：逐 batch、逐样本写图与 CSV 行
+    - :meth:`on_predict_batch_end`：逐 batch、逐样本写图与 CSV 行（无 GT）
+    - :meth:`on_test_end` / :meth:`on_predict_end`：汇总写入 CSV 文件
+    - ``save_dir`` 为 ``None`` 时不写入
+
+    **数据契约**
+
+    Module（:class:`~lovely_deep_learning.module.base.BaseModule`）：
+
+    - ``test_step`` → ``{"metric_preds", "net_out"}``
+    - ``predict_step`` → ``{"metric_preds"}``
+    - ``metric_preds["pred_ids"]`` / ``["pred_conf"]``：batch 级张量
+
+    Batch（:class:`ImageClassifierDataset` collate）：``(net_in, net_out)``；
+    ``net_in[i]["img_path"]`` / ``["img_tv_transformed"]`` 用于读图与绘制；
+    test 阶段 GT 来自 ``net_out["class_id"]`` / ``["class_name"]``。
+
+    Dataloader dataset：``trainer.test_dataloaders.dataset`` /
+    ``trainer.predict_dataloaders.dataset``（:class:`ImageClassifierDataset`），
+    供类名映射与绘制工具。
+
+    **目录结构**（``save_dir`` 非空时）::
+
+        {save_dir}/test/*.jpg          # 测试标注图
+        {save_dir}/test_results.csv    # 测试汇总
+        {save_dir}/predict/*.jpg       # 预测标注图
+        {save_dir}/prediction_results.csv
+
+    **参数**
+
+    ``test_only_save_mistake=True`` 时，test 阶段仅保存预测错误样本图（CSV 仍记录全部样本）。
     """
 
     def __init__(self, save_dir: str = None, test_only_save_mistake=True):
@@ -185,12 +266,13 @@ class ImageClassifierTestAndPredictionWriterCallback(pl.Callback):
             self.save_dir_test = self.save_dir / "test"
             self.save_dir_pred = self.save_dir / "predict"
             self.csv_table_test = []
-            self.csv_table_pred = []  # 初始化为空列表，用于存储预测结果
+            self.csv_table_pred = []
 
             os.makedirs(self.save_dir_test, exist_ok=True)
             os.makedirs(self.save_dir_pred, exist_ok=True)
 
     def on_test_batch_end(self, trainer, pl_module, outputs, batch, batch_idx, dataloader_idx=0):
+        """逐样本绘制 GT + 预测标签，按 ``test_only_save_mistake`` 决定是否写图。"""
         if self.save_dir is None or outputs is None:
             return
         metric_preds = outputs.get("metric_preds")
@@ -264,9 +346,7 @@ class ImageClassifierTestAndPredictionWriterCallback(pl.Callback):
         batch_idx,
         dataloader_idx=0,
     ):
-        """
-        每个预测批次结束时保存图像和预测结果
-        """
+        """预测阶段无 GT，仅绘制预测标签并写入 ``predict/``。"""
         if self.save_dir is None or outputs is None:
             return
         metric_preds = outputs.get("metric_preds")

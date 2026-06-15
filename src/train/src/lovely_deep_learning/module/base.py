@@ -13,13 +13,27 @@ from lovely_deep_learning.dataset.base import BaseDataset
 
 
 class BaseModule(pl.LightningModule):
-    """项目内 LightningModule 基类。
+    """分类 / 检测共用的 LightningModule 基类。
 
-    **YAML 共性**（与检测 / 分类实验对齐）：由 Lightning CLI 注入 ``model``、
-    ``optimizer``、``lr_scheduler``、``criterion``、``postprocess``、``metrics``，
-    在本类 ``__init__`` 中校验并挂载为 ``self.*``。
+    **YAML 注入**（Lightning CLI → ``model.init_args``）：``model``（DAGNet 结构）、
+    ``optimizer``、``lr_scheduler``、``criterion``、``postprocess``、``metrics``；
+    在 ``__init__`` 中校验非空并挂到 ``self.*``。
 
-    导出（第一版）：仅 ``ckpt_path``（可选）与 ``export_format``；其余依赖 YAML 中的 ``exporter``。
+    **Batch 约定**（与 ``BaseDataset.collate_net_in_tuple`` 对齐）::
+
+        net_in:  tuple[dict]   # 每样本含 img_path / img_tv_transformed / img 等
+        net_out: dict | tuple  # 分类为 batched dict；检测为 tuple[dict]（变长 GT）
+
+    **Step 返回值**（供可视化 / Writer 等 Callback 消费）：
+
+    - ``training_step`` → ``{"loss", "metric_preds", "net_out"}``
+    - ``validation_step`` / ``test_step`` → ``{"metric_preds", "net_out"}``
+    - ``predict_step`` → ``{"metric_preds"}``
+
+    **子类职责**：本类已实现完整 train/val/test/predict 循环；子类通常只需覆写
+    ``on_*_epoch_end`` 记录任务指标（如 acc / mAP），必要时覆写 ``on_fit_start`` 等。
+
+    **导出 / 剪枝**：``export()``、``prune()`` 委托 DAGNet 与 YAML 中的 exporter / pruner。
     """
 
     def __init__(
@@ -65,11 +79,19 @@ class BaseModule(pl.LightningModule):
         self.metrics = metrics
 
     def forward(self, x: torch.Tensor) -> Any:
+        """``LightningModule`` 入口：单张量 batch 包装为 DAGNet 所需的 list 输入。"""
         return self.model([x])
 
     def _shared_step(
         self, batch: Any, stage: str
     ) -> tuple[torch.Tensor, Any, Any, int]:
+        """train / val / test 共用：前向 → loss → postprocess → 更新 metrics。
+
+        Returns:
+            ``(loss, metric_preds, net_out, batch_size)``。
+            ``metric_preds`` 形态由 YAML 中的 ``postprocess`` 决定（分类为 batched dict，
+            检测为每图 list[dict]）。
+        """
         net_in, net_out = batch
         imgs = BaseDataset.stack_batch_images(net_in)
         batch_size = imgs.shape[0]
@@ -83,6 +105,7 @@ class BaseModule(pl.LightningModule):
         return loss, metric_preds, net_out, batch_size
 
     def training_step(self, batch, batch_idx):
+        """记录 ``train_loss``，返回 loss 与后处理结果供 Callback 使用。"""
         loss, metric_preds, net_out, batch_size = self._shared_step(
             batch, "train")
         self.log(
@@ -96,6 +119,7 @@ class BaseModule(pl.LightningModule):
         return {"loss": loss, "metric_preds": metric_preds, "net_out": net_out}
 
     def validation_step(self, batch, batch_idx):
+        """记录 ``val_loss``；loss 不放入返回值（与检测侧 Callback 约定一致）。"""
         loss, metric_preds, net_out, batch_size = self._shared_step(
             batch, "val")
         self.log(
@@ -109,6 +133,7 @@ class BaseModule(pl.LightningModule):
         return {"metric_preds": metric_preds, "net_out": net_out}
 
     def test_step(self, batch, batch_idx):
+        """记录 ``test_loss`` 并更新 test 阶段 metrics。"""
         loss, metric_preds, net_out, batch_size = self._shared_step(
             batch, "test")
         self.log(
@@ -122,6 +147,7 @@ class BaseModule(pl.LightningModule):
         return {"metric_preds": metric_preds, "net_out": net_out}
 
     def predict_step(self, batch, batch_idx):
+        """推理阶段不算 loss / metrics，仅 postprocess 后返回 ``metric_preds``。"""
         net_in, _net_out = batch
         imgs = BaseDataset.stack_batch_images(net_in)
         with torch.inference_mode():
@@ -146,6 +172,7 @@ class BaseModule(pl.LightningModule):
         return export_dagnet(model, ckpt_path=ckpt_path, export_format=export_format)
 
     def configure_optimizers(self):
+        """优化 ``self.parameters()`` 下全部可训练子模块；``monitor`` 供 LR scheduler 使用。"""
         optimizer = instantiate_class(
             filter(lambda p: p.requires_grad, self.parameters()),
             self.optimizer_cfg,

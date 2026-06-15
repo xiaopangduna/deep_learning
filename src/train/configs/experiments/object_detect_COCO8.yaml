@@ -6,13 +6,13 @@ trainer:
   max_epochs: 10
   accelerator: auto
   callbacks:
-    - class_path: lovely_deep_learning.callback.object_detect.SaveObjectDetectVisualizationCallback
+    - class_path: lovely_deep_learning.callback.object_detect.SaveObjectDetectTestPredictVisualizationCallback
       init_args:
         save_dir: tmp
         test_only_save_mistake: true
         conf_thres: 0.25
         match_iou_thres: 0.5
-    - class_path: lovely_deep_learning.callback.object_detect.LogObjectDetectVisualizationCallback
+    - class_path: lovely_deep_learning.callback.object_detect.LogObjectDetectTrainValVisualizationCallback
       init_args:
         max_images: 4
         nrow: 2

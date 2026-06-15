@@ -3,11 +3,11 @@ trainer:
   accelerator: auto
   accumulate_grad_batches: 8
   callbacks:
-    - class_path: lovely_deep_learning.callback.image_classifier.LogImageClassifierVisualizationCallback
+    - class_path: lovely_deep_learning.callback.image_classifier.LogImageClassifierTrainValVisualizationCallback
       init_args:
-        max_images: 4
-        nrow: 2
-    - class_path: lovely_deep_learning.callback.image_classifier.ImageClassifierTestAndPredictionWriterCallback
+        max_images: 9
+        nrow: 3
+    - class_path: lovely_deep_learning.callback.image_classifier.SaveImageClassifierTestPredictVisualizationCallback
       init_args:
         save_dir: tmp       # 保存测试和预测结果的目录
         test_only_save_mistake: true  # 只保存测试和预测结果的错误样本
@@ -268,8 +268,3 @@ model:
               - {name: "1", module: torch.nn.Hardswish, args: {inplace: true}}
               - {name: "2", module: torch.nn.Dropout, args: {p: 0.2, inplace: true}}
               - {name: "3", module: torch.nn.Linear, args: {in_features: 1280, out_features: 10}}
-
-
-
-
-
