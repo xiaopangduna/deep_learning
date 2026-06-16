@@ -1,0 +1,40 @@
+{
+    // 在 Cursor/VS Code 容器选择列表中显示的名称
+    "name": "convert: ubuntu-npu-allwinner v2.0.10.2 (Acuity/Pegasus)",
+
+    // 使用本地已有的 Docker 镜像，不通过 Dockerfile 构建
+    // 开发手册：http://www.orangepi.cn/html/hardWare/computerAndMicrocontrollers/service-and-support/Orange-Pi-4-Pro.html
+    // 全志的镜像，官方提供，本镜像地址：https://netstorage.allwinnertech.com:5001/sharing/Mh23BhPHq
+
+    // 该镜像内含 Acuity/Pegasus NPU 模型转换工具链
+    "image": "ubuntu-npu:v2.0.10.2",
+
+    // 将宿主机 monorepo 根目录挂载到容器内
+    // ${localWorkspaceFolder} 为当前打开的 train 目录，../.. 即 deep_learning 根目录
+    // type=bind 表示直接绑定挂载，容器内修改会同步到宿主机
+    "workspaceMount": "source=${localWorkspaceFolder}/../..,target=/workspace/deep_learning,type=bind",
+
+    // 容器启动后 Cursor 默认打开的工作目录
+    "workspaceFolder": "/workspace/deep_learning/src/train",
+
+    // 注入到容器内的环境变量
+    "containerEnv": {
+        // 时区，影响日志时间戳等
+        "TZ": "Asia/Shanghai",
+        // Acuity 命令行工具根目录，供转换脚本引用 pegasus.py 等
+        "ACUITY_TOOLKIT_ROOT": "/usr/local/acuity_command_line_tools"
+    },
+
+    // 容器首次创建后执行一次，用于验证转换环境是否就绪
+    "postCreateCommand": "bash .devcontainer/convert-ubuntu-npu-allwinner/post-create.sh",
+
+    // 编辑器专属配置（Cursor 兼容 VS Code 的 customizations 字段）
+    "customizations": {
+        "vscode": {
+            // 进入容器时自动安装的扩展
+            "extensions": [
+                "ms-python.python"  // Python 语法高亮、运行、调试
+            ]
+        }
+    }
+}

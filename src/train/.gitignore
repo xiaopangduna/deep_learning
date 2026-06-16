@@ -1,6 +1,11 @@
 logs/
 lightning_logs/
 tmp/
+
+# 芯片转换 SDK（体积大，本地自备）
+convert/*
+!convert/README.md
+
 data/
 checkpoints/
 datasets/

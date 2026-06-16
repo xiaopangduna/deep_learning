@@ -1,0 +1,16 @@
+{
+    "name": "pytorch_2.4.1_python_3.11 (archived)",
+    "image": "my_pytorch_2.4.1:latest",
+    "runArgs": [
+        "--gpus",
+        "all",
+        "--shm-size=3G"
+    ],
+    "workspaceMount": "source=${localWorkspaceFolder}/../..,target=/workspace/deep_learning,type=bind",
+    "workspaceFolder": "/workspace/deep_learning/src/train",
+    "customizations": {
+        "vscode": {
+            "extensions": []
+        }
+    }
+}

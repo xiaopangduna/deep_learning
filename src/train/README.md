@@ -38,7 +38,7 @@ python scripts/create_dataset_table_from_multi_folders_for_train_predict.py \
 
 1.  xxxx
 2.  xxxx
-3.  xxxx
+3.  板端模型转换 SDK（全志 ai-sdk 等）见 [convert/README.md](convert/README.md)，需本地下载，不纳入 Git
 
 #### 使用说明
 
