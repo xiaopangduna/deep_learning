@@ -20,3 +20,8 @@ convert/<芯片商>/<SDK 名称>/
 
 从官方文档中下载http://www.orangepi.cn/html/hardWare/computerAndMicrocontrollers/service-and-support/Orange-Pi-4-Pro.html
 
+
+执行
+cd convert/allwinner/ai-sdk/models
+source env.sh v3
+cp ../scripts/* .
