@@ -1,0 +1,13 @@
+# 白名单：仅跟踪 NPU 转换流程核心文件
+# 同目录下的 ONNX、Pegasus 中间产物、inf/、wksp/ 等均为本地生成，不进 Git
+
+# 忽略本目录及子目录下一切
+*
+**/*
+
+# 核心文件（按需增删）
+!.gitignore
+!README.md
+!config_yml.py
+!convert_model_env.sh
+

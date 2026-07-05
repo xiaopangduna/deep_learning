@@ -17,6 +17,7 @@ pretrained_models/
 runs/
 cache/
 
+*.nb
 
 
 

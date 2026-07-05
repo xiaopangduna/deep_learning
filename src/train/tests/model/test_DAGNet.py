@@ -5,6 +5,7 @@ from ultralytics import YOLO
 from lovely_deep_learning.model.DAGNet import DAGNet
 from .utils import (
     efficientnet_v2_s_config,
+    mobilenet_v2_config,
     mobilenet_v3_large_config,
     regnet_y_32gf_config,
     resnet18_config,
@@ -57,6 +58,20 @@ def test_DAGWeightLoader_regnet_y_32gf():
     net = DAGNet(config["structure"])
     net.load_weights(**config["weight"])
     official = models.regnet_y_32gf(weights=models.RegNet_Y_32GF_Weights.DEFAULT)
+    x = torch.randn(1, 3, 224, 224)
+    official.eval()
+    net.eval()
+    with torch.no_grad():
+        official_out = official(x)
+        dag_out = net([x])[0]
+    assert torch.allclose(official_out, dag_out, atol=1e-6)
+
+
+def test_DAGWeightLoader_mobilenet_v2():
+    config = mobilenet_v2_config
+    net = DAGNet(config["structure"])
+    net.load_weights(**config["weight"])
+    official = models.mobilenet_v2(weights=models.MobileNet_V2_Weights.IMAGENET1K_V1)
     x = torch.randn(1, 3, 224, 224)
     official.eval()
     net.eval()
