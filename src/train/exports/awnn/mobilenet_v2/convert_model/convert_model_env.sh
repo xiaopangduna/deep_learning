@@ -1,5 +1,7 @@
 #!/bin/bash
 
+mkdir -p ../model
+
 ln -s ../../scripts_model_convert/pegasus_import.sh pegasus_import.sh
 
 ln -s ../../scripts_model_convert/pegasus_inference.sh pegasus_inference.sh
