@@ -1,0 +1,33 @@
+# exports：默认不跟踪；只保留说明 / 脚本 / 配置（及 quant_data）
+*
+
+# 允许向下遍历目录（gitignore 白名单必需）
+!*/
+
+# 元数据 / 说明
+!.gitignore
+!README.md
+!**/README.md
+!**/.gitignore
+
+# 本项目转换脚本与配置
+!**/*.py
+!**/*.sh
+!**/*.yml
+!**/*.yaml
+!**/*.ini
+!**/*.txt
+
+# 校准小集整目录跟踪（含图片）
+!quant_data/
+!quant_data/**
+
+# SDK 与常见大产物目录（即使后缀在白名单也不跟踪）
+sdk/
+**/inf/
+**/wksp/
+
+# 转换过程本地生成（软链 / Pegasus 元数据等）
+**/convert_model/pegasus_*.sh
+**/convert_model/*_inputmeta.yml
+**/convert_model/*_postprocess_file.yml

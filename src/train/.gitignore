@@ -2,9 +2,7 @@ logs/
 lightning_logs/
 tmp/
 
-# 芯片转换 SDK（体积大，本地自备）
-convert/*
-!convert/README.md
+# 板端转换：跟踪规则见 exports/.gitignore（默认忽略 + 白名单）
 
 data/
 checkpoints/

@@ -5,7 +5,7 @@ echo "==> NPU conversion environment: ubuntu-npu:v2.0.10.2"
 python3 --version
 pip3 show acuity | awk '/^Version:/{print "acuity " $2}'
 
-AI_SDK_MODELS="${PWD}/convert/allwinner/ai-sdk/models"
+AI_SDK_MODELS="${PWD}/exports/awnn/sdk/models"
 if [[ -f "${AI_SDK_MODELS}/env.sh" ]]; then
     echo "==> source env.sh v3"
     pushd "${AI_SDK_MODELS}" >/dev/null
