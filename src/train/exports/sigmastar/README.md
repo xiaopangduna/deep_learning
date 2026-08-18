@@ -67,6 +67,22 @@ cd /work/SGS_V1.8_18.04/src/train/exports/sigmastar/sdk/IPU_SDK_Release_*/SGS_IP
 source cfg_env.sh
 ```
 
+## 常用指令
+```bash
+# 查看IPU Toolchain具体适配的CHIP及版本信息可以执行
+cd .../IPU_SDK_Release_25121210/SGS_IPU_Toolchain_25121210/
+python3 DumpDebug/show_sdk_info.py 
+# 查看模型信息
+python3 DumpDebug/show_img_info.py -m ../Quick_Start_Demo/onnx_yolov8s/onnx_yolov8n_pcupid.img  --soc_version pcupid
+
+开发板查看模型信息
+Linux SDK-alkaid已提供sdk/verify/release_feature/source/dla/dla_dla_show_img_info的app。
+
+```
+## 模型推理方式
+支持PC端仿真运行sim，参考 Quick_Start_Demo的yolov8_simulator.py
+支持开发板通过RPC运行img模型
+
 ## 示例
 
 | 示例 | 路径 | 文档 |
