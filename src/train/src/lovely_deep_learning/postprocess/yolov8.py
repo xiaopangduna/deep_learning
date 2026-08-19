@@ -26,14 +26,38 @@ def _cxcywh_pixels_to_xywh_tl(boxes: torch.Tensor) -> torch.Tensor:
     return torch.stack((x1, y1, w, h), dim=-1)
 
 
+class YOLOv8Decode(nn.Module):
+    """Detect 多尺度原始头 → 官方推理 dense ``raw`` ``(B, 4+nc, A)``。
+
+    输入为各尺度 ``(B, 4*reg_max+nc, H_i, W_i)``；输出像素 cxcywh + sigmoid 分类分。
+    无 NMS，可供 ONNX ``export_head`` 与 :class:`YOLOv8PostProcessor` 共用。
+    """
+
+    def __init__(self, nc: int, reg_max: int, stride: Sequence[float]) -> None:
+        super().__init__()
+        self.nc = int(nc)
+        self.reg_max = int(reg_max)
+        self.register_buffer(
+            "stride",
+            torch.tensor(list(stride), dtype=torch.float32),
+            persistent=False,
+        )
+
+    def forward(self, feats: List[torch.Tensor]) -> torch.Tensor:
+        return YOLOv8PostProcessor.feats_to_raw_yolov8(
+            feats, self.nc, self.reg_max, self.stride
+        )
+
+
 class YOLOv8PostProcessor(nn.Module):
     """
     将 ``DAGNet`` 检测分支输出解码为像素 cxcywh + 类概率的 ``raw``，再可选 ``postprocess_detections``。
 
     检测头 merge / 通道拆分 / DFL 期望与 :class:`~lovely_deep_learning.loss.object_detect.DetectionLossYOLOv8`
-    共用本类下方静态方法；可将模型输出转为 ``MeanAveragePrecision.update`` 所需的 ``preds`` 列表
-    （框布局由 ``map_pred_box_format`` 约定，须与 ``metrics.box_format`` 一致）；``targets`` 由
-    ``ObjectDetectMetric`` 从 ``net_out`` 组装 ``targets``。另提供 ``(B, max_det, 6)`` 张量供 ``predict`` 等。
+    共用本类下方静态方法；密集解码走 :class:`YOLOv8Decode`。可将模型输出转为
+    ``MeanAveragePrecision.update`` 所需的 ``preds`` 列表（框布局由 ``map_pred_box_format``
+    约定，须与 ``metrics.box_format`` 一致）；``targets`` 由 ``ObjectDetectMetric`` 从
+    ``net_out`` 组装 ``targets``。另提供 ``(B, max_det, 6)`` 张量供 ``predict`` 等。
     """
 
     @staticmethod
@@ -128,6 +152,7 @@ class YOLOv8PostProcessor(nn.Module):
             torch.tensor(list(stride), dtype=torch.float32),
             persistent=False,
         )
+        self.decode = YOLOv8Decode(nc=self.nc, reg_max=self.reg_max, stride=stride)
 
     def dag_out_to_raw(self, dag_out: tuple) -> torch.Tensor:
         """``DAGNet`` 单输出元组（多尺度特征 list）→ ``raw`` ``(B, 4+nc, A)``（像素 cxcywh + sigmoid cls）。"""
@@ -136,9 +161,7 @@ class YOLOv8PostProcessor(nn.Module):
             if isinstance(feats, tuple):
                 return feats[0]
             return feats
-        return YOLOv8PostProcessor.feats_to_raw_yolov8(
-            feats, self.nc, self.reg_max, self.stride
-        )
+        return self.decode(feats)
 
     def raw_to_detections(self, raw: torch.Tensor) -> torch.Tensor:
         """``raw`` ``(B, 4+nc, A)`` → ``(B, max_det, 6)``（cxcywh, conf, cls）。"""

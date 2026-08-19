@@ -15,4 +15,5 @@ model.info()
 # Run inference with the YOLOv8n model on the 'bus.jpg' image
 # results = model("path/to/bus.jpg")
 
-model.export(format="onnx", imgsz=640, opset=12, dynamic=False, simplify=True)
+# model.export(format="onnx", imgsz=640, opset=12, dynamic=False, simplify=True)
+model.export(format="onnx", imgsz=[640,640], simplify=True, opset=13)

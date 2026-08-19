@@ -141,6 +141,25 @@ model:
     model:
       model_name: yolov8_n
       pretrained: true
+      exporter:
+        class_path: lovely_deep_learning.export.base.BaseExporter
+        init_args:
+          export_head:
+            class_path: lovely_deep_learning.postprocess.yolov8.YOLOv8Decode
+            init_args:
+              nc: 80
+              reg_max: 16
+              stride: [8, 16, 32]
+          onnx_cfg:
+            input_shape: [1, 3, 640, 640]
+            path_save_onnx: null
+            simplify: true
+            cfg_for_torch_onnx_export:
+              export_params: true
+              opset_version: 12
+              input_names: ["images"]
+              output_names: ["output0"]
+          trt_cfg: {}
       weight:
         map_location: cpu
         strict: false

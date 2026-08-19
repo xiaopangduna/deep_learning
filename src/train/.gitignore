@@ -10,6 +10,7 @@ datasets/
 
 pretrained_models/
 
+*.onnx
 *.pt
 *.pth 
 runs/

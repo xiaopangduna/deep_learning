@@ -104,3 +104,4 @@ Linux SDK-alkaid已提供sdk/verify/release_feature/source/dla/dla_dla_show_img_
 | `llm/` `vlm/` | 大模型 / 多模态 |
 
 本项目自有转换配置放：`exports/sigmastar/<模型名>/`。
+https://doc.comake.online/IPU_Sigdoc_zh/module/OpenDLA/Readme_yolov8.html
