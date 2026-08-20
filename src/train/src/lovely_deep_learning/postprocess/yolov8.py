@@ -9,6 +9,7 @@ import torch.nn as nn
 from ultralytics.utils.tal import dist2bbox, make_anchors
 
 from ..dataset.object_detect import postprocess_detections
+from ..nn.block import DFL
 
 
 def _cxcywh_pixels_to_xyxy(boxes: torch.Tensor) -> torch.Tensor:
@@ -37,6 +38,9 @@ class YOLOv8Decode(nn.Module):
         super().__init__()
         self.nc = int(nc)
         self.reg_max = int(reg_max)
+        # 与 Ultralytics Detect.dfl 相同：4D Transpose + 1x1 Conv。3D permute+matmul
+        # 在 ONNX 里会留下 perm=[0,2,1] 的 Transpose，SGS IPU 转 NHWC 后 rank 与 perm 对不上。
+        self.dfl: nn.Module = DFL(self.reg_max) if self.reg_max > 1 else nn.Identity()
         self.register_buffer(
             "stride",
             torch.tensor(list(stride), dtype=torch.float32),
@@ -45,7 +49,7 @@ class YOLOv8Decode(nn.Module):
 
     def forward(self, feats: List[torch.Tensor]) -> torch.Tensor:
         return YOLOv8PostProcessor.feats_to_raw_yolov8(
-            feats, self.nc, self.reg_max, self.stride
+            feats, self.nc, self.reg_max, self.stride, dfl=self.dfl
         )
 
 
@@ -111,16 +115,26 @@ class YOLOv8PostProcessor(nn.Module):
         nc: int,
         reg_max: int,
         stride: torch.Tensor,
+        dfl: nn.Module | None = None,
     ) -> torch.Tensor:
-        """多尺度 head → 密集 ``raw`` ``(B, 4+nc, A)``（像素 cxcywh + sigmoid cls）。"""
+        """多尺度 head → 密集 ``raw`` ``(B, 4+nc, A)``（像素 cxcywh + sigmoid cls）。
+
+        DFL 走官方 ``(B, 4, 16, A)`` 再 ``transpose(2,1)`` 的 Conv 路径（与 ``Detect.dfl`` 一致），
+        而不是 ``(B, A, 64)`` 上的 3D permute。损失仍用 :meth:`dfl_logits_to_ltrb_b_a4`。
+        """
         no = nc + reg_max * 4
         merged = YOLOv8PostProcessor.merge_yolov8_head_feats(feats, no)
         pred_dist_bca, cls_bca = YOLOv8PostProcessor.split_merged_head_reg_cls(
             merged, reg_max, nc
         )
-        pred_distri_ba = pred_dist_bca.permute(0, 2, 1).contiguous()
-        ltrb_ba4 = YOLOv8PostProcessor.dfl_logits_to_ltrb_b_a4(pred_distri_ba, reg_max)
-        pred_dist_b4a = ltrb_ba4.permute(0, 2, 1).contiguous()
+        if reg_max > 1:
+            if dfl is None:
+                dfl = DFL(reg_max).to(
+                    device=pred_dist_bca.device, dtype=pred_dist_bca.dtype
+                )
+            pred_dist_b4a = dfl(pred_dist_bca)
+        else:
+            pred_dist_b4a = pred_dist_bca
         stride = stride.to(device=pred_dist_b4a.device, dtype=pred_dist_b4a.dtype)
         anchors, strides = (
             x.transpose(0, 1) for x in make_anchors(feats, stride, 0.5)

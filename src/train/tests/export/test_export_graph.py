@@ -117,3 +117,31 @@ def test_base_exporter_onnx_simplify_keeps_io(tmp_path):
     slim_dims = [d.dim_value for d in slim.graph.output[0].type.tensor_type.shape.dim]
     assert slim_dims == raw_dims == [1, 84, 8 * 8 + 4 * 4 + 2 * 2]
     assert len(slim.graph.node) <= len(raw.graph.node)
+
+
+def _transpose_perms(model) -> list[list[int]]:
+    return [
+        list(a.ints)
+        for n in model.graph.node
+        if n.op_type == "Transpose"
+        for a in n.attribute
+        if a.name == "perm"
+    ]
+
+
+def test_decode_onnx_dfl_has_no_3d_transpose(tmp_path):
+    """SGS IPU 不能降 3D Transpose。未 simplify 时应有官方 4D DFL perm；slim 可折叠掉 Transpose。"""
+    raw_path = tmp_path / "raw.onnx"
+    slim_path = tmp_path / "slim.onnx"
+    head = YOLOv8Decode(nc=80, reg_max=16, stride=[8, 16, 32])
+    BaseExporter(export_head=head, onnx_cfg=_onnx_cfg(raw_path, simplify=False)).export_onnx(
+        _FakeDAGNet()
+    )
+    BaseExporter(export_head=head, onnx_cfg=_onnx_cfg(slim_path, simplify=True)).export_onnx(
+        _FakeDAGNet()
+    )
+    raw_perms = _transpose_perms(onnx.load(str(raw_path)))
+    slim_perms = _transpose_perms(onnx.load(str(slim_path)))
+    assert [0, 2, 1, 3] in raw_perms
+    assert not any(len(p) == 3 for p in raw_perms)
+    assert not any(len(p) == 3 for p in slim_perms)
