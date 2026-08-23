@@ -89,9 +89,13 @@ data:
       class_path: torchvision.transforms.v2.Compose
       init_args:
         transforms:
-          - class_path: torchvision.transforms.v2.Resize
+          - class_path: lovely_deep_learning.transforms.letterbox.LetterBox
             init_args:
               size: [640, 640]
+              fill: 114
+              center: true
+              # True: match YOLO.val() (load_image upscales long side to 640, then pad)
+              scaleup: true
               interpolation: 2
           - class_path: torchvision.transforms.v2.ToDtype
             init_args:
@@ -130,7 +134,7 @@ model:
         max_det: 300
         nms: true
         nms_iou: 0.7
-        inference_conf_thres: 0.25
+        inference_conf_thres: 0.001 # 0.25
         # 须与下方 metrics.init_args.box_format 一致（仅 preds；targets 由 metric 从 net_out 转换）
         map_pred_box_format: xyxy
     metrics:

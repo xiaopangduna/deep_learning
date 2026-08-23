@@ -70,6 +70,15 @@ class DAGNet(nn.Module):
         """按 ``weight`` 配置加载（``stages`` 列表，可多步）。"""
         self._weight_loader.load(self, **cfg)
 
+    def fuse(self):
+        """Eval 时合并 Conv+BN，与官方 ``YOLO.val()`` / ``AutoBackend(fuse=True)`` 一致。可重复调用。"""
+        from lovely_deep_learning.nn.conv import Conv
+
+        for m in self.modules():
+            if isinstance(m, Conv) and hasattr(m, "bn"):
+                m.fuse()
+        return self
+
     def forward(self, x: Union[List[torch.Tensor], torch.Tensor]):
         if isinstance(x, torch.Tensor):
             x = [x]

@@ -136,6 +136,7 @@ class Conv(nn.Module):
         self.conv = nn.Conv2d(c1, c2, k, s, autopad(k, p, d), groups=g, dilation=d, bias=False)
         self.bn = nn.BatchNorm2d(c2, eps=eps, momentum=momentum)
         self.act = self.default_act if act is True else act if isinstance(act, nn.Module) else nn.Identity()
+
     def forward(self, x):
         """
         Apply convolution, batch normalization and activation to input tensor.
@@ -147,7 +148,21 @@ class Conv(nn.Module):
             (torch.Tensor): Output tensor.
         """
         return self.act(self.bn(self.conv(x)))
-    
+
+    def forward_fuse(self, x):
+        """Inference after :meth:`fuse` (Conv+BN merged)."""
+        return self.act(self.conv(x))
+
+    def fuse(self):
+        """Merge ``conv`` and ``bn`` for eval, matching Ultralytics ``Conv.fuse``."""
+        if not hasattr(self, "bn"):
+            return self
+        from ultralytics.utils.torch_utils import fuse_conv_and_bn
+
+        self.conv = fuse_conv_and_bn(self.conv, self.bn)
+        delattr(self, "bn")
+        self.forward = self.forward_fuse
+        return self 
 
 class DWConv(Conv):
     """Depth-wise convolution module."""

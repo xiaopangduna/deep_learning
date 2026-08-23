@@ -151,6 +151,7 @@ class YOLOv8PostProcessor(nn.Module):
         nms: bool = True,
         nms_iou: float = 0.7,
         inference_conf_thres: float = 0.001,
+        multi_label: bool = True,
         map_pred_box_format: str = "xyxy",
     ) -> None:
         super().__init__()
@@ -160,6 +161,7 @@ class YOLOv8PostProcessor(nn.Module):
         self.nms = bool(nms)
         self.nms_iou = float(nms_iou)
         self.inference_conf_thres = float(inference_conf_thres)
+        self.multi_label = bool(multi_label)
         self.map_pred_box_format = str(map_pred_box_format).lower()
         self.register_buffer(
             "stride",
@@ -186,6 +188,7 @@ class YOLOv8PostProcessor(nn.Module):
             nms=self.nms,
             conf_thres=self.inference_conf_thres,
             nms_iou=self.nms_iou,
+            multi_label=self.multi_label,
         )
 
     def dag_out_to_detections(self, dag_out: tuple) -> torch.Tensor:
@@ -200,8 +203,9 @@ class YOLOv8PostProcessor(nn.Module):
 
         处理流程
             #. :meth:`dag_out_to_raw` — 锚点 + DFL 解码 → 密集 ``raw`` ``(B, 4+nc, A)``（像素 cxcywh + 类分）。
-            #. :meth:`raw_to_detections` — conf 阈值、按类 NMS、``max_det`` 截断 → 每图至多
-               ``max_det`` 行，每行 ``[cx, cy, w, h, conf, cls]``（像素 cxcywh）。
+            #. :meth:`raw_to_detections` — 全部锚点 conf 过滤、``multi_label``、按类 NMS、
+               ``max_det`` 截断 → 每图至多 ``max_det`` 行，每行 ``[cx, cy, w, h, conf, cls]``
+               （像素 cxcywh）。
 
         返回值
             ``Tensor``，形状 ``(B, max_det, 6)``；不足 ``max_det`` 的位置通常为补零行，

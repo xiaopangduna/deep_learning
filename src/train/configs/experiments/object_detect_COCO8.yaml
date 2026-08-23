@@ -86,9 +86,12 @@ data:
       class_path: torchvision.transforms.v2.Compose
       init_args:
         transforms:
-          - class_path: torchvision.transforms.v2.Resize
+          - class_path: lovely_deep_learning.transforms.letterbox.LetterBox
             init_args:
               size: [640, 640]
+              fill: 114
+              center: true
+              scaleup: true
               interpolation: 2
           - class_path: torchvision.transforms.v2.ToDtype
             init_args:

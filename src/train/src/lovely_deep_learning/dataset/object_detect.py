@@ -9,6 +9,7 @@ import torch
 import cv2
 from torchvision import tv_tensors
 from torchvision.ops import batched_nms
+from ultralytics.utils.ops import non_max_suppression
 
 from .base import BaseDataset
 from ..nn.head import Detect
@@ -71,6 +72,14 @@ def cxcywh_pixels_to_xyxy(boxes: torch.Tensor) -> torch.Tensor:
     cx, cy, w, h = boxes.unbind(-1)
     return torch.stack(
         (cx - w * 0.5, cy - h * 0.5, cx + w * 0.5, cy + h * 0.5), dim=-1
+    )
+
+
+def xyxy_pixels_to_cxcywh(boxes: torch.Tensor) -> torch.Tensor:
+    """``boxes``: ``(..., 4)`` 像素 xyxy → 中心 cxcywh。"""
+    x1, y1, x2, y2 = boxes.unbind(-1)
+    return torch.stack(
+        ((x1 + x2) * 0.5, (y1 + y2) * 0.5, x2 - x1, y2 - y1), dim=-1
     )
 
 
@@ -183,6 +192,26 @@ def apply_nms_to_detections(
     return out
 
 
+def _official_nms_to_padded_cxcywh(
+    outputs: list[torch.Tensor],
+    *,
+    batch_size: int,
+    max_det: int,
+    device: torch.device,
+    dtype: torch.dtype,
+) -> torch.Tensor:
+    """官方 NMS 的 list ``(N,6)`` xyxy → 固定 ``(B, max_det, 6)`` 像素 cxcywh。"""
+    out = torch.zeros(batch_size, max_det, 6, device=device, dtype=dtype)
+    for b, pred in enumerate(outputs):
+        if pred is None or pred.numel() == 0:
+            continue
+        n = min(int(pred.shape[0]), max_det)
+        out[b, :n, :4] = xyxy_pixels_to_cxcywh(pred[:n, :4])
+        out[b, :n, 4] = pred[:n, 4]
+        out[b, :n, 5] = pred[:n, 5]
+    return out
+
+
 def postprocess_detections(
     raw: torch.Tensor,
     max_det: int,
@@ -190,12 +219,38 @@ def postprocess_detections(
     nms: bool,
     conf_thres: float,
     nms_iou: float,
+    multi_label: bool = True,
 ) -> torch.Tensor:
-    """Detect 解码 + 可选按类 NMS，返回 ``(B, max_det, 6)``。"""
-    dets = Detect.postprocess(raw.permute(0, 2, 1), max_det, nc)
-    if nms:
-        dets = apply_nms_to_detections(dets, conf_thres=conf_thres, nms_iou=nms_iou)
-    return dets
+    """``raw`` ``(B, 4+nc, A)`` → ``(B, max_det, 6)``（像素 cxcywh, conf, cls）。
+
+    ``nms=True`` 时与官方 ``YOLO.val()`` 相同：全部锚点按 ``conf_thres`` 过滤、
+    ``multi_label`` 展开、按类 NMS，再截断 ``max_det``（不先做 Detect top-k）。
+    ``nms=False`` 仍走 :meth:`Detect.postprocess` 的 top-k（导出 / 单测）。
+
+    ``max_time_img`` 必须足够大：官方 NMS 在超时后 ``break`` 当前 batch，后面几张图
+    会变成 0 框（全漏检），val mAP 会掉约 0.002。WSL / 忙 GPU 上默认 2.8s 很容易踩中。
+    """
+    max_det = int(max_det)
+    if not nms:
+        return Detect.postprocess(raw.permute(0, 2, 1), max_det, nc)
+
+    outputs = non_max_suppression(
+        raw,
+        conf_thres=float(conf_thres),
+        iou_thres=float(nms_iou),
+        nc=int(nc),
+        multi_label=bool(multi_label),
+        max_det=max_det,
+        in_place=False,
+        max_time_img=1.0e6,
+    )
+    return _official_nms_to_padded_cxcywh(
+        outputs,
+        batch_size=int(raw.shape[0]),
+        max_det=max_det,
+        device=raw.device,
+        dtype=raw.dtype,
+    )
 
 
 class ObjectDetectDataset(BaseDataset):

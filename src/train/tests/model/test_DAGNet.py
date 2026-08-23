@@ -112,3 +112,22 @@ def test_DAGWeightLoader_yolov8_n():
     assert len(dag_out) == 3
     for i in range(3):
         assert torch.allclose(dag_out[i], official_out[1][i], atol=1e-6)
+
+
+def test_DAGWeightLoader_yolov8_n_fused_matches_official():
+    config = yolov8_n_config
+    net = DAGNet(config["structure"])
+    net.layers["22"].stride = torch.tensor([8, 16, 32], dtype=torch.float32)
+    net.load_weights(**config["weight"])
+    official_model = YOLO(r"pretrained_models/yolov8n.pt")
+    official_model.model.fuse()
+    official_model.eval()
+    net.fuse()
+    net.eval()
+    x = torch.randn(1, 3, 640, 640)
+    with torch.no_grad():
+        official_out = official_model.model(x)
+        dag_out = net([x])[0]
+    assert len(dag_out) == 3
+    for i in range(3):
+        assert torch.allclose(dag_out[i], official_out[1][i], atol=1e-5)
