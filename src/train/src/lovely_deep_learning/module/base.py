@@ -6,10 +6,70 @@ from typing import Any, Dict, Optional, Union
 import lightning.pytorch as pl
 from lightning.pytorch.cli import instantiate_class
 import torch
-
+from torch.optim.lr_scheduler import LRScheduler
 
 from lovely_deep_learning.model.DAGNet import DAGNet
 from lovely_deep_learning.dataset.base import BaseDataset
+
+
+def _class_path_cfg(spec: Any) -> dict[str, Any] | None:
+    """Lightning YAML / jsonargparse ``Namespace`` → ``{class_path, init_args}``。"""
+    if isinstance(spec, dict) and "class_path" in spec:
+        init_args = spec.get("init_args") or {}
+        if hasattr(init_args, "as_dict"):
+            init_args = init_args.as_dict()
+        return {"class_path": spec["class_path"], "init_args": dict(init_args)}
+    class_path = getattr(spec, "class_path", None)
+    if not class_path:
+        return None
+    init_args = getattr(spec, "init_args", None) or {}
+    if hasattr(init_args, "as_dict"):
+        init_args = init_args.as_dict()
+    elif not isinstance(init_args, dict):
+        init_args = vars(init_args)
+    return {"class_path": str(class_path), "init_args": dict(init_args)}
+
+
+def _bind_scheduler_to_optimizer(optimizer: Any, spec: Any) -> Any:
+    """把 YAML 里的调度器配置或 jsonargparse 已实例化的子调度器绑到 ``optimizer``。"""
+    cfg = _class_path_cfg(spec)
+    if cfg is not None:
+        return _instantiate_lr_scheduler(optimizer, cfg)
+    if isinstance(spec, LRScheduler):
+        kwargs: dict[str, Any] = {}
+        for key in (
+            "start_factor",
+            "end_factor",
+            "total_iters",
+            "gamma",
+            "last_epoch",
+            "milestones",
+            "T_max",
+            "eta_min",
+        ):
+            if hasattr(spec, key):
+                kwargs[key] = getattr(spec, key)
+        return type(spec)(optimizer, **kwargs)
+    raise TypeError(
+        f"无法为优化器绑定学习率调度器，收到 {type(spec)!r}"
+    )
+
+
+def _instantiate_lr_scheduler(optimizer: Any, cfg: Any) -> Any:
+    """``instantiate_class(optimizer, cfg)``；``SequentialLR`` / ``ChainedScheduler`` 的子调度器也要绑同一优化器。"""
+    parsed = _class_path_cfg(cfg)
+    if parsed is None:
+        return cfg
+    class_path = str(parsed["class_path"])
+    init_args = dict(parsed.get("init_args") or {})
+    init_args.pop("optimizer", None)
+    if class_path.rsplit(".", 1)[-1] in {"SequentialLR", "ChainedScheduler"}:
+        init_args["schedulers"] = [
+            _bind_scheduler_to_optimizer(optimizer, sub)
+            for sub in init_args.get("schedulers", [])
+        ]
+    parsed = {"class_path": class_path, "init_args": init_args}
+    return instantiate_class(optimizer, parsed)
 
 
 class BaseModule(pl.LightningModule):
@@ -177,7 +237,7 @@ class BaseModule(pl.LightningModule):
             filter(lambda p: p.requires_grad, self.parameters()),
             self.optimizer_cfg,
         )
-        scheduler = instantiate_class(optimizer, self.lr_scheduler_cfg)
+        scheduler = _instantiate_lr_scheduler(optimizer, self.lr_scheduler_cfg)
         return {"optimizer": optimizer, "lr_scheduler": scheduler, "monitor": "train_loss"}
 
     def prune(self, ckpt_path: Optional[Union[str, Path]] = None) -> str:

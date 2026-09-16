@@ -6,8 +6,9 @@
 # test2017 默认不自动下载，需手动放入 zip 或设 data.init_args.download_test2017: true
 
 trainer:
-  max_epochs: 10
+  max_epochs: 500
   accelerator: auto
+  accumulate_grad_batches: 4
   callbacks:
     - class_path: lovely_deep_learning.callback.object_detect.SaveObjectDetectTestPredictVisualizationCallback
       init_args:
@@ -44,7 +45,7 @@ trainer:
     - class_path: lightning.pytorch.loggers.TensorBoardLogger
       init_args:
         save_dir: logs
-        name: object_detect_COCO
+        name: object_detect_COCO_scratch
         version: null
   # profiler:
   #   class_path: lightning.pytorch.profilers.SimpleProfiler
@@ -124,15 +125,27 @@ model:
   class_path: lovely_deep_learning.module.object_detect.ObjectDetectModule
   init_args:
     optimizer:
-      class_path: torch.optim.AdamW
+      class_path: torch.optim.SGD
       init_args:
-        lr: 1.0e-4
+        lr: 0.01
+        momentum: 0.937
+        nesterov: true
         weight_decay: 5.0e-4
     lr_scheduler:
-      class_path: torch.optim.lr_scheduler.CosineAnnealingLR
+      class_path: torch.optim.lr_scheduler.SequentialLR
       init_args:
-        T_max: 10
-        eta_min: 1.0e-6
+        schedulers:
+          - class_path: torch.optim.lr_scheduler.LinearLR
+            init_args:
+              start_factor: 0.01
+              end_factor: 1.0
+              total_iters: 3
+          - class_path: torch.optim.lr_scheduler.LinearLR
+            init_args:
+              start_factor: 1.0
+              end_factor: 0.01
+              total_iters: 7
+        milestones: [3]
     criterion:
       class_path: lovely_deep_learning.loss.object_detect.DetectionLossYOLOv8
       init_args:
@@ -162,7 +175,7 @@ model:
         iou_type: bbox
     model:
       model_name: yolov8_n
-      pretrained: true
+      pretrained: false
       exporter:
         class_path: lovely_deep_learning.export.base.BaseExporter
         init_args:
@@ -182,16 +195,17 @@ model:
               input_names: ["images"]
               output_names: ["output0"]
           trt_cfg: {}
-      weight:
-        map_location: cpu
-        strict: false
-        stages:
-          - format: official
-            path: pretrained_models/yolov8n.pt
-            opts:
-              url: https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov8n.pt
-              src_key_prefix: layers.
-              src_key_slice_start: 12
+      # pretrained: false 时不加载；需要微调官方权重时改回 true 并取消注释
+      # weight:
+      #   map_location: cpu
+      #   strict: false
+      #   stages:
+      #     - format: official
+      #       path: pretrained_models/yolov8n.pt
+      #       opts:
+      #         url: https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov8n.pt
+      #         src_key_prefix: layers.
+      #         src_key_slice_start: 12
       structure:
         inputs: [{name: input, shape: [3, 640, 640]}]
         outputs: [{name: detect, from: ["22"]}]

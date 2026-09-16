@@ -65,10 +65,20 @@ class DAGNet(nn.Module):
                     "pretrained=True requires `weight` with non-empty `stages`."
                 )
             self.load_weights(**weight)
+        else:
+            self._init_detect_biases()
 
     def load_weights(self, **cfg: Any) -> None:
         """按 ``weight`` 配置加载（``stages`` 列表，可多步）。"""
         self._weight_loader.load(self, **cfg)
+
+    def _init_detect_biases(self) -> None:
+        """随机初始化时与官方一致：Detect 框/类别先验 bias（需 YAML 里已写 ``stride``）。"""
+        from lovely_deep_learning.nn.head import Detect
+
+        for m in self.modules():
+            if isinstance(m, Detect) and int(m.stride.numel()) == int(m.nl):
+                m.bias_init()
 
     def fuse(self):
         """Eval 时合并 Conv+BN，与官方 ``YOLO.val()`` / ``AutoBackend(fuse=True)`` 一致。可重复调用。"""
