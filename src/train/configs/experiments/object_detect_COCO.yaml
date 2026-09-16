@@ -69,15 +69,33 @@ data:
     norm_mean: null
     norm_std: null
     batch_size: 16
-    num_workers: 4
+    # WSL 约 8GB RAM：Mosaic 每样本读 4 张图，8 workers 在 train→val 切换时会被 OOM killer 杀掉
+    num_workers: 2
+    mosaic_prob: 1.0
+    mosaic_size: 640
     transform_train:
       class_path: torchvision.transforms.v2.Compose
       init_args:
         transforms:
-          - class_path: torchvision.transforms.v2.Resize
+          - class_path: lovely_deep_learning.transforms.letterbox.LetterBox
             init_args:
               size: [640, 640]
+              fill: 114
+              center: true
+              scaleup: true
               interpolation: 2
+          - class_path: lovely_deep_learning.transforms.hsv.RandomHSV
+            init_args:
+              hgain: 0.015
+              sgain: 0.7
+              vgain: 0.4
+          - class_path: torchvision.transforms.v2.RandomAffine
+            init_args:
+              degrees: [0.0, 0.0]
+              translate: [0.1, 0.1]
+              scale: [0.5, 1.5]
+              interpolation: 2
+              fill: 114
           - class_path: torchvision.transforms.v2.RandomHorizontalFlip
             init_args:
               p: 0.5
@@ -113,7 +131,7 @@ model:
     lr_scheduler:
       class_path: torch.optim.lr_scheduler.CosineAnnealingLR
       init_args:
-        T_max: 100
+        T_max: 10
         eta_min: 1.0e-6
     criterion:
       class_path: lovely_deep_learning.loss.object_detect.DetectionLossYOLOv8

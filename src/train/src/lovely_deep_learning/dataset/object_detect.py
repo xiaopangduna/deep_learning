@@ -2,6 +2,7 @@
 
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, Union, Sequence, Callable, List
+import random
 
 import numpy as np
 import pandas as pd
@@ -13,6 +14,7 @@ from ultralytics.utils.ops import non_max_suppression
 
 from .base import BaseDataset
 from ..nn.head import Detect
+from ..transforms.mosaic import mosaic4
 
 
 def iou_xyxy_pair(a: np.ndarray, b: np.ndarray) -> float:
@@ -264,31 +266,25 @@ class ObjectDetectDataset(BaseDataset):
         map_class_id_to_class_name: Optional[Union[Dict[Any, str], str]] = None,
         norm_mean: Optional[List[float]] = None,
         norm_std: Optional[List[float]] = None,
+        mosaic_prob: float = 0.0,
+        mosaic_size: int = 640,
     ):
         super().__init__(csv_paths=csv_paths, key_map=key_map, transform=transform)
         self.map_class_id_to_class_name = map_class_id_to_class_name
         self.norm_mean = norm_mean
         self.norm_std = norm_std
+        self.mosaic_prob = float(mosaic_prob)
+        self.mosaic_size = int(mosaic_size)
         self._has_label = "object_label_path" in self.sample_path_table.columns
 
-    def __getitem__(self, index: int) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    def _load_bgr_and_labels(
+        self, index: int
+    ) -> tuple[str, tuple, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         img_path = str(self.sample_path_table["img_path"].iloc[index])
         img_np, img_shape = BaseDataset.read_img(img_path, None)
-        img_tensor = BaseDataset.convert_img_from_numpy_to_tensor_uint8(img_np)
-        img_tv = tv_tensors.Image(img_tensor)
-        net_in: Dict[str, Any] = {
-            "img_path": img_path,
-            "img_shape": img_shape,
-        }
-
-        if not self._has_label:
-            net_in["img_tv_transformed"] = (
-                self.transform(img_tv) if self.transform else img_tv
-            )
-            return net_in, {}
-
         object_label_path = str(
-            self.sample_path_table["object_label_path"].iloc[index])
+            self.sample_path_table["object_label_path"].iloc[index]
+        )
         cls, bboxes_cxcywh_rel = ObjectDetectDataset.read_yolo_detection_labels(
             object_label_path
         )
@@ -297,15 +293,85 @@ class ObjectDetectDataset(BaseDataset):
                 bboxes_cxcywh_rel, img_shape
             )
         )
-        cls_tensor = torch.from_numpy(cls)
-        bboxes_tensor = torch.from_numpy(
-            bboxes_abs_xyxy.astype(np.float32, copy=False)
-        )
-        bboxes_tv = tv_tensors.BoundingBoxes(
-            bboxes_tensor,
-            format="XYXY",
-            canvas_size=(img_shape[0], img_shape[1]),
-        )
+        return img_path, img_shape, img_np, cls, bboxes_abs_xyxy, bboxes_cxcywh_rel
+
+    def __getitem__(self, index: int) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        img_path = str(self.sample_path_table["img_path"].iloc[index])
+        if not self._has_label:
+            img_np, img_shape = BaseDataset.read_img(img_path, None)
+            img_tv = tv_tensors.Image(
+                BaseDataset.convert_img_from_numpy_to_tensor_uint8(img_np)
+            )
+            net_in: Dict[str, Any] = {
+                "img_path": img_path,
+                "img_shape": img_shape,
+                "img_tv_transformed": (
+                    self.transform(img_tv) if self.transform else img_tv
+                ),
+            }
+            return net_in, {}
+
+        use_mosaic = self.mosaic_prob > 0.0 and random.random() < self.mosaic_prob
+        if use_mosaic:
+            n = max(int(self.num_samples), 1)
+            indices = [index] + [random.randint(0, n - 1) for _ in range(3)]
+            images_rgb = []
+            boxes_list = []
+            cls_list = []
+            img_path, img_shape, img_bgr0, cls, xyxy0, bboxes_cxcywh_rel = (
+                self._load_bgr_and_labels(indices[0])
+            )
+            images_rgb.append(cv2.cvtColor(img_bgr0, cv2.COLOR_BGR2RGB))
+            boxes_list.append(xyxy0)
+            cls_list.append(cls)
+            for j in indices[1:]:
+                _p, _shape, img_bgr, cls_j, xyxy_j, _rel = self._load_bgr_and_labels(j)
+                images_rgb.append(cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB))
+                boxes_list.append(xyxy_j)
+                cls_list.append(cls_j)
+            mosaic_hwc, mosaic_xyxy, mosaic_cls = mosaic4(
+                images_rgb,
+                boxes_list,
+                cls_list,
+                imgsz=self.mosaic_size,
+            )
+            img_tv = tv_tensors.Image(
+                torch.from_numpy(mosaic_hwc).permute(2, 0, 1).contiguous()
+            )
+            canvas_h, canvas_w = mosaic_hwc.shape[0], mosaic_hwc.shape[1]
+            cls_tensor = torch.from_numpy(mosaic_cls)
+            bboxes_tv = tv_tensors.BoundingBoxes(
+                torch.from_numpy(mosaic_xyxy.astype(np.float32, copy=False)),
+                format="XYXY",
+                canvas_size=(canvas_h, canvas_w),
+            )
+        else:
+            img_np, img_shape = BaseDataset.read_img(img_path, None)
+            img_tv = tv_tensors.Image(
+                BaseDataset.convert_img_from_numpy_to_tensor_uint8(img_np)
+            )
+            object_label_path = str(
+                self.sample_path_table["object_label_path"].iloc[index]
+            )
+            cls, bboxes_cxcywh_rel = ObjectDetectDataset.read_yolo_detection_labels(
+                object_label_path
+            )
+            bboxes_abs_xyxy = (
+                ObjectDetectDataset.convert_bboxes_from_cxcywh_relative_to_xyxy_absolute(
+                    bboxes_cxcywh_rel, img_shape
+                )
+            )
+            cls_tensor = torch.from_numpy(cls)
+            bboxes_tv = tv_tensors.BoundingBoxes(
+                torch.from_numpy(bboxes_abs_xyxy.astype(np.float32, copy=False)),
+                format="XYXY",
+                canvas_size=(img_shape[0], img_shape[1]),
+            )
+
+        net_in: Dict[str, Any] = {
+            "img_path": img_path,
+            "img_shape": img_shape,
+        }
         target = {"cls": cls_tensor, "bboxes": bboxes_tv}
         if self.transform:
             img_tv_transformed, t = self.transform(img_tv, target)

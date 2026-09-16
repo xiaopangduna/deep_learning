@@ -26,6 +26,8 @@ class ObjectDetectDataModule(BaseDataModule):
         map_class_id_to_class_name=None,
         norm_mean=None,
         norm_std=None,
+        mosaic_prob: float = 0.0,
+        mosaic_size: int = 640,
         **kwargs,
     ):
         """
@@ -45,6 +47,9 @@ class ObjectDetectDataModule(BaseDataModule):
         **kwargs
             交给 ``BaseDataModule.__init__``（各阶段 ``*_csv_paths``、``transform_*``、
             ``batch_size``、``num_workers`` 等）。
+        mosaic_prob, mosaic_size
+            仅训练 Dataset：4 图 Mosaic 概率（默认 0，行为与旧实验一致）与单图边长 ``s``。
+            验证 / 测试 / 预测不启用。
         """
         super().__init__(**kwargs)
         self.key_map = key_map
@@ -53,6 +58,8 @@ class ObjectDetectDataModule(BaseDataModule):
         self.map_class_id_to_class_name: dict[int, str] = {}
         self.norm_mean = norm_mean
         self.norm_std = norm_std
+        self.mosaic_prob = float(mosaic_prob)
+        self.mosaic_size = int(mosaic_size)
 
     def setup(self, stage=None):
         """按 Lightning ``stage`` 创建对应 Dataset；``stage is None`` 时构建全部阶段所用数据集。
@@ -72,6 +79,8 @@ class ObjectDetectDataModule(BaseDataModule):
                 map_class_id_to_class_name=self.map_class_id_to_class_name,
                 norm_mean=self.norm_mean,
                 norm_std=self.norm_std,
+                mosaic_prob=self.mosaic_prob,
+                mosaic_size=self.mosaic_size,
             )
             self.val_dataset = ObjectDetectDataset(
                 self.val_csv_paths,

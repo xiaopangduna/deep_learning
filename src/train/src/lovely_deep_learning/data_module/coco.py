@@ -318,6 +318,8 @@ class COCO8DataModule(ObjectDetectDataModule):
         norm_std=None,
         dataset_dir: str = "datasets/COCO8/coco8",
         download_url: str | None = None,
+        mosaic_prob: float = 0.0,
+        mosaic_size: int = 640,
     ):
         """
         Parameters
@@ -343,6 +345,8 @@ class COCO8DataModule(ObjectDetectDataModule):
             map_class_id_to_class_name=map_class_id_to_class_name,
             norm_mean=norm_mean,
             norm_std=norm_std,
+            mosaic_prob=mosaic_prob,
+            mosaic_size=mosaic_size,
             train_csv_paths=train_csv_paths,
             val_csv_paths=val_csv_paths,
             test_csv_paths=test_csv_paths,
@@ -520,6 +524,8 @@ class COCODataModule(ObjectDetectDataModule):
         norm_std=None,
         dataset_dir: str = "datasets/COCO/coco",
         download_test2017: bool = False,
+        mosaic_prob: float = 0.0,
+        mosaic_size: int = 640,
     ):
         """
         Parameters
@@ -534,6 +540,8 @@ class COCODataModule(ObjectDetectDataModule):
             map_class_id_to_class_name=map_class_id_to_class_name,
             norm_mean=norm_mean,
             norm_std=norm_std,
+            mosaic_prob=mosaic_prob,
+            mosaic_size=mosaic_size,
             train_csv_paths=train_csv_paths,
             val_csv_paths=val_csv_paths,
             test_csv_paths=test_csv_paths,

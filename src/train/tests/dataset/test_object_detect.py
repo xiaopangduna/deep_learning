@@ -218,3 +218,35 @@ def test_ObjectDetectDataset_draw_label_on_numpy_with_transform():
     )
     cv2.imwrite(
         "./tmp/test_ObjectDetectDataset_draw_label_on_numpy_with_transform.jpg", img_with_label)
+
+
+def test_ObjectDetectDataset_mosaic_prob_zero_keeps_original_hw():
+    dataset = ObjectDetectDataset(
+        csv_paths=PATH_CSV,
+        key_map=KEY_MAP,
+        transform=None,
+        mosaic_prob=0.0,
+    )
+    net_in, net_out = dataset[0]
+    h, w = net_in["img_shape"][0], net_in["img_shape"][1]
+    assert tuple(net_in["img_tv_transformed"].shape[-2:]) == (h, w)
+
+
+def test_ObjectDetectDataset_mosaic_prob_one_canvas_2s():
+    s = 64
+    dataset = ObjectDetectDataset(
+        csv_paths=PATH_CSV,
+        key_map=KEY_MAP,
+        transform=None,
+        mosaic_prob=1.0,
+        mosaic_size=s,
+    )
+    net_in, net_out = dataset[0]
+    assert tuple(net_in["img_tv_transformed"].shape) == (3, 2 * s, 2 * s)
+    boxes = net_out["bboxes_xyxy_abs_tv_transformed"]
+    assert tuple(boxes.canvas_size) == (2 * s, 2 * s)
+    xyxy = boxes.as_subclass(torch.Tensor)
+    if xyxy.numel():
+        assert torch.all(xyxy[:, 2] > xyxy[:, 0])
+        assert torch.all(xyxy[:, 0] >= 0)
+        assert torch.all(xyxy[:, 2] <= 2 * s)
