@@ -63,7 +63,10 @@ def letterbox_resize_and_pad(
 
 
 class LetterBox(Transform):
-    """保比例缩放到不超过 ``size``，再 pad 到 ``size``（默认灰边 114）。"""
+    """保比例缩放到不超过 ``size``，再 pad 到 ``size``（默认灰边 114）。
+
+    ``skip_if_size``：输入已是该 ``(H, W)`` 时原样返回（训练 mosaic 的 ``2s×2s`` 画布不要再缩）。
+    """
 
     def __init__(
         self,
@@ -73,6 +76,7 @@ class LetterBox(Transform):
         scaleup: bool = True,
         interpolation: Union[int, InterpolationMode] = 2,
         antialias: bool = False,
+        skip_if_size: Union[int, Sequence[int], None] = None,
     ) -> None:
         super().__init__()
         self.size = _as_hw(size)
@@ -82,9 +86,16 @@ class LetterBox(Transform):
         self.scaleup = bool(scaleup)
         self.interpolation = interpolation
         self.antialias = bool(antialias)
+        self.skip_if_size = None if skip_if_size is None else _as_hw(skip_if_size)
 
     def make_params(self, flat_inputs: list[Any]) -> dict[str, Any]:
         src_h, src_w = query_size(flat_inputs)
+        if self.skip_if_size is not None and (src_h, src_w) == self.skip_if_size:
+            return {
+                "skip": True,
+                "resize_size": [src_h, src_w],
+                "padding": [0, 0, 0, 0],
+            }
         dst_h, dst_w = self.size
         resize_h, resize_w, left, top, right, bottom = letterbox_resize_and_pad(
             src_h,
@@ -95,11 +106,14 @@ class LetterBox(Transform):
             center=self.center,
         )
         return {
+            "skip": False,
             "resize_size": [resize_h, resize_w],
             "padding": [left, top, right, bottom],
         }
 
     def transform(self, inpt: Any, params: dict[str, Any]) -> Any:
+        if params.get("skip"):
+            return inpt
         fill = _get_fill(self._fill, type(inpt))
         if (
             torch.is_tensor(inpt)

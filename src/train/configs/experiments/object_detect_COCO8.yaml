@@ -101,6 +101,8 @@ data:
 model:
   class_path: lovely_deep_learning.module.object_detect.ObjectDetectModule
   init_args:
+    # 训练集 mAP 默认关；需要时改为 true
+    log_train_metrics: false
     optimizer:
       class_path: torch.optim.AdamW
       init_args:

@@ -104,6 +104,7 @@ class BaseModule(pl.LightningModule):
         criterion: Any = None,
         postprocess: Any = None,
         metrics: Any = None,
+        log_train_metrics: bool = True,
     ) -> None:
         super().__init__()
         if model is None:
@@ -137,6 +138,7 @@ class BaseModule(pl.LightningModule):
         self.criterion = criterion
         self.postprocess = postprocess
         self.metrics = metrics
+        self.log_train_metrics = bool(log_train_metrics)
 
     def forward(self, x: torch.Tensor) -> Any:
         """``LightningModule`` 入口：单张量 batch 包装为 DAGNet 所需的 list 输入。"""
@@ -160,7 +162,8 @@ class BaseModule(pl.LightningModule):
 
         with torch.inference_mode():
             metric_preds = self.postprocess.run(preds)
-            self.metrics.update(stage, metric_preds, net_out)
+            if stage != "train" or self.log_train_metrics:
+                self.metrics.update(stage, metric_preds, net_out)
 
         return loss, metric_preds, net_out, batch_size
 
@@ -232,13 +235,23 @@ class BaseModule(pl.LightningModule):
         return export_dagnet(model, ckpt_path=ckpt_path, export_format=export_format)
 
     def configure_optimizers(self):
-        """优化 ``self.parameters()`` 下全部可训练子模块；``monitor`` 供 LR scheduler 使用。"""
+        """优化 ``self.parameters()`` 下全部可训练子模块。
+
+        ``SequentialLR`` / ``LinearLR`` 按 epoch ``step()``；只有 ``ReduceLROnPlateau``
+        才需要 ``monitor``。顶层乱塞 ``monitor`` 不会传进非 plateau 调度器，但会误导排查。
+        """
         optimizer = instantiate_class(
             filter(lambda p: p.requires_grad, self.parameters()),
             self.optimizer_cfg,
         )
         scheduler = _instantiate_lr_scheduler(optimizer, self.lr_scheduler_cfg)
-        return {"optimizer": optimizer, "lr_scheduler": scheduler, "monitor": "train_loss"}
+        cfg: dict[str, Any] = {
+            "optimizer": optimizer,
+            "lr_scheduler": {"scheduler": scheduler, "interval": "epoch"},
+        }
+        if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
+            cfg["lr_scheduler"]["monitor"] = "train_loss"
+        return cfg
 
     def prune(self, ckpt_path: Optional[Union[str, Path]] = None) -> str:
         """剪枝导出；剪枝超参见 YAML ``pruner.init_args``，仅 ``ckpt_path`` 由 CLI 传入。"""

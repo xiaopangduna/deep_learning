@@ -69,36 +69,41 @@ class BaseDataModule(pl.LightningDataModule):
         self.test_dataset = None
         self.pred_dataset = None
 
+    def _dataloader_kwargs(self, *, shuffle: bool) -> dict:
+        kwargs = {
+            "batch_size": self.batch_size,
+            "shuffle": shuffle,
+            "num_workers": self.num_workers,
+        }
+        if self.num_workers > 0:
+            kwargs["prefetch_factor"] = 1
+            kwargs["persistent_workers"] = False
+        return kwargs
+
     def train_dataloader(self):
         """打乱顺序的训练 DataLoader，使用 ``train_dataset.get_collate_fn_for_dataloader()``。"""
         return DataLoader(
             self.train_dataset,
-            batch_size=self.batch_size,
-            shuffle=True,
-            num_workers=self.num_workers,
             collate_fn=self.train_dataset.get_collate_fn_for_dataloader(),
+            **self._dataloader_kwargs(shuffle=True),
         )
 
     def val_dataloader(self):
         """验证 DataLoader；当前实现中 ``shuffle=True``（与常见验证集不打乱不同，需注意）。"""
         return DataLoader(
             self.val_dataset,
-            batch_size=self.batch_size,
-            shuffle=True,
-            num_workers=self.num_workers,
             collate_fn=self.val_dataset.get_collate_fn_for_dataloader(),
+            **self._dataloader_kwargs(shuffle=True),
         )
 
     def test_dataloader(self):
         """测试 DataLoader，不打乱顺序。"""
         return DataLoader(
             self.test_dataset,
-            batch_size=self.batch_size,
-            shuffle=False,
-            num_workers=self.num_workers,
             collate_fn=self.test_dataset.get_collate_fn_for_dataloader(),
+            **self._dataloader_kwargs(shuffle=False),
         )
 
     def predict_dataloader(self):
         """预测 DataLoader；未设置 ``collate_fn``，依赖 PyTorch 默认拼接行为。"""
-        return DataLoader(self.pred_dataset, batch_size=self.batch_size, shuffle=False, num_workers=self.num_workers)
+        return DataLoader(self.pred_dataset, **self._dataloader_kwargs(shuffle=False))

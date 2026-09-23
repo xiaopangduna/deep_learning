@@ -168,8 +168,6 @@ class ObjectDetectDataModule(BaseDataModule):
         """与训练/验证/测试一致，使用 ``ObjectDetectDataset`` 的 ``collate_fn``（写入 ``img``；有 GT 时写入 ``batch_idx``）。"""
         return DataLoader(
             self.pred_dataset,
-            batch_size=self.batch_size,
-            shuffle=False,
-            num_workers=self.num_workers,
             collate_fn=self.pred_dataset.get_collate_fn_for_dataloader(),
+            **self._dataloader_kwargs(shuffle=False),
         )
