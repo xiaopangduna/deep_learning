@@ -1,5 +1,7 @@
 """框级分类 DataModule。转换由脚本完成，这里只把 CSV 交给 ``BoxCropClassifierDataset``。"""
 
+from typing import Any, Optional, Sequence
+
 from .image_classifier import ImageClassifierDataModule
 from ..dataset.box_crop_classifier import BoxCropClassifierDataset
 
@@ -9,12 +11,20 @@ class BoxCropClassifierDataModule(ImageClassifierDataModule):
 
     模型、损失、指标、后处理仍用 ``ImageClassifierModule`` 那一套。
     ``prepare_data`` 不生成 CSV，先运行 ``scripts/yolo_to_box_crop_csv.py``。
+    ``class_groups`` 为 ``{训练 id: [原始 class_id, ...]}`` 时，Dataset 在读入时合并类别。
     """
 
-    def __init__(self, box_scale: float = 1.2, min_side_px: float = 16.0, **kwargs):
+    def __init__(
+        self,
+        box_scale: float = 1.2,
+        min_side_px: float = 16.0,
+        class_groups: Optional[dict[Any, Sequence[int]]] = None,
+        **kwargs,
+    ):
         super().__init__(**kwargs)
         self.box_scale = float(box_scale)
         self.min_side_px = float(min_side_px)
+        self.class_groups = class_groups
 
     def _make_dataset(self, csv_paths, key_map, transform):
         return BoxCropClassifierDataset(
@@ -26,6 +36,7 @@ class BoxCropClassifierDataModule(ImageClassifierDataModule):
             norm_std=self.norm_std,
             box_scale=self.box_scale,
             min_side_px=self.min_side_px,
+            class_groups=self.class_groups,
         )
 
     def setup(self, stage=None):

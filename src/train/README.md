@@ -29,7 +29,7 @@ uv run python scripts/train.py fit --config configs/experiments/image_classifite
 
 `uv sync` 创建 `.venv` 并以可编辑方式安装本包。日常命令用 `uv run`，不必再进 shell。
 
-主要依赖：PyTorch 2.8（CUDA 12.6 官方 wheel）、Lightning 2.5、Ultralytics、ONNX、torch-pruning。TensorRT 的库包来自 NVIDIA 源，清华镜像上只有占位包。
+主要依赖：PyTorch 2.8（CUDA 12.8 官方 wheel）、Lightning 2.5、Ultralytics、ONNX、torch-pruning。TensorRT 的库包来自 NVIDIA 源，清华镜像上只有占位包。CUDA 12.8 的 wheel 同时包含 Ampere `sm_86`（4060）和 Blackwell `sm_120`（5090）。驱动需支持 CUDA 12.8，`nvidia-smi` 右上角的 CUDA Version 至少为 12.8。
 
 ## 仓库结构
 
@@ -274,4 +274,7 @@ checkpoint 与 `config.yaml` 在 `logs/<实验名>/version_N/`。测试 / 预测
 ```bash
 uv run pytest -m "not cli"   # 单测（不跑完整 CLI）
 uv run pytest -m cli         # CLI 集成测试（需要本地数据集）
+
+uv run scripts/yolo_dir_to_box_crop_csv.py     --data-root /home/huangwenhua/project/dataset/head/v011_head_age     --split train_v012     --out datasets/head_age/train_v012.csv
+uv run scripts/yolo_dir_to_box_crop_csv.py     --data-root /home/huangwenhua/project/dataset/head/v011_head_age     --split test_v002     --out datasets/head_age/test_v002.csv
 ```

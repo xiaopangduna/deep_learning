@@ -3,9 +3,11 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pytest
 import torch
 from torchvision.transforms import v2
 
+from lovely_deep_learning.data_module.box_crop_classifier import BoxCropClassifierDataModule
 from lovely_deep_learning.dataset.box_crop_classifier import BoxCropClassifierDataset
 
 _SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "yolo_to_box_crop_csv.py"
@@ -86,3 +88,85 @@ def test_box_crop_is_smaller_than_source_and_predict_has_no_label(tmp_path):
     )
     _, net_out_pred = predict[0]
     assert net_out_pred == {}
+
+
+def _write_age_csv(path: Path) -> None:
+    rows = []
+    specs = [
+        (0, "head-age_0", 40),
+        (1, "head-age_1", 40),
+        (2, "head-age_2", 40),
+        (3, "head-age_3", 40),
+        (4, "other", 40),
+    ]
+    for index, (class_id, class_name, side) in enumerate(specs):
+        rows.append(
+            {
+                "path_img": f"/tmp/img_{index}.jpg",
+                "class_name": class_name,
+                "class_id": class_id,
+                "cx": 0.5,
+                "cy": 0.5,
+                "w": side / 100,
+                "h": side / 100,
+                "img_w": 100,
+                "img_h": 100,
+            }
+        )
+    pd.DataFrame(rows).to_csv(path, index=False)
+
+
+def test_class_groups_merge_original_ids_and_drop_the_rest(tmp_path):
+    csv_path = tmp_path / "age.csv"
+    _write_age_csv(csv_path)
+    dataset = BoxCropClassifierDataset(
+        [csv_path],
+        class_groups={0: [0, 1, 3], 1: [2]},
+        min_side_px=16,
+    )
+    table = dataset.sample_path_table
+    assert set(table["class_id"].astype(int)) == {0, 1}
+    merged = table[table["class_id"].astype(int) == 0]
+    assert set(merged["class_name"]) == {"head-age_0+head-age_1+head-age_3"}
+    assert (table.loc[table["class_id"].astype(int) == 1, "class_name"] == "head-age_2").all()
+    assert "other" not in set(table["class_name"])
+    assert dataset.map_class_id_to_class_name == {
+        0: "head-age_0+head-age_1+head-age_3",
+        1: "head-age_2",
+    }
+    assert len(dataset) == 4
+
+
+def test_class_groups_reject_overlap_gap_and_empty_group(tmp_path):
+    csv_path = tmp_path / "age.csv"
+    _write_age_csv(csv_path)
+    with pytest.raises(ValueError, match="同时出现"):
+        BoxCropClassifierDataset([csv_path], class_groups={0: [0, 1], 1: [1]}, min_side_px=1)
+    with pytest.raises(ValueError, match="连续"):
+        BoxCropClassifierDataset([csv_path], class_groups={0: [0], 2: [2]}, min_side_px=1)
+    with pytest.raises(ValueError, match="没有样本"):
+        BoxCropClassifierDataset(
+            [csv_path],
+            class_groups={0: [0, 1, 3], 1: [2]},
+            min_side_px=10_000,
+        )
+
+
+def test_datamodule_passes_class_groups(tmp_path):
+    csv_path = tmp_path / "age.csv"
+    _write_age_csv(csv_path)
+    module = BoxCropClassifierDataModule(
+        train_csv_paths=[str(csv_path)],
+        val_csv_paths=[str(csv_path)],
+        test_csv_paths=[str(csv_path)],
+        predict_csv_paths=[str(csv_path)],
+        transform_train=None,
+        transform_val=None,
+        class_groups={"0": [0, 1, 3], "1": [2]},
+        min_side_px=1,
+        batch_size=2,
+        num_workers=0,
+    )
+    module.setup("test")
+    assert module.test_dataset.map_class_id_to_class_name[1] == "head-age_2"
+    assert len(module.test_dataset) == 4

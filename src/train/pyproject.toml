@@ -8,9 +8,9 @@ authors = [
 readme = "README.md"
 requires-python = ">=3.10,<3.14"
 dependencies = [
-    "torch==2.8.0+cu126",
-    "torchvision==0.23.0+cu126",
-    "torchaudio==2.8.0+cu126",
+    "torch==2.8.0+cu128",
+    "torchvision==0.23.0+cu128",
+    "torchaudio==2.8.0+cu128",
     "lightning (==2.5.5)",
     "ultralytics (==8.3.189)",
     "typer (==0.17.4)",
@@ -46,8 +46,8 @@ url = "https://pypi.tuna.tsinghua.edu.cn/simple"
 default = true
 
 [[tool.uv.index]]
-name = "pytorch-cu126"
-url = "https://download.pytorch.org/whl/cu126"
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
 explicit = true
 
 [[tool.uv.index]]
@@ -56,9 +56,9 @@ url = "https://pypi.nvidia.com"
 explicit = true
 
 [tool.uv.sources]
-torch = { index = "pytorch-cu126" }
-torchvision = { index = "pytorch-cu126" }
-torchaudio = { index = "pytorch-cu126" }
+torch = { index = "pytorch-cu128" }
+torchvision = { index = "pytorch-cu128" }
+torchaudio = { index = "pytorch-cu128" }
 tensorrt-cu12-libs = { index = "nvidia" }
 
 [dependency-groups]
