@@ -8,9 +8,9 @@ authors = [
 readme = "README.md"
 requires-python = ">=3.10,<3.14"
 dependencies = [
-    "torch (==2.8.0)",
-    "torchvision (==0.23.0)",
-    "torchaudio (==2.8.0)",
+    "torch==2.8.0+cu126",
+    "torchvision==0.23.0+cu126",
+    "torchaudio==2.8.0+cu126",
     "lightning (==2.5.5)",
     "ultralytics (==8.3.189)",
     "typer (==0.17.4)",
@@ -25,26 +25,41 @@ dependencies = [
     "onnxruntime-gpu (==1.13.1)",
     "netron (>=9.0.1,<10.0.0)",
     "tensorrt-cu12 (==10.15.1.29)",
+    "tensorrt-cu12-libs==10.15.1.29",
     "torch-pruning (>=1.6.1,<2.0.0)",
     "onnxslim (==0.1.65)"
 ]
 
 
 [build-system]
-requires = ["poetry-core>=2.0.0,<3.0.0"]
-build-backend = "poetry.core.masonry.api"
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
 
-[[tool.poetry.source]]
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["lovely_deep_learning*"]
+namespaces = true
+
+[[tool.uv.index]]
 name = "tuna"
-url = "https://pypi.tuna.tsinghua.edu.cn/simple/"
-priority = "primary"
+url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+default = true
 
-
-[[tool.poetry.source]]
-name = "pytorch"
+[[tool.uv.index]]
+name = "pytorch-cu126"
 url = "https://download.pytorch.org/whl/cu126"
-priority = "explicit"
+explicit = true
 
+[[tool.uv.index]]
+name = "nvidia"
+url = "https://pypi.nvidia.com"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu126" }
+torchvision = { index = "pytorch-cu126" }
+torchaudio = { index = "pytorch-cu126" }
+tensorrt-cu12-libs = { index = "nvidia" }
 
 [dependency-groups]
 dev = [

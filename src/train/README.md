@@ -19,15 +19,17 @@
 
 ## 环境安装
 
-Python `>=3.10,<3.14`，依赖由 Poetry 管理。
+Python `>=3.10,<3.14`，依赖由 uv 管理。
 
 ```bash
 cd src/train
-poetry install
-poetry shell
+uv sync
+uv run python scripts/train.py fit --config configs/experiments/image_classifiter_MNIST.yaml
 ```
 
-主要依赖：PyTorch 2.8、Lightning 2.5、Ultralytics、ONNX、torch-pruning。PyTorch 源已指向 CUDA 12.6 官方 wheel。
+`uv sync` 创建 `.venv` 并以可编辑方式安装本包。日常命令用 `uv run`，不必再进 shell。
+
+主要依赖：PyTorch 2.8（CUDA 12.6 官方 wheel）、Lightning 2.5、Ultralytics、ONNX、torch-pruning。TensorRT 的库包来自 NVIDIA 源，清华镜像上只有占位包。
 
 ## 仓库结构
 
@@ -270,6 +272,6 @@ checkpoint 与 `config.yaml` 在 `logs/<实验名>/version_N/`。测试 / 预测
 ## 测试
 
 ```bash
-pytest -m "not cli"          # 单测（不跑完整 CLI）
-pytest -m cli                # CLI 集成测试（需要本地数据集）
+uv run pytest -m "not cli"   # 单测（不跑完整 CLI）
+uv run pytest -m cli         # CLI 集成测试（需要本地数据集）
 ```
