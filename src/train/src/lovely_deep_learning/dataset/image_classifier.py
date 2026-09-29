@@ -39,7 +39,8 @@ class ImageClassifierDataset(BaseDataset):
         transform: Optional[Callable] = None,
         map_class_id_to_class_name: Optional[Union[Dict[Any, str], str]] = None,
         norm_mean: list[float] = [0.485, 0.456, 0.406],
-        norm_std: list[float] = [0.229, 0.224, 0.225]
+        norm_std: list[float] = [0.229, 0.224, 0.225],
+        validate_class_mapping: bool = True,
     ):
         super().__init__(csv_paths=csv_paths, key_map=key_map, transform=transform)
 
@@ -54,7 +55,7 @@ class ImageClassifierDataset(BaseDataset):
             and len(self.sample_path_table) > 0
             and not self.sample_path_table["class_id"].astype(str).str.strip().eq("").all()
         )
-        if self._has_label:
+        if self._has_label and validate_class_mapping:
             self._validate_class_mapping()
 
 

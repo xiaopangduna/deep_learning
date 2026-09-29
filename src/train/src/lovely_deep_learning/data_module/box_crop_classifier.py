@@ -1,9 +1,11 @@
 """框级分类 DataModule。转换由脚本完成，这里只把 CSV 交给 ``BoxCropClassifierDataset``。"""
 
+from pathlib import Path
 from typing import Any, Optional, Sequence
 
 from .image_classifier import ImageClassifierDataModule
 from ..dataset.box_crop_classifier import BoxCropClassifierDataset
+from ..dataset.box_crop_distribution import format_distribution_report, training_class_rows
 
 
 class BoxCropClassifierDataModule(ImageClassifierDataModule):
@@ -12,6 +14,9 @@ class BoxCropClassifierDataModule(ImageClassifierDataModule):
     模型、损失、指标、后处理仍用 ``ImageClassifierModule`` 那一套。
     ``prepare_data`` 不生成 CSV，先运行 ``scripts/yolo_to_box_crop_csv.py``。
     ``class_groups`` 为 ``{训练 id: [原始 class_id, ...]}`` 时，Dataset 在读入时合并类别。
+
+    ``fit`` 时为训练集和验证集各打一张类别表（筛完并完成类融合之后），并写入
+    ``trainer.log_dir/data_distribution.txt``。
     """
 
     def __init__(
@@ -62,3 +67,38 @@ class BoxCropClassifierDataModule(ImageClassifierDataModule):
             self.pred_dataset = self._make_dataset(
                 self.predict_csv_paths, self.predict_key_map, self.transform_predict
             )
+        if stage == "fit" or stage is None:
+            self._report_fit_distribution()
+
+    def _report_fit_distribution(self) -> None:
+        named = (
+            ("train", "训练集", self.train_csv_paths, self.train_dataset),
+            ("val", "验证集", self.val_csv_paths, self.val_dataset),
+        )
+        splits = []
+        for split, title, csv_paths, dataset in named:
+            record = {
+                "split": split,
+                "title": title,
+                "csv_paths": [str(path) for path in csv_paths],
+                "classes": training_class_rows(dataset.distribution["classes"]),
+            }
+            warnings = dataset.distribution["mapping"]["warnings"]
+            if warnings:
+                record["warnings"] = warnings
+            splits.append(record)
+        payload = {"splits": splits}
+        self.data_distribution = payload
+        text = format_distribution_report(payload)
+        trainer = self.trainer
+        log_dir = None if trainer is None else trainer.log_dir
+        if trainer is not None and not getattr(trainer, "is_global_zero", True):
+            return
+        print(text)
+        if trainer is None or not log_dir:
+            return
+        out_dir = Path(log_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        path = out_dir / "data_distribution.txt"
+        path.write_text(text + "\n", encoding="utf-8")
+        print(f"数据分布已写入 {path}")

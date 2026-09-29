@@ -8,6 +8,7 @@ import numpy as np
 from torchvision import tv_tensors
 
 from .base import BaseDataset
+from .box_crop_distribution import assemble_distribution, box_keep_masks
 from .image_classifier import ImageClassifierDataset
 
 
@@ -88,6 +89,9 @@ class BoxCropClassifierDataset(ImageClassifierDataset):
       并把 ``class_id`` 改写成该映射的 id。
 
     ``predict`` 可以没有类别列。``box_scale`` 默认 1.2，裁剪前按中心外扩。缩放交给外部 ``transform``。
+
+    筛选结果写在 ``distribution``（计数、类别、几何）。``kept_image_paths`` 是保留框所属图像，
+    供 DataModule 算 train/val/test 的路径交集。这里不打印，由 DataModule 在 ``fit`` 时汇总。
     """
 
     DEFAULT_KEY_MAP = {
@@ -137,6 +141,7 @@ class BoxCropClassifierDataset(ImageClassifierDataset):
             map_class_id_to_class_name=None,
             norm_mean=norm_mean,
             norm_std=norm_std,
+            validate_class_mapping=False,
         )
         missing = [
             name
@@ -190,19 +195,37 @@ class BoxCropClassifierDataset(ImageClassifierDataset):
             for group_id, members in self.class_groups.items()
         }
 
+    def _member_counts(self, table, keep) -> Dict[int, list]:
+        kept = table.loc[keep]
+        original_ids = kept["class_id"].map(
+            lambda value: int(str(value).strip()) if str(value).strip() else -1
+        )
+        names = self._names_by_original_id(table)
+        return {
+            group_id: [
+                {
+                    "class_id": original_id,
+                    "class_name": names[original_id],
+                    "count": int((original_ids == original_id).sum()),
+                }
+                for original_id in members
+            ]
+            for group_id, members in self.class_groups.items()
+        }
+
     def _filter_boxes(self, target_map: Dict[int, str]) -> None:
         """按几何条件筛选，再按类别映射或 ``class_groups`` 改写标签。"""
         table = self.sample_path_table
-        width = table["w"].astype(float)
-        height = table["h"].astype(float)
-        keep = (width > 0) & (height > 0)
-        if self.min_side_px > 0:
-            short_side = np.minimum(
-                width * table["img_w"].astype(float),
-                height * table["img_h"].astype(float),
-            )
-            keep = keep & (short_side >= self.min_side_px)
-        merged_map: Optional[Dict[int, str]] = None
+        masks = box_keep_masks(
+            table,
+            min_side_px=self.min_side_px,
+            has_label=self._has_label,
+            class_groups=self.class_groups,
+            target_map=target_map,
+        )
+        keep = masks["keep"]
+        filtered = table.loc[keep].reset_index(drop=True)
+        member_counts = None
         if self._has_label and self.class_groups:
             merged_map = self._merged_class_map(table)
             original_to_group = {
@@ -210,15 +233,6 @@ class BoxCropClassifierDataset(ImageClassifierDataset):
                 for group_id, members in self.class_groups.items()
                 for original_id in members
             }
-            original_ids = table["class_id"].map(
-                lambda value: int(str(value).strip()) if str(value).strip() else -1
-            )
-            keep = keep & original_ids.isin(original_to_group)
-        elif self._has_label and target_map:
-            names = set(target_map.values())
-            keep = keep & table["class_name"].isin(names)
-        filtered = table.loc[keep].reset_index(drop=True)
-        if merged_map is not None:
             original_ids = filtered["class_id"].map(lambda value: int(str(value).strip()))
             filtered["class_id"] = original_ids.map(original_to_group).astype(int)
             filtered["class_name"] = filtered["class_id"].map(merged_map)
@@ -226,18 +240,27 @@ class BoxCropClassifierDataset(ImageClassifierDataset):
             if empty_groups:
                 raise ValueError(f"合并后这些组没有样本: {empty_groups}")
             target_map = merged_map
+            member_counts = self._member_counts(table, keep)
         elif self._has_label and target_map:
             name_to_id = {name: class_id for class_id, name in target_map.items()}
             filtered["class_id"] = filtered["class_name"].map(name_to_id)
         self.sample_path_table = filtered
         self.num_samples = len(filtered)
         self.map_class_id_to_class_name = target_map
-        if self._has_label and target_map:
-            if self.num_samples == 0:
-                raise ValueError(
-                    "筛选后没有样本。检查 map_class_id_to_class_name 与 min_side_px"
-                )
-            self._validate_class_mapping()
+        if self._has_label and target_map and self.num_samples == 0:
+            raise ValueError(
+                "筛选后没有样本。检查 map_class_id_to_class_name 与 min_side_px"
+            )
+        self.kept_image_paths = set(filtered["img_path"].astype(str)) if len(filtered) else set()
+        self.distribution = assemble_distribution(
+            n_raw=len(table),
+            masks=masks,
+            kept=filtered,
+            box_scale=self.box_scale,
+            class_map=target_map if self._has_label else {},
+            member_counts=member_counts,
+            has_label=self._has_label,
+        )
 
     def __getitem__(self, index):
         row = self.sample_path_table.iloc[index]
