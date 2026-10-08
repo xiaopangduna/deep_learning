@@ -3,7 +3,7 @@ import os
 import hashlib
 from typing import List, Dict, Optional, Callable, Any, Union, Sequence
 from torch.utils.data import Dataset
-from tqdm import tqdm  # 直接引入tqdm用于进度显示
+from tqdm import tqdm  
 import cv2
 import numpy as np
 import pandas as pd
@@ -26,8 +26,6 @@ class BaseDataset(Dataset):
         预留的数据增强/变换，本类 ``__getitem__`` 中未调用，由子类使用。
     sample_path_table : pd.DataFrame
         合并后的样本表；列名为重映射后的名字，行为全部数据行（多 CSV 纵向拼接）。
-    num_samples : int
-        行数，与 ``len(dataset)`` 一致。
 
     CSV 与 key_map 约定
     -------------------
@@ -47,7 +45,7 @@ class BaseDataset(Dataset):
 
     Dataset 接口
     ------------
-    - ``__len__``：返回 ``num_samples``。
+    - ``__len__``：返回 ``sample_path_table`` 的行数。
     - ``__getitem__(i)``：返回第 ``i`` 行所有列组成的 ``Dict[str, str]``（含未出现在 ``key_map`` 中的列）。
 
     静态工具方法（节选）
@@ -69,11 +67,7 @@ class BaseDataset(Dataset):
         self.key_map = key_map
         self.transform = transform
 
-        self.sample_path_table: pd.DataFrame = pd.DataFrame()
-        self.num_samples: int = 0
-
-        self.sample_path_table = self._generate_sample_path_table()
-        self.num_samples = self._count_samples()
+        self.sample_path_table: pd.DataFrame = self._generate_sample_path_table()
 
     def _generate_sample_path_table(self) -> pd.DataFrame:
         # 1. 校验路径列表非空，且每个 CSV 文件存在。
@@ -185,13 +179,8 @@ class BaseDataset(Dataset):
 
             df[col] = df[col].apply(abs_one)
 
-    def _count_samples(self) -> int:
-        if self.sample_path_table.empty:
-            return 0
-        return len(self.sample_path_table)
-
     def __len__(self) -> int:
-        return self.num_samples
+        return len(self.sample_path_table)
 
     def __getitem__(self, index: int) -> Dict[str, str]:
         row = self.sample_path_table.iloc[index]
@@ -220,7 +209,7 @@ class BaseDataset(Dataset):
 
         lines.extend(
             [
-                f"\n3. 样本数：{self.num_samples}",
+                f"\n3. 样本数：{len(self)}",
                 "=" * 70,
             ]
         )

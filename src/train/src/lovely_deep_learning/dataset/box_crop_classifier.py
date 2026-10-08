@@ -245,9 +245,8 @@ class BoxCropClassifierDataset(ImageClassifierDataset):
             name_to_id = {name: class_id for class_id, name in target_map.items()}
             filtered["class_id"] = filtered["class_name"].map(name_to_id)
         self.sample_path_table = filtered
-        self.num_samples = len(filtered)
         self.map_class_id_to_class_name = target_map
-        if self._has_label and target_map and self.num_samples == 0:
+        if self._has_label and target_map and len(self) == 0:
             raise ValueError(
                 "筛选后没有样本。检查 map_class_id_to_class_name 与 min_side_px"
             )

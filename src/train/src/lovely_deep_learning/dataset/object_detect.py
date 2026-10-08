@@ -313,7 +313,7 @@ class ObjectDetectDataset(BaseDataset):
 
         use_mosaic = self.mosaic_prob > 0.0 and random.random() < self.mosaic_prob
         if use_mosaic:
-            n = max(int(self.num_samples), 1)
+            n = max(len(self), 1)
             indices = [index] + [random.randint(0, n - 1) for _ in range(3)]
             images_rgb = []
             boxes_list = []
