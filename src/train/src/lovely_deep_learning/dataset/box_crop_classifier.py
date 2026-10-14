@@ -141,7 +141,6 @@ class BoxCropClassifierDataset(ImageClassifierDataset):
             map_class_id_to_class_name=None,
             norm_mean=norm_mean,
             norm_std=norm_std,
-            validate_class_mapping=False,
         )
         missing = [
             name

@@ -14,21 +14,24 @@ from .base import BaseDataset
 
 
 class ImageClassifierDataset(BaseDataset):
-    """A basic for building pytorch model input and output tensor
+    """整图分类数据集。一行一张图，返回 ``(net_in, net_out)``。
 
-    This class inherits the Dataset(from torch.utils.data) to ensure the way of load dataset ,
-    visualize data and label and data enhancemment is same.
+    ``net_in`` 含 ``img_path``、``img_shape``、``img_tv_transformed``。
+    表中存在非空 ``class_id`` 时，``net_out`` 含 ``class_id`` 与 ``class_name``；否则 ``net_out`` 为空字典。
 
-    Args:
-        path_txt (str): The path of txt file ,whose contents the paths of data and label.
-        paths_data (list[str]): A list of paths of data.
-        paths_label (list[str]):A list of paths of label.
-        transfroms (str): One of train,val,test and  none.Default none
-        cfgs (dict): A dictionary holds parameters in data processing.
-        map_class_id_to_class_name: ``None`` 表示不使用映射（空 dict）。若为 ``dict``（键可为 str，会转为 int），
-            则直接作为 id→类别名；若为 ``str``，则视为 CSV 文件路径，表头须含 ``class_id``、``class_name``。
-        key_map 会先与首个 CSV 的表头取交集再交给 BaseDataset（例如 predict 仅含 path_img 时自动去掉标签列映射）；
-        被忽略的项会触发 UserWarning。
+    Attributes
+    ----------
+    norm_mean, norm_std : list[float]
+        可视化反归一化用的均值和方差。默认是 ImageNet 的值。
+    map_class_id_to_class_name : dict[int, str]
+        类别 id 到名称。未传入映射时为空字典。
+    _has_label : bool
+        表中有 ``class_id`` 列，且至少一行非空。
+
+    Notes
+    -----
+    ``key_map`` 的每个值都必须是 CSV 表头，不会与表头求交。
+    预测表没有标签列时，传入只含图像路径的 ``key_map``。
     """
 
     def __init__(
@@ -40,8 +43,23 @@ class ImageClassifierDataset(BaseDataset):
         map_class_id_to_class_name: Optional[Union[Dict[Any, str], str]] = None,
         norm_mean: list[float] = [0.485, 0.456, 0.406],
         norm_std: list[float] = [0.229, 0.224, 0.225],
-        validate_class_mapping: bool = True,
     ):
+        """
+        Parameters
+        ----------
+        csv_paths
+            至少一张已存在的 CSV。约定同 ``BaseDataset``。
+        key_map
+            键是读入后的列名，值是 CSV 表头。默认把 ``path_img``、``class_name``、``class_id``
+            映成 ``img_path``、``class_name``、``class_id``。
+        transform
+            作用于 ``tv_tensors.Image`` 的变换。``None`` 表示不变换。
+        map_class_id_to_class_name
+            ``None`` 表示空映射。``dict`` 的键会转成 ``int``。``str`` 是 CSV 路径，
+            表头须含 ``class_id``、``class_name``。
+        norm_mean, norm_std
+            与训练时 Normalize 一致的均值、方差，供 ``convert_img_from_tensor_to_numpy`` 反归一化。
+        """
         super().__init__(csv_paths=csv_paths, key_map=key_map, transform=transform)
 
         self.norm_mean = norm_mean
@@ -55,8 +73,6 @@ class ImageClassifierDataset(BaseDataset):
             and len(self.sample_path_table) > 0
             and not self.sample_path_table["class_id"].astype(str).str.strip().eq("").all()
         )
-        if self._has_label and validate_class_mapping:
-            self._validate_class_mapping()
 
 
     def __getitem__(self, index):
@@ -242,67 +258,3 @@ class ImageClassifierDataset(BaseDataset):
             "map_class_id_to_class_name 须为 None、dict 或 str（CSV 路径），"
             f"收到 {type(map_class_id_to_class_name)!r}"
         )
-
-    def _validate_class_mapping(self):
-        """验证map_class_id_to_class_name与实际数据中class_name和class_id对应关系的一致性"""
-        if not self.map_class_id_to_class_name:
-            print(
-                "============================================================================\n"
-                "ℹ️  map_class_id_to_class_name 为空，跳过与映射表的校验\n"
-                "============================================================================"
-            )
-            return
-        print(
-            f"============================================================================")
-        # 获取实际数据中的class_id和class_name
-        actual_class_ids = set()
-        class_id_name_pairs = set()
-
-        for i in range(len(self.sample_path_table)):
-            class_id_str = self.sample_path_table["class_id"].iloc[i]
-            class_name = self.sample_path_table["class_name"].iloc[i]
-
-            try:
-                class_id = int(class_id_str)
-                actual_class_ids.add(class_id)
-                class_id_name_pairs.add((class_id, class_name))
-            except ValueError:
-                print(f"⚠️  发现无法转换为整数的class_id: {class_id_str}")
-                continue
-
-        # 检查map_class_id_to_class_name与实际数据的一致性
-        mismatch_found = False
-        for class_id, class_name in class_id_name_pairs:
-            if class_id in self.map_class_id_to_class_name:
-                expected_class_name = self.map_class_id_to_class_name[class_id]
-                if expected_class_name != class_name:
-                    print(f"⚠️  map_class_id_to_class_name与实际数据不一致: ID {class_id}, "
-                          f"映射中为 '{expected_class_name}', 但实际数据为 '{class_name}'")
-                    mismatch_found = True
-
-        if not mismatch_found:
-            print(f"✅ map_class_id_to_class_name与实际数据一致")
-
-        # 检查ID是否连续
-        if actual_class_ids:
-            min_id, max_id = min(actual_class_ids), max(actual_class_ids)
-            expected_range = set(range(min_id, max_id + 1))
-            missing_ids = expected_range - actual_class_ids
-
-            if missing_ids:
-                print(f"⚠️  class_id不连续，缺少ID: {sorted(list(missing_ids))}")
-            elif len(expected_range) != len(actual_class_ids):
-                print(f"⚠️  class_id可能不连续或存在重复")
-            else:
-                span = f"{min_id}-{max_id}" if min_id != max_id else str(
-                    min_id)
-                print(f"✅ class_id是连续的: {span}")
-
-        # 检查映射中是否有在数据中未出现的ID
-        unused_mapping_ids = set(
-            self.map_class_id_to_class_name.keys()) - actual_class_ids
-        if unused_mapping_ids:
-            print(f"⚠️  映射中存在数据中未使用的ID: {sorted(list(unused_mapping_ids))}")
-
-        print(
-            f"============================================================================")

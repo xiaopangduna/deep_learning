@@ -13,9 +13,8 @@ class ImageClassifierDataModule(BaseDataModule):
     """为 ``fit`` / ``validate`` / ``test`` / ``predict`` 各阶段挂载 ``ImageClassifierDataset``。
 
     - 训练、验证、测试通常共用 ``key_map``（与带标签 CSV 表头一致）。
-    - 预测 CSV 往往仅有图像路径列，应通过 ``predict_key_map`` 传入与预测表头匹配的映射；
-      若为 ``None``，须保证传给 ``ImageClassifierDataset`` 的默认 ``key_map`` 仍能与 CSV 表头求交
-      （参见 ``ImageClassifierDataset._key_map_intersect_csv_headers``）。
+    - 预测 CSV 往往仅有图像路径列，应通过 ``predict_key_map`` 传入与预测表头匹配的映射。
+      ``key_map`` 中的列名必须都在表头里，预测表不能沿用带标签的默认映射。
     - ``norm_mean`` / ``norm_std`` 传给 Dataset，供 ``convert_img_from_tensor_to_numpy`` 等反标准化
       可视化路径使用。
     """
