@@ -41,6 +41,25 @@ def test_ImageClassifierDataset_init_without_label():
     assert "img_path" in dataset.sample_path_table.columns
     assert "class_name" not in dataset.sample_path_table.columns
     assert "class_id" not in dataset.sample_path_table.columns
+    assert dataset.map_class_id_to_class_name == {}
+
+
+def test_unlabeled_rows_keep_the_passed_class_names():
+    dataset = ImageClassifierDataset(
+        PATH_CSV_WITHOUT_LABEL,
+        key_map={"img_path": "path_img"},
+        map_class_id_to_class_name=MAP_CLASS_ID_TO_CLASS_NAME,
+    )
+    assert dataset.map_class_id_to_class_name == MAP_CLASS_ID_TO_CLASS_NAME
+    assert dataset.class_name_for_id(1) == "n02102040"
+
+
+def test_labeled_rows_ignore_the_passed_class_names():
+    dataset = ImageClassifierDataset(
+        PATH_CSV,
+        map_class_id_to_class_name={0: "wrong", 1: "also-wrong"},
+    )
+    assert dataset.map_class_id_to_class_name == MAP_CLASS_ID_TO_CLASS_NAME
 
 # /home/xiaopangdun/project/deep_learning/src/train/tests/test_data/dataset/base_img/ILSVRC2012_val_00000293.JPEG
 

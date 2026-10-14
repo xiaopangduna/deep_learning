@@ -55,7 +55,7 @@ trainer:
 
 
 data:
-  class_path: lovely_deep_learning.data_module.box_crop_classifier.BoxCropClassifierDataModule
+  class_path: lovely_deep_learning.data_module.image_classifier.ImageClassifierFromDetectBoxDataModule
   init_args:
     box_scale: 1.2
     min_side_px: 16
@@ -68,6 +68,7 @@ data:
     class_groups:
       0: [0]
       1: [2]
+
     norm_mean : [0.485, 0.456, 0.406]  # 归一化均值 必须与transform_val中的Normalize的mean一致
     norm_std : [0.229, 0.224, 0.225]  # 归一化标准差 必须与transform_val中的Normalize的std一致
     batch_size: 64

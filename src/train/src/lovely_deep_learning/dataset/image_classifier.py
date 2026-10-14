@@ -27,8 +27,8 @@ class ImageClassifierDataset(BaseDataset):
         可视化反归一化用的均值和方差。省略时各实例得到一份 ImageNet 常数的新列表。
         ``None`` 表示不做均值方差反归一化。
     map_class_id_to_class_name : dict[int, str]
-        绘图用的训练 id 到名称。由筛选结果生成，不参与筛样本。
-        预测表没有类别列时为空，DataModule 会把训练集的这份属性抄过来。
+        绘图用的训练 id 到名称，不参与筛样本。有类别列时按筛选结果生成，构造参数里的映射被忽略。
+        没有类别列时使用构造参数；没传则为空。
     class_groups : dict[int, list[int]] | None
         ``None`` 表示不按类别筛选。否则键是训练 id，值是要合并进来的原始 ``class_id``。
     background_id : int | None
@@ -51,6 +51,7 @@ class ImageClassifierDataset(BaseDataset):
     }
     _IMAGENET_MEAN = (0.485, 0.456, 0.406)
     _IMAGENET_STD = (0.229, 0.224, 0.225)
+    BACKGROUND_NAME = "background"
 
     def __init__(
         self,
@@ -60,6 +61,7 @@ class ImageClassifierDataset(BaseDataset):
         norm_mean: Optional[Sequence[float]] = _IMAGENET_MEAN,
         norm_std: Optional[Sequence[float]] = _IMAGENET_STD,
         class_groups: Optional[Dict[Any, Any]] = None,
+        map_class_id_to_class_name: Optional[Dict[Any, str]] = None,
     ):
         """
         Parameters
@@ -78,6 +80,9 @@ class ImageClassifierDataset(BaseDataset):
         class_groups
             ``{训练 id: [原始 class_id, ...]}``。``None`` 或空字典表示全部训练。
             值为 ``background`` 的项是没有 CSV 行的背景类，整图分类会报错。
+        map_class_id_to_class_name
+            训练 id 到绘图名称。有类别列时忽略，名称按筛选结果生成。
+            没有类别列时使用这份映射；``None`` 表示空映射。
         """
         if key_map is None:
             key_map = dict(self.DEFAULT_KEY_MAP)
@@ -85,7 +90,8 @@ class ImageClassifierDataset(BaseDataset):
 
         self.norm_mean = None if norm_mean is None else list(norm_mean)
         self.norm_std = None if norm_std is None else list(norm_std)
-        self.class_groups, self.background_id = parse_class_groups(class_groups)
+        self.class_groups, self.background_id = self.parse_class_groups(class_groups)
+        self._given_class_names = self.normalize_class_name_map(map_class_id_to_class_name)
         self.map_class_id_to_class_name: Dict[int, str] = {}
         self._has_label = (
             "class_id" in self.sample_path_table.columns
@@ -132,13 +138,13 @@ class ImageClassifierDataset(BaseDataset):
         if self.background_id is not None and not self._allows_background():
             raise ValueError("整图分类没有框外区域，不能把 class_groups 的值写成 background")
         if not self._has_label:
-            self.map_class_id_to_class_name = {}
+            self.map_class_id_to_class_name = dict(self._given_class_names)
             return
         if self.class_groups is None:
-            self.map_class_id_to_class_name = names_by_original_id(self.sample_path_table)
+            self.map_class_id_to_class_name = self.names_by_original_id(self.sample_path_table)
             return
-        merged = group_names(self.sample_path_table, self.class_groups)
-        filtered = rows_in_groups(self.sample_path_table, self.class_groups, merged)
+        merged = self.group_names(self.sample_path_table, self.class_groups)
+        filtered = self.rows_in_groups(self.sample_path_table, self.class_groups, merged)
         if len(filtered) == 0:
             raise ValueError("筛选后没有样本。检查 class_groups")
         self.sample_path_table = filtered
@@ -288,165 +294,130 @@ class ImageClassifierDataset(BaseDataset):
             return out
 
 
-def crop_cxcywh(
-    img: np.ndarray,
-    cx: float,
-    cy: float,
-    w: float,
-    h: float,
-    box_scale: float,
-) -> np.ndarray:
-    """归一化 ``cxcywh`` 外扩 ``box_scale`` 后裁切，结果至少 1 像素。``img`` 为 ``(H, W, C)``。"""
-    height, width = img.shape[:2]
-    abs_w = max(w * width * box_scale, 1.0)
-    abs_h = max(h * height * box_scale, 1.0)
-    abs_cx = cx * width
-    abs_cy = cy * height
-    x1 = int(np.floor(abs_cx - abs_w / 2.0))
-    y1 = int(np.floor(abs_cy - abs_h / 2.0))
-    x2 = int(np.ceil(abs_cx + abs_w / 2.0))
-    y2 = int(np.ceil(abs_cy + abs_h / 2.0))
-    x1 = int(np.clip(x1, 0, width - 1))
-    y1 = int(np.clip(y1, 0, height - 1))
-    x2 = int(np.clip(x2, x1 + 1, width))
-    y2 = int(np.clip(y2, y1 + 1, height))
-    return img[y1:y2, x1:x2]
-
-
-BACKGROUND_NAME = "background"
-_BACKGROUND_ATTEMPTS = 32
-
-
-def max_iou_cxcywh(cx: float, cy: float, w: float, h: float, boxes: np.ndarray) -> float:
-    """返回归一化 ``cxcywh`` 框与 ``boxes`` ``(N, 4)`` 的最大 IoU。"""
-    if boxes.size == 0:
-        return 0.0
-    ax1, ay1 = cx - w / 2.0, cy - h / 2.0
-    ax2, ay2 = cx + w / 2.0, cy + h / 2.0
-    bx1 = boxes[:, 0] - boxes[:, 2] / 2.0
-    by1 = boxes[:, 1] - boxes[:, 3] / 2.0
-    bx2 = boxes[:, 0] + boxes[:, 2] / 2.0
-    by2 = boxes[:, 1] + boxes[:, 3] / 2.0
-    ix1 = np.maximum(ax1, bx1)
-    iy1 = np.maximum(ay1, by1)
-    ix2 = np.minimum(ax2, bx2)
-    iy2 = np.minimum(ay2, by2)
-    inter = np.maximum(0.0, ix2 - ix1) * np.maximum(0.0, iy2 - iy1)
-    area_a = max(0.0, (ax2 - ax1) * (ay2 - ay1))
-    area_b = np.maximum(0.0, bx2 - bx1) * np.maximum(0.0, by2 - by1)
-    return float(np.max(inter / (area_a + area_b - inter + 1e-7)))
-
-
-def parse_class_groups(
-    class_groups: Optional[Dict[Any, Any]],
-) -> tuple[Optional[Dict[int, list[int]]], Optional[int]]:
-    """返回 ``(分组, background 的训练 id)``。
-
-    ``None`` 或空字典表示全部训练，背景 id 为 ``None``。
-    值为 ``background`` 的键没有原始 id。其余值是原始 ``class_id`` 列表。
-    分组键和背景 id 合在一起须为 ``0..max``。原始 id 不能重复，组不能为空。
-    只有背景、没有原始 id 列表时，分组是空字典，表示不保留任何 CSV 类别。
-    """
-    if not class_groups:
-        return None, None
-    groups: Dict[int, list[int]] = {}
-    background_id: Optional[int] = None
-    for key, members in class_groups.items():
-        group_id = int(key)
-        if isinstance(members, str):
-            if members != BACKGROUND_NAME:
-                raise ValueError(
-                    f"class_groups[{group_id}] 的字符串只能是 {BACKGROUND_NAME}，收到 {members!r}"
-                )
-            if background_id is not None:
-                raise ValueError(f"class_groups 里有多个 {BACKGROUND_NAME}")
-            background_id = group_id
-            continue
-        if isinstance(members, (bytes, bytearray)) or not isinstance(members, Sequence):
+    @staticmethod
+    def normalize_class_name_map(class_names: Optional[Dict[Any, str]]) -> Dict[int, str]:
+        """把构造参数收成 ``{int: str}``。``None`` 和空字典都是空映射。"""
+        if not class_names:
+            return {}
+        if not isinstance(class_names, dict):
             raise TypeError(
-                f"class_groups[{group_id}] 须为原始 class_id 列表或 {BACKGROUND_NAME}，收到 {members!r}"
+                "map_class_id_to_class_name 须为 dict 或 None，"
+                f"收到 {type(class_names)!r}"
             )
-        original_ids = [int(member) for member in members]
-        if not original_ids:
-            raise ValueError(f"class_groups[{group_id}] 为空")
-        if len(original_ids) != len(set(original_ids)):
-            raise ValueError(f"class_groups[{group_id}] 含重复 id: {original_ids}")
-        groups[group_id] = original_ids
-    occupied = set(groups)
-    if background_id is not None:
-        occupied.add(background_id)
-    last = max(occupied)
-    expected = set(range(last + 1))
-    if occupied != expected:
-        detail = f"，背景 id {background_id}" if background_id is not None else ""
-        raise ValueError(
-            f"class_groups 的键须组成连续的 0..{last}，收到 {sorted(groups)}{detail}"
-        )
-    seen: Dict[int, int] = {}
-    for group_id, original_ids in groups.items():
-        for original_id in original_ids:
-            if original_id in seen:
-                raise ValueError(
-                    f"原始 class_id {original_id} 同时出现在组 {seen[original_id]} 和组 {group_id}"
+        return {int(class_id): str(name) for class_id, name in class_names.items()}
+
+    @staticmethod
+    def parse_class_groups(
+        class_groups: Optional[Dict[Any, Any]],
+    ) -> tuple[Optional[Dict[int, list[int]]], Optional[int]]:
+        """返回 ``(分组, background 的训练 id)``。
+
+        ``None`` 或空字典表示全部训练，背景 id 为 ``None``。
+        值为 ``background`` 的键没有原始 id。其余值是原始 ``class_id`` 列表。
+        分组键和背景 id 合在一起须为 ``0..max``。原始 id 不能重复，组不能为空。
+        只有背景、没有原始 id 列表时，分组是空字典，表示不保留任何 CSV 类别。
+        """
+        if not class_groups:
+            return None, None
+        groups: Dict[int, list[int]] = {}
+        background_id: Optional[int] = None
+        background_name = ImageClassifierDataset.BACKGROUND_NAME
+        for key, members in class_groups.items():
+            group_id = int(key)
+            if isinstance(members, str):
+                if members != background_name:
+                    raise ValueError(
+                        f"class_groups[{group_id}] 的字符串只能是 {background_name}，收到 {members!r}"
+                    )
+                if background_id is not None:
+                    raise ValueError(f"class_groups 里有多个 {background_name}")
+                background_id = group_id
+                continue
+            if isinstance(members, (bytes, bytearray)) or not isinstance(members, Sequence):
+                raise TypeError(
+                    f"class_groups[{group_id}] 须为原始 class_id 列表或 {background_name}，收到 {members!r}"
                 )
-            seen[original_id] = group_id
-    return groups, background_id
-
-
-def names_by_original_id(table) -> Dict[int, str]:
-    """原始 ``class_id`` 到 ``class_name``。同一个 id 出现两个名字则报错。"""
-    found: Dict[int, str] = {}
-    for raw_id, raw_name in zip(table["class_id"], table["class_name"]):
-        text = str(raw_id).strip()
-        if text == "":
-            continue
-        original_id = int(text)
-        name = str(raw_name).strip()
-        previous = found.get(original_id)
-        if previous is not None and previous != name:
+            original_ids = [int(member) for member in members]
+            if not original_ids:
+                raise ValueError(f"class_groups[{group_id}] 为空")
+            if len(original_ids) != len(set(original_ids)):
+                raise ValueError(f"class_groups[{group_id}] 含重复 id: {original_ids}")
+            groups[group_id] = original_ids
+        occupied = set(groups)
+        if background_id is not None:
+            occupied.add(background_id)
+        last = max(occupied)
+        expected = set(range(last + 1))
+        if occupied != expected:
+            detail = f"，背景 id {background_id}" if background_id is not None else ""
             raise ValueError(
-                f"原始 class_id {original_id} 对应多个 class_name：{previous!r} 与 {name!r}"
+                f"class_groups 的键须组成连续的 0..{last}，收到 {sorted(groups)}{detail}"
             )
-        found[original_id] = name
-    return found
+        seen: Dict[int, int] = {}
+        for group_id, original_ids in groups.items():
+            for original_id in original_ids:
+                if original_id in seen:
+                    raise ValueError(
+                        f"原始 class_id {original_id} 同时出现在组 {seen[original_id]} 和组 {group_id}"
+                    )
+                seen[original_id] = group_id
+        return groups, background_id
 
+    @staticmethod
+    def names_by_original_id(table) -> Dict[int, str]:
+        """原始 ``class_id`` 到 ``class_name``。同一个 id 出现两个名字则报错。"""
+        found: Dict[int, str] = {}
+        for raw_id, raw_name in zip(table["class_id"], table["class_name"]):
+            text = str(raw_id).strip()
+            if text == "":
+                continue
+            original_id = int(text)
+            name = str(raw_name).strip()
+            previous = found.get(original_id)
+            if previous is not None and previous != name:
+                raise ValueError(
+                    f"原始 class_id {original_id} 对应多个 class_name：{previous!r} 与 {name!r}"
+                )
+            found[original_id] = name
+        return found
 
-def group_names(table, groups: Dict[int, list[int]]) -> Dict[int, str]:
-    """分组训练 id 到用 ``+`` 拼起来的原名。原始 id 不在表里则报错。"""
-    names = names_by_original_id(table)
-    missing = sorted(
-        {
-            original_id
-            for members in groups.values()
-            for original_id in members
-            if original_id not in names
+    @staticmethod
+    def group_names(table, groups: Dict[int, list[int]]) -> Dict[int, str]:
+        """分组训练 id 到用 ``+`` 拼起来的原名。原始 id 不在表里则报错。"""
+        names = ImageClassifierDataset.names_by_original_id(table)
+        missing = sorted(
+            {
+                original_id
+                for members in groups.values()
+                for original_id in members
+                if original_id not in names
+            }
+        )
+        if missing:
+            raise ValueError(f"class_groups 中的原始 class_id 在 CSV 里不存在: {missing}")
+        return {
+            group_id: "+".join(names[original_id] for original_id in members)
+            for group_id, members in groups.items()
         }
-    )
-    if missing:
-        raise ValueError(f"class_groups 中的原始 class_id 在 CSV 里不存在: {missing}")
-    return {
-        group_id: "+".join(names[original_id] for original_id in members)
-        for group_id, members in groups.items()
-    }
 
-
-def rows_in_groups(table, groups: Dict[int, list[int]], merged: Dict[int, str]):
-    """留下分组成员，并把 ``class_id``、``class_name`` 改成训练 id 和组名。"""
-    if not groups:
-        return table.iloc[0:0].reset_index(drop=True)
-    original_to_group = {
-        original_id: group_id
-        for group_id, members in groups.items()
-        for original_id in members
-    }
-    original_ids = table["class_id"].map(
-        lambda value: int(str(value).strip()) if str(value).strip() else -1
-    )
-    keep = original_ids.isin(original_to_group)
-    filtered = table.loc[keep].copy()
-    filtered["class_id"] = original_ids.loc[keep].map(original_to_group).astype(int)
-    filtered["class_name"] = filtered["class_id"].map(merged)
-    return filtered.reset_index(drop=True)
+    @staticmethod
+    def rows_in_groups(table, groups: Dict[int, list[int]], merged: Dict[int, str]):
+        """留下分组成员，并把 ``class_id``、``class_name`` 改成训练 id 和组名。"""
+        if not groups:
+            return table.iloc[0:0].reset_index(drop=True)
+        original_to_group = {
+            original_id: group_id
+            for group_id, members in groups.items()
+            for original_id in members
+        }
+        original_ids = table["class_id"].map(
+            lambda value: int(str(value).strip()) if str(value).strip() else -1
+        )
+        keep = original_ids.isin(original_to_group)
+        filtered = table.loc[keep].copy()
+        filtered["class_id"] = original_ids.loc[keep].map(original_to_group).astype(int)
+        filtered["class_name"] = filtered["class_id"].map(merged)
+        return filtered.reset_index(drop=True)
 
 
 class ImageClassifierFromDetectBoxDataset(ImageClassifierDataset):
@@ -490,6 +461,7 @@ class ImageClassifierFromDetectBoxDataset(ImageClassifierDataset):
         "img_w": "img_w",
         "img_h": "img_h",
     }
+    _BACKGROUND_ATTEMPTS = 32
 
     def __init__(
         self,
@@ -503,6 +475,7 @@ class ImageClassifierFromDetectBoxDataset(ImageClassifierDataset):
         class_groups: Optional[Dict[Any, Any]] = None,
         background_ratio: float = 0.0,
         background_iou: float = 0.3,
+        map_class_id_to_class_name: Optional[Dict[Any, str]] = None,
     ):
         """
         Parameters
@@ -521,6 +494,8 @@ class ImageClassifierFromDetectBoxDataset(ImageClassifierDataset):
             相对正样本数的背景块比例。``0`` 表示不抽。大于 0 时 ``class_groups`` 里须有 ``background``。
         background_iou
             背景块外扩后与禁区框的 IoU 达到该值则重抽。范围 ``[0, 1]``。
+        map_class_id_to_class_name
+            交给父类。有类别列时忽略；预测表没有类别列时用它绘图。
         """
         if background_ratio < 0:
             raise ValueError(f"background_ratio 不能为负，收到 {background_ratio}")
@@ -540,6 +515,7 @@ class ImageClassifierFromDetectBoxDataset(ImageClassifierDataset):
             norm_mean=norm_mean,
             norm_std=norm_std,
             class_groups=class_groups,
+            map_class_id_to_class_name=map_class_id_to_class_name,
         )
         missing = [
             name
@@ -572,7 +548,7 @@ class ImageClassifierFromDetectBoxDataset(ImageClassifierDataset):
         row = self.sample_path_table.iloc[index]
         img_path = str(row["img_path"])
         img_np, img_shape = self.read_img(img_path, None)
-        crop = crop_cxcywh(
+        crop = self.crop_cxcywh(
             img_np,
             float(row["cx"]),
             float(row["cy"]),
@@ -602,7 +578,7 @@ class ImageClassifierFromDetectBoxDataset(ImageClassifierDataset):
     def _background_item(self):
         img_path, cx, cy, width, height = self._sample_background_box()
         img_np, img_shape = self.read_img(img_path, None)
-        crop = crop_cxcywh(img_np, cx, cy, width, height, self.box_scale)
+        crop = self.crop_cxcywh(img_np, cx, cy, width, height, self.box_scale)
         return self._pack_crop(
             img_path,
             img_shape,
@@ -615,7 +591,7 @@ class ImageClassifierFromDetectBoxDataset(ImageClassifierDataset):
         """从有正样本的图上抽一块，外扩后与该图禁区的 IoU 低于 ``background_iou``。"""
         if not self._positive_image_paths:
             raise RuntimeError("没有可抽背景的图像")
-        for _ in range(_BACKGROUND_ATTEMPTS):
+        for _ in range(self._BACKGROUND_ATTEMPTS):
             img_path = random.choice(self._positive_image_paths)
             width, height = self._positive_wh[img_path][random.randrange(len(self._positive_wh[img_path]))]
             width = float(width)
@@ -628,10 +604,10 @@ class ImageClassifierFromDetectBoxDataset(ImageClassifierDataset):
                 cx = random.uniform(scaled_w / 2.0, 1.0 - scaled_w / 2.0)
                 cy = random.uniform(scaled_h / 2.0, 1.0 - scaled_h / 2.0)
             zones = self._exclusion_boxes.get(img_path)
-            if zones is None or max_iou_cxcywh(cx, cy, scaled_w, scaled_h, zones) < self.background_iou:
+            if zones is None or self.max_iou_cxcywh(cx, cy, scaled_w, scaled_h, zones) < self.background_iou:
                 return img_path, cx, cy, width, height
         raise RuntimeError(
-            f"尝试 {_BACKGROUND_ATTEMPTS} 次仍无法裁出与禁区 IoU 低于 {self.background_iou} 的背景块"
+            f"尝试 {self._BACKGROUND_ATTEMPTS} 次仍无法裁出与禁区 IoU 低于 {self.background_iou} 的背景块"
         )
 
     def _configure_background(self, raw) -> None:
@@ -645,10 +621,10 @@ class ImageClassifierFromDetectBoxDataset(ImageClassifierDataset):
             return
         if self.background_id is None:
             raise ValueError(
-                f"background_ratio 为 {self.background_ratio}，但 class_groups 里没有 {BACKGROUND_NAME}"
+                f"background_ratio 为 {self.background_ratio}，但 class_groups 里没有 {self.BACKGROUND_NAME}"
             )
         self._background_class_id = self.background_id
-        self._background_class_name = BACKGROUND_NAME
+        self._background_class_name = self.BACKGROUND_NAME
         self._n_background = int(round(len(self.sample_path_table) * self.background_ratio))
         if self._n_background > 0:
             self._build_background_index(raw)
@@ -676,7 +652,7 @@ class ImageClassifierFromDetectBoxDataset(ImageClassifierDataset):
         original_ids = kept["class_id"].map(
             lambda value: int(str(value).strip()) if str(value).strip() else -1
         )
-        names = names_by_original_id(table)
+        names = self.names_by_original_id(table)
         return {
             group_id: [
                 {
@@ -703,19 +679,19 @@ class ImageClassifierFromDetectBoxDataset(ImageClassifierDataset):
         filtered = table.loc[keep].reset_index(drop=True)
         member_counts = None
         if self._has_label and self.class_groups is not None:
-            class_map = group_names(table, self.class_groups)
-            filtered = rows_in_groups(filtered, self.class_groups, class_map)
+            class_map = self.group_names(table, self.class_groups)
+            filtered = self.rows_in_groups(filtered, self.class_groups, class_map)
             member_counts = self._member_counts(table, keep)
         elif self._has_label and len(filtered):
-            class_map = names_by_original_id(filtered)
+            class_map = self.names_by_original_id(filtered)
         else:
-            class_map = {}
+            class_map = dict(self._given_class_names)
         if self._has_label and len(filtered) == 0:
             raise ValueError("筛选后没有样本。检查 class_groups 与 min_side_px")
         self.sample_path_table = filtered
         self.map_class_id_to_class_name = dict(class_map)
         if self.background_id is not None:
-            self.map_class_id_to_class_name[self.background_id] = BACKGROUND_NAME
+            self.map_class_id_to_class_name[self.background_id] = self.BACKGROUND_NAME
         self._n_background = 0
         self._configure_background(table)
         self.kept_image_paths = set(filtered["img_path"].astype(str)) if len(filtered) else set()
@@ -728,3 +704,48 @@ class ImageClassifierFromDetectBoxDataset(ImageClassifierDataset):
             member_counts=member_counts,
             has_label=self._has_label,
         )
+
+    @staticmethod
+    def crop_cxcywh(
+        img: np.ndarray,
+        cx: float,
+        cy: float,
+        w: float,
+        h: float,
+        box_scale: float,
+    ) -> np.ndarray:
+        """归一化 ``cxcywh`` 外扩 ``box_scale`` 后裁切，结果至少 1 像素。``img`` 为 ``(H, W, C)``。"""
+        height, width = img.shape[:2]
+        abs_w = max(w * width * box_scale, 1.0)
+        abs_h = max(h * height * box_scale, 1.0)
+        abs_cx = cx * width
+        abs_cy = cy * height
+        x1 = int(np.floor(abs_cx - abs_w / 2.0))
+        y1 = int(np.floor(abs_cy - abs_h / 2.0))
+        x2 = int(np.ceil(abs_cx + abs_w / 2.0))
+        y2 = int(np.ceil(abs_cy + abs_h / 2.0))
+        x1 = int(np.clip(x1, 0, width - 1))
+        y1 = int(np.clip(y1, 0, height - 1))
+        x2 = int(np.clip(x2, x1 + 1, width))
+        y2 = int(np.clip(y2, y1 + 1, height))
+        return img[y1:y2, x1:x2]
+
+    @staticmethod
+    def max_iou_cxcywh(cx: float, cy: float, w: float, h: float, boxes: np.ndarray) -> float:
+        """返回归一化 ``cxcywh`` 框与 ``boxes`` ``(N, 4)`` 的最大 IoU。"""
+        if boxes.size == 0:
+            return 0.0
+        ax1, ay1 = cx - w / 2.0, cy - h / 2.0
+        ax2, ay2 = cx + w / 2.0, cy + h / 2.0
+        bx1 = boxes[:, 0] - boxes[:, 2] / 2.0
+        by1 = boxes[:, 1] - boxes[:, 3] / 2.0
+        bx2 = boxes[:, 0] + boxes[:, 2] / 2.0
+        by2 = boxes[:, 1] + boxes[:, 3] / 2.0
+        ix1 = np.maximum(ax1, bx1)
+        iy1 = np.maximum(ay1, by1)
+        ix2 = np.minimum(ax2, bx2)
+        iy2 = np.minimum(ay2, by2)
+        inter = np.maximum(0.0, ix2 - ix1) * np.maximum(0.0, iy2 - iy1)
+        area_a = max(0.0, (ax2 - ax1) * (ay2 - ay1))
+        area_b = np.maximum(0.0, bx2 - bx1) * np.maximum(0.0, by2 - by1)
+        return float(np.max(inter / (area_a + area_b - inter + 1e-7)))

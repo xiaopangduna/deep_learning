@@ -55,7 +55,7 @@ trainer:
 
 
 data:
-  class_path: lovely_deep_learning.data_module.box_crop_classifier.BoxCropClassifierDataModule
+  class_path: lovely_deep_learning.data_module.image_classifier.ImageClassifierFromDetectBoxDataModule
   init_args:
     box_scale: 1.2
     min_side_px: 16

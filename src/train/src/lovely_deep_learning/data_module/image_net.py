@@ -14,8 +14,8 @@ class ImageNetDataModule(ImageClassifierDataModule):
     使用顺序
     --------
     1. 构造时传入 ``dataset_dir`` 以及各阶段 CSV 路径、``transform_*``、``key_map`` 等（见下方参数）。
-    2. ``trainer.fit`` 之前 Lightning 会调用 ``prepare_data``：在 ``dataset_dir`` 下生成 train/val/test/predict 四个 CSV
-       及 ``map_class_id_to_class_name.csv``（若主 CSV 已存在则跳过整批生成；仅缺映射文件时会补写映射）。
+    2. ``trainer.fit`` 之前 Lightning 会调用 ``prepare_data``：在 ``dataset_dir`` 下生成 train/val/test/predict 四个 CSV。
+       synset id 按 train 文件夹名字典序分配。主 CSV 已存在则跳过生成。
     3. ``setup`` 由父类完成，按 CSV 构建 ``ImageClassifierDataset``。
 
     路径约定
@@ -28,8 +28,7 @@ class ImageNetDataModule(ImageClassifierDataModule):
     - ``train.csv`` / ``val.csv``：来自 ``train_cls`` 与 val XML 标签；``test.csv`` / ``predict.csv``：仅 ``path_img``，来自 ``test.txt`` 列表。
 
     构造参数见 ``__init__``（显式列出 ``BaseDataModule`` / ``ImageClassifierDataModule`` 的全部字段，
-    便于类型检查与 IDE 补全）。若提供 ``map_class_id_to_class_name``（``dict`` 或 CSV 路径字符串），
-    生成 CSV 时的 synset→id 以该映射为准；否则按 train 下 synset 文件夹名字典序分配 id。
+    便于类型检查与 IDE 补全）。synset id 按 train 下文件夹名字典序分配。
     """
 
     _REL_DATA = Path("ILSVRC/Data/CLS-LOC")
@@ -50,7 +49,6 @@ class ImageNetDataModule(ImageClassifierDataModule):
         num_workers: int = 4,
         key_map=None,
         predict_key_map=None,
-        map_class_id_to_class_name=None,
         norm_mean=None,
         norm_std=None,
         dataset_dir="datasets/IMAGENET",
@@ -66,7 +64,7 @@ class ImageNetDataModule(ImageClassifierDataModule):
             测试、预测变换；默认 ``None`` 时父类回退为 ``transform_val``。
         batch_size, num_workers
             各 ``DataLoader`` 批量与 worker 数。
-        key_map, predict_key_map, map_class_id_to_class_name, norm_mean, norm_std
+        key_map, predict_key_map, norm_mean, norm_std
             图像分类 DataModule 与 Dataset 共用配置；语义见 ``ImageClassifierDataModule``。
         dataset_dir : str or pathlib.Path
             ILSVRC 布局根目录（含 ``ILSVRC/`` 子树）；CSV 写在该目录下。
@@ -74,7 +72,6 @@ class ImageNetDataModule(ImageClassifierDataModule):
         super().__init__(
             key_map=key_map,
             predict_key_map=predict_key_map,
-            map_class_id_to_class_name=map_class_id_to_class_name,
             norm_mean=norm_mean,
             norm_std=norm_std,
             train_csv_paths=train_csv_paths,
@@ -102,12 +99,8 @@ class ImageNetDataModule(ImageClassifierDataModule):
                 return name_el.text.strip()
         return None
 
-    def _class_synset_to_idx(self, train_dir: Path) -> dict[str, int]:
-        m = self._map_spec_effective_for_csv_generation(
-            self._map_class_id_to_class_name_spec
-        )
-        if m:
-            return {name: idx for idx, name in m.items()}
+    @staticmethod
+    def _class_synset_to_idx(train_dir: Path) -> dict[str, int]:
         synsets = sorted(d.name for d in train_dir.iterdir() if d.is_dir())
         return {s: i for i, s in enumerate(synsets)}
 
@@ -122,7 +115,6 @@ class ImageNetDataModule(ImageClassifierDataModule):
         val_csv_path = root / "val.csv"
         test_csv_path = root / "test.csv"
         predict_csv_path = root / "predict.csv"
-        map_csv_path = root / "map_class_id_to_class_name.csv"
 
         if (
             train_csv_path.exists()
@@ -130,17 +122,12 @@ class ImageNetDataModule(ImageClassifierDataModule):
             and test_csv_path.exists()
             and predict_csv_path.exists()
         ):
-            if train_dir.is_dir() and not map_csv_path.exists():
-                synset_to_idx = self._class_synset_to_idx(train_dir)
-                self._write_map_class_id_to_class_name_csv(map_csv_path, synset_to_idx)
-                print(f"ImageNetDataModule: wrote missing {map_csv_path}")
             print("============================================================================")
             print("ImageNetDataModule: CSV files already exist, skipping generation:")
             print(f"  - {train_csv_path}")
             print(f"  - {val_csv_path}")
             print(f"  - {test_csv_path}")
             print(f"  - {predict_csv_path}")
-            print(f"  - {map_csv_path}")
             print("============================================================================")
             return
 
@@ -228,18 +215,16 @@ class ImageNetDataModule(ImageClassifierDataModule):
         val_df.to_csv(val_csv_path, index=False)
         test_df.to_csv(test_csv_path, index=False)
         predict_df.to_csv(predict_csv_path, index=False)
-        self._write_map_class_id_to_class_name_csv(map_csv_path, synset_to_idx)
 
         print("============================================================================")
         print(f"Generated {train_csv_path} with {len(train_df)} entries")
         print(f"Generated {val_csv_path} with {len(val_df)} entries")
         print(f"Generated {test_csv_path} with {len(test_df)} entries")
         print(f"Generated {predict_csv_path} with {len(predict_df)} entries")
-        print(f"Generated {map_csv_path} with {len(synset_to_idx)} classes")
         print("============================================================================")
 
     def prepare_data(self) -> None:
-        """根据本地 ILSVRC 生成 CSV（不下载整库）。Lightning 顺序：``prepare_data`` → ``setup``；
-        映射 CSV 在本方法中生成，在父类 ``setup`` 中再严格读入 ``map_class_id_to_class_name``。
+        """根据本地 ILSVRC 生成 CSV（不下载整库）。Lightning 顺序：``prepare_data`` → ``setup``。
+        类别名在 ``setup`` 里从带标签的 CSV 推导。
         """
         self._generate_csv_files()

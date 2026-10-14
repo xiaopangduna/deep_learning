@@ -9,11 +9,8 @@ import pytest
 import torch
 from torchvision.transforms import v2
 
-from lovely_deep_learning.data_module.box_crop_classifier import BoxCropClassifierDataModule
-from lovely_deep_learning.dataset.image_classifier import (
-    ImageClassifierFromDetectBoxDataset,
-    max_iou_cxcywh,
-)
+from lovely_deep_learning.data_module.image_classifier import ImageClassifierFromDetectBoxDataModule
+from lovely_deep_learning.dataset.image_classifier import ImageClassifierFromDetectBoxDataset
 
 _SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "yolo_to_box_crop_csv.py"
 _spec = importlib.util.spec_from_file_location("yolo_to_box_crop_csv", _SCRIPT)
@@ -161,7 +158,7 @@ def test_class_groups_reject_overlap_gap_and_empty_group(tmp_path):
 def test_datamodule_passes_class_groups(tmp_path):
     csv_path = tmp_path / "age.csv"
     _write_age_csv(csv_path)
-    module = BoxCropClassifierDataModule(
+    module = ImageClassifierFromDetectBoxDataModule(
         train_csv_paths=[str(csv_path)],
         val_csv_paths=[str(csv_path)],
         test_csv_paths=[str(csv_path)],
@@ -236,7 +233,7 @@ def test_background_ratio_extends_only_the_training_length(tmp_path):
     for _ in range(10):
         path, cx, cy, width, height = dataset._sample_background_box()
         zones = dataset._exclusion_boxes[path]
-        overlap = max_iou_cxcywh(cx, cy, width * dataset.box_scale, height * dataset.box_scale, zones)
+        overlap = dataset.max_iou_cxcywh(cx, cy, width * dataset.box_scale, height * dataset.box_scale, zones)
         assert overlap < 0.3
 
 
@@ -295,7 +292,7 @@ def test_class_groups_keep_background_id_outside_the_groups(tmp_path):
 def test_datamodule_applies_background_ratio_only_to_train(tmp_path):
     csv_path = tmp_path / "age.csv"
     _write_age_csv(csv_path)
-    module = BoxCropClassifierDataModule(
+    module = ImageClassifierFromDetectBoxDataModule(
         train_csv_paths=[str(csv_path)],
         val_csv_paths=[str(csv_path)],
         test_csv_paths=[str(csv_path)],
@@ -314,3 +311,58 @@ def test_datamodule_applies_background_ratio_only_to_train(tmp_path):
     assert len(module.test_dataset) == 4
     assert len(module.pred_dataset) == 4
     assert module.train_dataset.map_class_id_to_class_name[2] == "background"
+
+
+def test_unlabeled_box_rows_keep_passed_class_names_and_labeled_rows_ignore_them(tmp_path):
+    labeled = tmp_path / "labeled.csv"
+    _write_age_csv(labeled)
+    derived = ImageClassifierFromDetectBoxDataset(
+        [labeled],
+        class_groups={0: [0, 1, 3], 1: [2]},
+        min_side_px=1,
+        map_class_id_to_class_name={0: "wrong", 1: "also-wrong"},
+    )
+    assert derived.map_class_id_to_class_name[0] == "head-age_0+head-age_1+head-age_3"
+    predict = tmp_path / "predict.csv"
+    pd.DataFrame(
+        [
+            {
+                "path_img": "/tmp/img_0.jpg",
+                "cx": 0.5,
+                "cy": 0.5,
+                "w": 0.4,
+                "h": 0.4,
+                "img_w": 100,
+                "img_h": 100,
+            }
+        ]
+    ).to_csv(predict, index=False)
+    module = ImageClassifierFromDetectBoxDataModule(
+        train_csv_paths=[str(labeled)],
+        val_csv_paths=[str(labeled)],
+        test_csv_paths=[str(labeled)],
+        predict_csv_paths=[str(predict)],
+        transform_train=None,
+        transform_val=None,
+        key_map={
+            "img_path": "path_img",
+            "class_name": "class_name",
+            "class_id": "class_id",
+            "cx": "cx",
+            "cy": "cy",
+            "w": "w",
+            "h": "h",
+            "img_w": "img_w",
+            "img_h": "img_h",
+        },
+        predict_key_map=ImageClassifierFromDetectBoxDataset.PREDICT_KEY_MAP,
+        class_groups={0: [0, 1, 3], 1: [2], 2: "background"},
+        min_side_px=1,
+        batch_size=2,
+        num_workers=0,
+    )
+    module.setup(None)
+    assert module.pred_dataset.map_class_id_to_class_name == module.train_dataset.map_class_id_to_class_name
+    assert module.pred_dataset.map_class_id_to_class_name[2] == "background"
+    module.setup("predict")
+    assert module.pred_dataset.map_class_id_to_class_name[0].startswith("head-age_0")

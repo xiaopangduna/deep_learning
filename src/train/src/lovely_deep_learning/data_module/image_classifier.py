@@ -1,12 +1,11 @@
 from pathlib import Path
-from typing import Any
-
-import pandas as pd
+from typing import Optional
 
 from torch.utils.data import DataLoader
 
 from .base import BaseDataModule
-from ..dataset.image_classifier import ImageClassifierDataset
+from ..dataset.box_crop_distribution import format_distribution_report, training_class_rows
+from ..dataset.image_classifier import ImageClassifierDataset, ImageClassifierFromDetectBoxDataset
 
 
 class ImageClassifierDataModule(BaseDataModule):
@@ -18,15 +17,16 @@ class ImageClassifierDataModule(BaseDataModule):
     - ``norm_mean`` / ``norm_std`` 传给 Dataset，供 ``convert_img_from_tensor_to_numpy`` 等反标准化
       可视化路径使用。
     - ``class_groups`` 决定训练 id。不传则 CSV 里出现的类别全部训练。
-      ``map_class_id_to_class_name`` 只参与生成 CSV 时的类别顺序，不筛样本。
-      绘图用的名称在 Dataset 上，按筛选结果生成；预测集没有类别列时抄训练集的那份。
+      绘图名称从有类别列的 CSV 推导。预测表没有类别列时，用同一次 ``setup`` 里训练集推导出的那份；
+      单独 ``predict``、训练集尚未建立时，预测图上的名字是数字 id。
+    - 框级分类用同文件的 ``ImageClassifierFromDetectBoxDataModule``，数据集换成
+      ``ImageClassifierFromDetectBoxDataset``。
     """
 
     def __init__(
         self,
         key_map=None,
         predict_key_map=None,
-        map_class_id_to_class_name=None,
         norm_mean=None,
         norm_std=None,
         class_groups=None,
@@ -39,11 +39,6 @@ class ImageClassifierDataModule(BaseDataModule):
             训练 / 验证 / 测试 CSV 的列名映射；``None`` 时使用 ``ImageClassifierDataset`` 内置默认。
         predict_key_map
             预测 CSV 的列名映射；常比 ``key_map`` 少标签相关项。
-        map_class_id_to_class_name
-            ``None`` / ``dict`` / 指向 CSV 的 ``str``（表头须含 ``class_id``、``class_name``）。
-            只给 ``prepare_data`` 生成样本 CSV 时确定类别顺序。原始值保存在
-            ``_map_class_id_to_class_name_spec``；``setup`` 中解析到 ``map_class_id_to_class_name``。
-            不传给 Dataset，也不筛样本。
         norm_mean, norm_std
             与训练时 Normalize 一致的均值、方差，用于 tensor→numpy 可视化时的反标准化。
         class_groups
@@ -56,8 +51,6 @@ class ImageClassifierDataModule(BaseDataModule):
         super().__init__(**kwargs)
         self.key_map = key_map
         self.predict_key_map = predict_key_map
-        self._map_class_id_to_class_name_spec = map_class_id_to_class_name
-        self.map_class_id_to_class_name: dict[int, str] = {}
         self.norm_mean = norm_mean
         self.norm_std = norm_std
         self.class_groups = class_groups
@@ -69,31 +62,47 @@ class ImageClassifierDataModule(BaseDataModule):
         单独 ``trainer.validate`` 时走 ``validate``）。``stage is None``（如部分 CLI 流程）下各 ``if``
         均可能执行，验证集会被构造两次，结果等价。
         """
-        self.map_class_id_to_class_name = self._resolve_map_class_id_spec(
-            self._map_class_id_to_class_name_spec
-        )
         if stage == "fit" or stage is None:
             self.train_dataset = self._make_classifier_dataset(
-                self.train_csv_paths, self.key_map, self.transform_train
+                self.train_csv_paths,
+                self.key_map,
+                self.transform_train,
+                for_train=True,
+                map_class_id_to_class_name=None,
             )
             self.val_dataset = self._make_classifier_dataset(
-                self.val_csv_paths, self.key_map, self.transform_val
+                self.val_csv_paths,
+                self.key_map,
+                self.transform_val,
+                map_class_id_to_class_name=None,
             )
         if stage == "validate" or stage is None:
             self.val_dataset = self._make_classifier_dataset(
-                self.val_csv_paths, self.key_map, self.transform_val
+                self.val_csv_paths,
+                self.key_map,
+                self.transform_val,
+                map_class_id_to_class_name=None,
             )
         if stage == "test" or stage is None:
             self.test_dataset = self._make_classifier_dataset(
-                self.test_csv_paths, self.key_map, self.transform_test
+                self.test_csv_paths,
+                self.key_map,
+                self.transform_test,
+                map_class_id_to_class_name=None,
             )
         if stage == "predict" or stage is None:
             self.pred_dataset = self._make_classifier_dataset(
-                self.predict_csv_paths, self.predict_key_map, self.transform_predict
+                self.predict_csv_paths,
+                self.predict_key_map,
+                self.transform_predict,
+                map_class_id_to_class_name=self._class_names_for_predict(),
             )
-            self._share_train_class_names_with_predict()
 
-    def _make_classifier_dataset(self, csv_paths, key_map, transform):
+    def _make_classifier_dataset(
+        self, csv_paths, key_map, transform, *, for_train: bool = False, map_class_id_to_class_name=None
+    ):
+        """整图分类忽略 ``for_train``。框级子类只用它给训练集追加背景样本。"""
+        _ = for_train
         return ImageClassifierDataset(
             csv_paths,
             key_map=key_map,
@@ -101,61 +110,15 @@ class ImageClassifierDataModule(BaseDataModule):
             norm_mean=self.norm_mean,
             norm_std=self.norm_std,
             class_groups=self.class_groups,
+            map_class_id_to_class_name=map_class_id_to_class_name,
         )
 
-    def _share_train_class_names_with_predict(self) -> None:
-        """预测表没有类别列时，用训练集生成的名称绘图。"""
-        train = getattr(self, "train_dataset", None)
-        pred = getattr(self, "pred_dataset", None)
-        if train is None or pred is None or pred.map_class_id_to_class_name:
-            return
-        pred.map_class_id_to_class_name = dict(train.map_class_id_to_class_name)
-
-    @staticmethod
-    def _resolve_map_class_id_spec(spec: Any) -> dict[int, str]:
-        """``setup`` 使用：``None`` / ``dict`` / 已存在的 CSV 路径 → id→类别名；路径不存在则报错。"""
-        if spec is None:
-            return {}
-        if isinstance(spec, dict):
-            return {int(k): str(v) for k, v in spec.items()}
-        if isinstance(spec, str):
-            p = Path(spec).expanduser()
-            if not p.is_file():
-                raise FileNotFoundError(
-                    "map_class_id_to_class_name 指定的 CSV 不存在（须先成功执行 prepare_data 或修正路径）："
-                    f" {p}"
-                )
-            return ImageClassifierDataset.load_map_class_id_to_class_name_from_csv(p)
-        raise TypeError(
-            "map_class_id_to_class_name 须为 None、dict 或 str（CSV 路径），"
-            f"收到 {type(spec)!r}"
-        )
-
-    @staticmethod
-    def _map_spec_effective_for_csv_generation(spec: Any) -> dict[int, str]:
-        """仅 ``prepare_data`` 内生成 CSV 时用：路径上文件尚未写出时当作无映射 ``{}``。"""
-        if spec is None:
-            return {}
-        if isinstance(spec, dict):
-            return {int(k): str(v) for k, v in spec.items()}
-        if isinstance(spec, str):
-            p = Path(spec).expanduser()
-            if p.is_file():
-                return ImageClassifierDataset.load_map_class_id_to_class_name_from_csv(p)
-            return {}
-        raise TypeError(
-            "map_class_id_to_class_name 须为 None、dict 或 str（CSV 路径），"
-            f"收到 {type(spec)!r}"
-        )
-
-    @staticmethod
-    def _write_map_class_id_to_class_name_csv(
-        path: Path, class_name_to_idx: dict[str, int]
-    ) -> None:
-        """将 ``{class_name: class_id}`` 写成表头为 ``class_id``, ``class_name`` 的 CSV。"""
-        rows = sorted((idx, name) for name, idx in class_name_to_idx.items())
-        pd.DataFrame(rows, columns=["class_id", "class_name"]).to_csv(
-            path, index=False)
+    def _class_names_for_predict(self) -> Optional[dict[int, str]]:
+        """预测表没有类别列时的绘图名称。只使用同一次 ``setup`` 里训练集推导出的那份。"""
+        train = self.train_dataset
+        if train is not None and train.map_class_id_to_class_name:
+            return dict(train.map_class_id_to_class_name)
+        return None
 
     def predict_dataloader(self):
         return DataLoader(
@@ -165,3 +128,85 @@ class ImageClassifierDataModule(BaseDataModule):
             num_workers=self.num_workers,
             collate_fn=self.pred_dataset.get_collate_fn_for_dataloader(),
         )
+
+
+class ImageClassifierFromDetectBoxDataModule(ImageClassifierDataModule):
+    """框级分类。CSV、transform、``key_map`` 与整图分类相同，额外传入裁剪和背景参数。
+
+    模型、损失、指标、后处理仍用 ``ImageClassifierModule``。
+    ``prepare_data`` 不生成 CSV，先运行 ``scripts/yolo_to_box_crop_csv.py``。
+    ``class_groups`` 与整图分类相同，决定训练 id。值为 ``background`` 的项没有 CSV 行。
+    ``background_ratio`` 只加在训练集上；验证、测试和预测为 0。
+
+    ``fit`` 时为训练集和验证集各打一张类别表（筛完并完成类融合之后），并写入
+    ``trainer.log_dir/data_distribution.txt``。
+    """
+
+    def __init__(
+        self,
+        box_scale: float = 1.2,
+        min_side_px: float = 16.0,
+        background_ratio: float = 0.0,
+        background_iou: float = 0.3,
+        **kwargs,
+    ):
+        super().__init__(**kwargs)
+        self.box_scale = float(box_scale)
+        self.min_side_px = float(min_side_px)
+        self.background_ratio = float(background_ratio)
+        self.background_iou = float(background_iou)
+
+    def _make_classifier_dataset(
+        self, csv_paths, key_map, transform, *, for_train: bool = False, map_class_id_to_class_name=None
+    ):
+        return ImageClassifierFromDetectBoxDataset(
+            csv_paths,
+            key_map=key_map,
+            transform=transform,
+            norm_mean=self.norm_mean,
+            norm_std=self.norm_std,
+            box_scale=self.box_scale,
+            min_side_px=self.min_side_px,
+            class_groups=self.class_groups,
+            background_ratio=self.background_ratio if for_train else 0.0,
+            background_iou=self.background_iou,
+            map_class_id_to_class_name=map_class_id_to_class_name,
+        )
+
+    def setup(self, stage=None):
+        super().setup(stage)
+        if stage == "fit" or stage is None:
+            self._report_fit_distribution()
+
+    def _report_fit_distribution(self) -> None:
+        named = (
+            ("train", "训练集", self.train_csv_paths, self.train_dataset),
+            ("val", "验证集", self.val_csv_paths, self.val_dataset),
+        )
+        splits = []
+        for split, title, csv_paths, dataset in named:
+            record = {
+                "split": split,
+                "title": title,
+                "csv_paths": [str(path) for path in csv_paths],
+                "classes": training_class_rows(dataset.distribution["classes"]),
+            }
+            warnings = dataset.distribution["mapping"]["warnings"]
+            if warnings:
+                record["warnings"] = warnings
+            splits.append(record)
+        payload = {"splits": splits}
+        self.data_distribution = payload
+        text = format_distribution_report(payload)
+        trainer = self.trainer
+        log_dir = None if trainer is None else trainer.log_dir
+        if trainer is not None and not getattr(trainer, "is_global_zero", True):
+            return
+        print(text)
+        if trainer is None or not log_dir:
+            return
+        out_dir = Path(log_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        path = out_dir / "data_distribution.txt"
+        path.write_text(text + "\n", encoding="utf-8")
+        print(f"数据分布已写入 {path}")

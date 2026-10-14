@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from lovely_deep_learning.data_module.box_crop_classifier import BoxCropClassifierDataModule
+from lovely_deep_learning.data_module.image_classifier import ImageClassifierFromDetectBoxDataModule
 from lovely_deep_learning.dataset.image_classifier import ImageClassifierFromDetectBoxDataset
 from lovely_deep_learning.dataset.box_crop_distribution import (
     _short_side_bins,
@@ -203,7 +203,7 @@ def test_fit_prints_train_and_val_class_tables(tmp_path, capsys):
         ],
     )
     log_dir = tmp_path / "logs" / "version_0"
-    module = BoxCropClassifierDataModule(
+    module = ImageClassifierFromDetectBoxDataModule(
         train_csv_paths=[str(train_csv)],
         val_csv_paths=[str(val_csv)],
         test_csv_paths=[str(test_csv)],

@@ -14,8 +14,8 @@ class ImageNetteDataModule(ImageClassifierDataModule):
     --------
     1. 构造时传入 ``dataset_dir`` 以及各阶段 CSV 路径、``transform_*``、``key_map`` 等（见下方参数）。
     2. ``trainer.fit`` 之前 Lightning 会调用 ``prepare_data``：若 ``dataset_dir`` 不存在则下载并解压，
-       然后在 ``dataset_dir.parent`` 下写入 train/val/predict 三个 CSV 及 ``map_class_id_to_class_name.csv``
-       （若主 CSV 已存在则跳过整批生成；仅缺映射文件时会补写映射）。
+       然后在 ``dataset_dir.parent`` 下写入 train/val/predict 三个 CSV。类别 id 按 ``train`` 下文件夹名字典序分配。
+       主 CSV 已存在则跳过生成。
     3. ``setup`` 由父类完成，按 CSV 构建 ``ImageClassifierDataset``。
 
     路径约定
@@ -27,8 +27,7 @@ class ImageNetteDataModule(ImageClassifierDataModule):
       一致的路径。
 
     构造参数见 ``__init__``（显式列出 ``BaseDataModule`` / ``ImageClassifierDataModule`` 的全部字段，
-    便于类型检查与 IDE 补全）。若提供 ``map_class_id_to_class_name``，生成 CSV 时的类别顺序与 id
-    以该映射为准；否则按 ``train`` 下类别文件夹名字典序分配 id。
+    便于类型检查与 IDE 补全）。类别 id 按 ``train`` 下类别文件夹名字典序分配。
     """
 
     def __init__(
@@ -45,7 +44,6 @@ class ImageNetteDataModule(ImageClassifierDataModule):
         num_workers: int = 4,
         key_map=None,
         predict_key_map=None,
-        map_class_id_to_class_name=None,
         norm_mean=None,
         norm_std=None,
         dataset_dir="datasets/IMAGENETTE/imagenette2-320",
@@ -61,7 +59,7 @@ class ImageNetteDataModule(ImageClassifierDataModule):
             测试、预测变换；默认 ``None`` 时父类回退为 ``transform_val``。
         batch_size, num_workers
             各 ``DataLoader`` 批量与 worker 数。
-        key_map, predict_key_map, map_class_id_to_class_name, norm_mean, norm_std
+        key_map, predict_key_map, norm_mean, norm_std
             图像分类 DataModule 与 Dataset 共用配置；语义见 ``ImageClassifierDataModule``。
         dataset_dir : str or pathlib.Path
             ImageNette 解压后的根目录（含 ``train/``、``val/``）。tar 下载至其父目录，CSV 亦写在父目录下。
@@ -69,7 +67,6 @@ class ImageNetteDataModule(ImageClassifierDataModule):
         super().__init__(
             key_map=key_map,
             predict_key_map=predict_key_map,
-            map_class_id_to_class_name=map_class_id_to_class_name,
             norm_mean=norm_mean,
             norm_std=norm_std,
             train_csv_paths=train_csv_paths,
@@ -85,12 +82,8 @@ class ImageNetteDataModule(ImageClassifierDataModule):
         )
         self.dataset_dir = Path(dataset_dir)
 
-    def _class_name_to_idx(self, dataset_dir: Path) -> dict[str, int]:
-        m = self._map_spec_effective_for_csv_generation(
-            self._map_class_id_to_class_name_spec
-        )
-        if m:
-            return {name: idx for idx, name in m.items()}
+    @staticmethod
+    def _class_name_to_idx(dataset_dir: Path) -> dict[str, int]:
         classes = sorted(
             d.name for d in (dataset_dir / "train").iterdir() if d.is_dir()
         )
@@ -124,7 +117,7 @@ class ImageNetteDataModule(ImageClassifierDataModule):
 
     def _generate_csv_files(self, dataset_dir: Path):
         """
-        生成 train.csv、val.csv、predict.csv 及 map_class_id_to_class_name.csv。
+        生成 train.csv、val.csv、predict.csv。类别 id 按 train 文件夹名字典序。
         Args:
             dataset_dir: 包含图像数据的目录路径
         """
@@ -135,24 +128,17 @@ class ImageNetteDataModule(ImageClassifierDataModule):
         train_csv_path = output_dir / "train.csv"
         val_csv_path = output_dir / "val.csv"
         predict_csv_path = output_dir / "predict.csv"
-        map_csv_path = output_dir / "map_class_id_to_class_name.csv"
-        train_split_dir = dataset_dir / "train"
 
         if (
             train_csv_path.exists()
             and val_csv_path.exists()
             and predict_csv_path.exists()
         ):
-            if train_split_dir.is_dir() and not map_csv_path.exists():
-                class_to_idx = self._class_name_to_idx(dataset_dir)
-                self._write_map_class_id_to_class_name_csv(map_csv_path, class_to_idx)
-                print(f"ImageNetteDataModule: wrote missing {map_csv_path}")
             print("============================================================================")
             print("ImageNetteDataModule: CSV files already exist, skipping generation")
             print(f"  - {train_csv_path}")
             print(f"  - {val_csv_path}")
             print(f"  - {predict_csv_path}")
-            print(f"  - {map_csv_path}")
             print("============================================================================")
             return
 
@@ -203,11 +189,9 @@ class ImageNetteDataModule(ImageClassifierDataModule):
 
         predict_df = pd.DataFrame(predict_rows, columns=['path_img'])
         predict_df.to_csv(predict_csv_path, index=False)
-        self._write_map_class_id_to_class_name_csv(map_csv_path, class_to_idx)
 
         print("============================================================================")
         print(f"Generated {str(train_csv_path)} with {len(train_df)} entries")
         print(f"Generated {str(val_csv_path)} with {len(val_df)} entries")
         print(f"Generated {str(predict_csv_path)} with {len(predict_rows)} entries")
-        print(f"Generated {str(map_csv_path)} with {len(class_to_idx)} classes")
         print("============================================================================")
