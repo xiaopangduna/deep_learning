@@ -11,7 +11,7 @@
 - ``map_class_id_to_class_name.csv``：COCO 80 类原始 id
 
 ``class_id`` 是 YOLO / COCO 原始 id。``img_w,img_h`` 供 Dataset 做短边过滤，避免每次训练重开图像。
-类别、无效框、短边过滤在 ``BoxCropClassifierDataset`` 初始化时完成。``test.csv`` 与 ``val.csv`` 相同。
+类别、无效框、短边过滤在 ``ImageClassifierFromDetectBoxDataset`` 初始化时完成。``test.csv`` 与 ``val.csv`` 相同。
 
 示例::
 

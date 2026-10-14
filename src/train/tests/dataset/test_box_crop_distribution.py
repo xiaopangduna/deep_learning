@@ -6,7 +6,7 @@ import pandas as pd
 import pytest
 
 from lovely_deep_learning.data_module.box_crop_classifier import BoxCropClassifierDataModule
-from lovely_deep_learning.dataset.box_crop_classifier import BoxCropClassifierDataset
+from lovely_deep_learning.dataset.image_classifier import ImageClassifierFromDetectBoxDataset
 from lovely_deep_learning.dataset.box_crop_distribution import (
     _short_side_bins,
     format_distribution_report,
@@ -50,7 +50,7 @@ def _train_rows():
 def test_distribution_funnel_is_exclusive_and_geometry_matches(tmp_path, capsys):
     csv_path = tmp_path / "train.csv"
     _write(csv_path, _train_rows())
-    dataset = BoxCropClassifierDataset(
+    dataset = ImageClassifierFromDetectBoxDataset(
         [csv_path],
         map_class_id_to_class_name=PERSON_CAR,
         min_side_px=16,
@@ -109,7 +109,7 @@ def test_missing_class_weight_is_not_a_short_vector(tmp_path):
             _row("img_b.jpg", "car", 2, 0.5, 0.5, 0.1, 0.1),
         ],
     )
-    dataset = BoxCropClassifierDataset(
+    dataset = ImageClassifierFromDetectBoxDataset(
         [csv_path],
         map_class_id_to_class_name=PERSON_CAR,
         min_side_px=16,
@@ -148,7 +148,7 @@ def test_class_groups_report_member_counts(tmp_path):
             )
         ],
     )
-    dataset = BoxCropClassifierDataset(
+    dataset = ImageClassifierFromDetectBoxDataset(
         [csv_path],
         class_groups={0: [0, 1, 3], 1: [2]},
         min_side_px=16,

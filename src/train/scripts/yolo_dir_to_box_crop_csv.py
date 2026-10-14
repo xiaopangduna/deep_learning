@@ -10,7 +10,7 @@
 
 ``--split`` 省略且 ``images`` 下只有一个子目录时，用该子目录。
 空标签（负样本图）不写行。``path_img`` 相对输出 CSV 所在目录；符号链接先解析到真实文件。
-类别、无效框、短边过滤在 ``BoxCropClassifierDataset`` 初始化时完成。
+类别、无效框、短边过滤在 ``ImageClassifierFromDetectBoxDataset`` 初始化时完成。
 
 示例::
 

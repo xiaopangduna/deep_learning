@@ -1,10 +1,10 @@
-"""框级分类 DataModule。转换由脚本完成，这里只把 CSV 交给 ``BoxCropClassifierDataset``。"""
+"""框级分类 DataModule。转换由脚本完成，这里只把 CSV 交给 ``ImageClassifierFromDetectBoxDataset``。"""
 
 from pathlib import Path
 from typing import Any, Optional, Sequence
 
 from .image_classifier import ImageClassifierDataModule
-from ..dataset.box_crop_classifier import BoxCropClassifierDataset
+from ..dataset.image_classifier import ImageClassifierFromDetectBoxDataset
 from ..dataset.box_crop_distribution import format_distribution_report, training_class_rows
 
 
@@ -32,7 +32,7 @@ class BoxCropClassifierDataModule(ImageClassifierDataModule):
         self.class_groups = class_groups
 
     def _make_dataset(self, csv_paths, key_map, transform):
-        return BoxCropClassifierDataset(
+        return ImageClassifierFromDetectBoxDataset(
             csv_paths,
             key_map=key_map,
             transform=transform,
