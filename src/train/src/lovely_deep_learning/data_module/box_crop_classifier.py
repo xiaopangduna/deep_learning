@@ -1,7 +1,6 @@
 """框级分类 DataModule。转换由脚本完成，这里只把 CSV 交给 ``ImageClassifierFromDetectBoxDataset``。"""
 
 from pathlib import Path
-from typing import Any, Optional, Sequence
 
 from .image_classifier import ImageClassifierDataModule
 from ..dataset.image_classifier import ImageClassifierFromDetectBoxDataset
@@ -13,7 +12,8 @@ class BoxCropClassifierDataModule(ImageClassifierDataModule):
 
     模型、损失、指标、后处理仍用 ``ImageClassifierModule`` 那一套。
     ``prepare_data`` 不生成 CSV，先运行 ``scripts/yolo_to_box_crop_csv.py``。
-    ``class_groups`` 为 ``{训练 id: [原始 class_id, ...]}`` 时，Dataset 在读入时合并类别。
+    ``class_groups`` 与整图分类相同，决定训练 id。值为 ``background`` 的项没有 CSV 行。
+    ``background_ratio`` 只加在训练集上；验证、测试和预测为 0。
 
     ``fit`` 时为训练集和验证集各打一张类别表（筛完并完成类融合之后），并写入
     ``trainer.log_dir/data_distribution.txt``。
@@ -23,25 +23,28 @@ class BoxCropClassifierDataModule(ImageClassifierDataModule):
         self,
         box_scale: float = 1.2,
         min_side_px: float = 16.0,
-        class_groups: Optional[dict[Any, Sequence[int]]] = None,
+        background_ratio: float = 0.0,
+        background_iou: float = 0.3,
         **kwargs,
     ):
         super().__init__(**kwargs)
         self.box_scale = float(box_scale)
         self.min_side_px = float(min_side_px)
-        self.class_groups = class_groups
+        self.background_ratio = float(background_ratio)
+        self.background_iou = float(background_iou)
 
-    def _make_dataset(self, csv_paths, key_map, transform):
+    def _make_dataset(self, csv_paths, key_map, transform, background_ratio: float = 0.0):
         return ImageClassifierFromDetectBoxDataset(
             csv_paths,
             key_map=key_map,
             transform=transform,
-            map_class_id_to_class_name=self.map_class_id_to_class_name,
             norm_mean=self.norm_mean,
             norm_std=self.norm_std,
             box_scale=self.box_scale,
             min_side_px=self.min_side_px,
             class_groups=self.class_groups,
+            background_ratio=background_ratio,
+            background_iou=self.background_iou,
         )
 
     def setup(self, stage=None):
@@ -50,7 +53,10 @@ class BoxCropClassifierDataModule(ImageClassifierDataModule):
         )
         if stage == "fit" or stage is None:
             self.train_dataset = self._make_dataset(
-                self.train_csv_paths, self.key_map, self.transform_train
+                self.train_csv_paths,
+                self.key_map,
+                self.transform_train,
+                background_ratio=self.background_ratio,
             )
             self.val_dataset = self._make_dataset(
                 self.val_csv_paths, self.key_map, self.transform_val
@@ -67,6 +73,7 @@ class BoxCropClassifierDataModule(ImageClassifierDataModule):
             self.pred_dataset = self._make_dataset(
                 self.predict_csv_paths, self.predict_key_map, self.transform_predict
             )
+            self._share_train_class_names_with_predict()
         if stage == "fit" or stage is None:
             self._report_fit_distribution()
 

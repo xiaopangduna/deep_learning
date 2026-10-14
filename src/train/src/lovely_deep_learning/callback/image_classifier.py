@@ -111,7 +111,7 @@ class LogImageClassifierTrainValVisualizationCallback(pl.Callback):
             class_name = net_out["class_name"][i]
             class_id = net_out["class_id"][i]
             class_id_pred = pred_ids[i].item()
-            class_name_pred = dataset.map_class_id_to_class_name[class_id_pred]
+            class_name_pred = dataset.class_name_for_id(class_id_pred)
             confidence_pred = pred_conf[i].item()
 
             img_np = dataset.convert_img_from_tensor_to_numpy(
@@ -432,7 +432,7 @@ class SaveImageClassifierTestPredictVisualizationCallback(pl.Callback):
             cur_class_name = net_out["class_name"][i]
 
             cur_class_id_pred = int(pred_ids[i].item())
-            cur_class_name_pred = dataset.map_class_id_to_class_name[cur_class_id_pred]
+            cur_class_name_pred = dataset.class_name_for_id(cur_class_id_pred)
             cur_confidence_pred = pred_conf[i].item()
             is_correct = cur_class_id == cur_class_id_pred
 
@@ -537,7 +537,7 @@ class SaveImageClassifierTestPredictVisualizationCallback(pl.Callback):
             img_path = Path(net_in[i]["img_path"])
             img = net_in[i]["img_tv_transformed"]
             cur_class_id_pred = pred_ids[i].item()
-            cur_class_name_pred = dataset.map_class_id_to_class_name[cur_class_id_pred]
+            cur_class_name_pred = dataset.class_name_for_id(cur_class_id_pred)
             cur_confidence_pred = pred_conf[i].item()
 
             img_np = dataset.convert_img_from_tensor_to_numpy(img)

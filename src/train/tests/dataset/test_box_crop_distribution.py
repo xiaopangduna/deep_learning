@@ -13,7 +13,7 @@ from lovely_deep_learning.dataset.box_crop_distribution import (
     training_class_rows,
 )
 
-PERSON_CAR = {0: "person", 1: "car"}
+PERSON_CAR = {0: [0], 1: [2]}
 
 
 def _row(path, class_name, class_id, cx, cy, w, h, img_w=100, img_h=100):
@@ -52,7 +52,7 @@ def test_distribution_funnel_is_exclusive_and_geometry_matches(tmp_path, capsys)
     _write(csv_path, _train_rows())
     dataset = ImageClassifierFromDetectBoxDataset(
         [csv_path],
-        map_class_id_to_class_name=PERSON_CAR,
+        class_groups=PERSON_CAR,
         min_side_px=16,
         box_scale=1.2,
     )
@@ -111,7 +111,7 @@ def test_missing_class_weight_is_not_a_short_vector(tmp_path):
     )
     dataset = ImageClassifierFromDetectBoxDataset(
         [csv_path],
-        map_class_id_to_class_name=PERSON_CAR,
+        class_groups=PERSON_CAR,
         min_side_px=16,
     )
     by_id = {item["class_id"]: item for item in dataset.distribution["classes"]}
@@ -210,7 +210,7 @@ def test_fit_prints_train_and_val_class_tables(tmp_path, capsys):
         predict_csv_paths=[str(val_csv)],
         transform_train=None,
         transform_val=None,
-        map_class_id_to_class_name=PERSON_CAR,
+        class_groups=PERSON_CAR,
         min_side_px=16,
         box_scale=1.2,
         batch_size=2,

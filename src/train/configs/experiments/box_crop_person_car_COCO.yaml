@@ -65,9 +65,9 @@ data:
     predict_csv_paths: [datasets/COCO_class/predict.csv]
     key_map : {"img_path": "path_img", "class_name": "class_name", "class_id": "class_id", "cx": "cx", "cy": "cy", "w": "w", "h": "h", "img_w": "img_w", "img_h": "img_h"}
     predict_key_map : {"img_path": "path_img", "cx": "cx", "cy": "cy", "w": "w", "h": "h", "img_w": "img_w", "img_h": "img_h"}
-    map_class_id_to_class_name:
-      0: "person"
-      1: "car"
+    class_groups:
+      0: [0]
+      1: [2]
     norm_mean : [0.485, 0.456, 0.406]  # 归一化均值 必须与transform_val中的Normalize的mean一致
     norm_std : [0.229, 0.224, 0.225]  # 归一化标准差 必须与transform_val中的Normalize的std一致
     batch_size: 64

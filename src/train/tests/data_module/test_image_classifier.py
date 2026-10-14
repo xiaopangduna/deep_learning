@@ -44,6 +44,25 @@ def test_ImageClassifierDataModule_init():
     assert data_module.map_class_id_to_class_name == map_class_id_to_class_name
 
 
+def test_predict_dataset_copies_train_class_names():
+    data_module = ImageClassifierDataModule(
+        train_csv_paths=PATH_TRAIN_CSV_PATHS,
+        val_csv_paths=PATH_TRAIN_CSV_PATHS,
+        test_csv_paths=PATH_TRAIN_CSV_PATHS,
+        predict_csv_paths=PATH_PREDICT_CSV_PATHS,
+        transform_train=TRANSFORM_TRAIN,
+        transform_val=TRANSFORM_TRAIN,
+        transform_test=TRANSFORM_TRAIN,
+        transform_predict=TRANSFORM_TRAIN,
+        batch_size=BATCH_SIZE,
+        num_workers=NUM_WORKERS,
+        key_map=KEY_MAP,
+        predict_key_map=PREDICT_KEY_MAP,
+    )
+    data_module.setup(None)
+    assert data_module.pred_dataset.map_class_id_to_class_name == map_class_id_to_class_name
+
+
 def test_ImageClassifierDataModule_setup():
     data_module = ImageClassifierDataModule(
         train_csv_paths=PATH_TRAIN_CSV_PATHS,

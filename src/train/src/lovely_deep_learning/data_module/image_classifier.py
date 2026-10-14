@@ -17,6 +17,9 @@ class ImageClassifierDataModule(BaseDataModule):
       ``key_map`` 中的列名必须都在表头里，预测表不能沿用带标签的默认映射。
     - ``norm_mean`` / ``norm_std`` 传给 Dataset，供 ``convert_img_from_tensor_to_numpy`` 等反标准化
       可视化路径使用。
+    - ``class_groups`` 决定训练 id。不传则 CSV 里出现的类别全部训练。
+      ``map_class_id_to_class_name`` 只参与生成 CSV 时的类别顺序，不筛样本。
+      绘图用的名称在 Dataset 上，按筛选结果生成；预测集没有类别列时抄训练集的那份。
     """
 
     def __init__(
@@ -26,6 +29,7 @@ class ImageClassifierDataModule(BaseDataModule):
         map_class_id_to_class_name=None,
         norm_mean=None,
         norm_std=None,
+        class_groups=None,
         **kwargs,
     ):
         """
@@ -37,11 +41,14 @@ class ImageClassifierDataModule(BaseDataModule):
             预测 CSV 的列名映射；常比 ``key_map`` 少标签相关项。
         map_class_id_to_class_name
             ``None`` / ``dict`` / 指向 CSV 的 ``str``（表头须含 ``class_id``、``class_name``）。
-            原始值保存在 ``_map_class_id_to_class_name_spec``；在 ``setup`` 中解析为 ``dict`` 并写入
-            ``map_class_id_to_class_name`` 后传给各 Dataset（``str`` 路径须已存在，通常由子类
-            ``prepare_data`` 生成）。构造后、``setup`` 前请勿依赖 ``map_class_id_to_class_name``。
+            只给 ``prepare_data`` 生成样本 CSV 时确定类别顺序。原始值保存在
+            ``_map_class_id_to_class_name_spec``；``setup`` 中解析到 ``map_class_id_to_class_name``。
+            不传给 Dataset，也不筛样本。
         norm_mean, norm_std
             与训练时 Normalize 一致的均值、方差，用于 tensor→numpy 可视化时的反标准化。
+        class_groups
+            ``{训练 id: [原始 class_id, ...]}``，交给各有标签的 Dataset。
+            值为 ``background`` 时只有框级数据集能用。``None`` 表示全部训练。
         **kwargs
             交给 ``BaseDataModule.__init__``（各阶段 ``*_csv_paths``、``transform_*``、
             ``batch_size``、``num_workers`` 等）。
@@ -53,6 +60,7 @@ class ImageClassifierDataModule(BaseDataModule):
         self.map_class_id_to_class_name: dict[int, str] = {}
         self.norm_mean = norm_mean
         self.norm_std = norm_std
+        self.class_groups = class_groups
 
     def setup(self, stage=None):
         """按 Lightning ``stage`` 创建对应 Dataset；``stage is None`` 时构建全部阶段所用数据集。
@@ -65,49 +73,43 @@ class ImageClassifierDataModule(BaseDataModule):
             self._map_class_id_to_class_name_spec
         )
         if stage == "fit" or stage is None:
-            self.train_dataset = ImageClassifierDataset(
-                self.train_csv_paths,
-                key_map=self.key_map,
-                transform=self.transform_train,
-                map_class_id_to_class_name=self.map_class_id_to_class_name,
-                norm_mean=self.norm_mean,
-                norm_std=self.norm_std,
+            self.train_dataset = self._make_classifier_dataset(
+                self.train_csv_paths, self.key_map, self.transform_train
             )
-            self.val_dataset = ImageClassifierDataset(
-                self.val_csv_paths,
-                key_map=self.key_map,
-                transform=self.transform_val,
-                map_class_id_to_class_name=self.map_class_id_to_class_name,
-                norm_mean=self.norm_mean,
-                norm_std=self.norm_std,
+            self.val_dataset = self._make_classifier_dataset(
+                self.val_csv_paths, self.key_map, self.transform_val
             )
         if stage == "validate" or stage is None:
-            self.val_dataset = ImageClassifierDataset(
-                self.val_csv_paths,
-                key_map=self.key_map,
-                transform=self.transform_val,
-                map_class_id_to_class_name=self.map_class_id_to_class_name,
-                norm_mean=self.norm_mean,
-                norm_std=self.norm_std,
+            self.val_dataset = self._make_classifier_dataset(
+                self.val_csv_paths, self.key_map, self.transform_val
             )
         if stage == "test" or stage is None:
-            self.test_dataset = ImageClassifierDataset(
-                self.test_csv_paths,
-                key_map=self.key_map,
-                transform=self.transform_test,
-                map_class_id_to_class_name=self.map_class_id_to_class_name,
-                norm_mean=self.norm_mean,
-                norm_std=self.norm_std,
+            self.test_dataset = self._make_classifier_dataset(
+                self.test_csv_paths, self.key_map, self.transform_test
             )
         if stage == "predict" or stage is None:
-            self.pred_dataset = ImageClassifierDataset(
-                self.predict_csv_paths,
-                self.predict_key_map,
-                transform=self.transform_predict,
-                map_class_id_to_class_name=self.map_class_id_to_class_name,
-                norm_mean=self.norm_mean,
-                norm_std=self.norm_std,
+            self.pred_dataset = self._make_classifier_dataset(
+                self.predict_csv_paths, self.predict_key_map, self.transform_predict
             )
+            self._share_train_class_names_with_predict()
+
+    def _make_classifier_dataset(self, csv_paths, key_map, transform):
+        return ImageClassifierDataset(
+            csv_paths,
+            key_map=key_map,
+            transform=transform,
+            norm_mean=self.norm_mean,
+            norm_std=self.norm_std,
+            class_groups=self.class_groups,
+        )
+
+    def _share_train_class_names_with_predict(self) -> None:
+        """预测表没有类别列时，用训练集生成的名称绘图。"""
+        train = getattr(self, "train_dataset", None)
+        pred = getattr(self, "pred_dataset", None)
+        if train is None or pred is None or pred.map_class_id_to_class_name:
+            return
+        pred.map_class_id_to_class_name = dict(train.map_class_id_to_class_name)
 
     @staticmethod
     def _resolve_map_class_id_spec(spec: Any) -> dict[int, str]:

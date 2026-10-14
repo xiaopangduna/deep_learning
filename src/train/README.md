@@ -165,7 +165,7 @@ path_img,class_name,class_id
 path_img
 ```
 
-类别映射写在 YAML 的 `data.init_args.map_class_id_to_class_name`（dict 或指向含 `class_id,class_name` 的 CSV）。
+训练哪些 id 由 `data.init_args.class_groups` 决定（`{训练 id: [原始 class_id, ...]}`）。不写则 CSV 里出现的 `class_id` 全部训练。绘图用的名称由数据集按筛选结果生成；某个 id 没有名字时，图上写这个 id。`map_class_id_to_class_name` 只在生成 ImageNet 等样本 CSV 时指定类别顺序，不筛样本。
 
 自定义分类数据可分三步生成表：
 

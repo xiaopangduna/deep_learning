@@ -16,6 +16,9 @@ from lovely_deep_learning.callback.image_classifier import (
 class _Dataset:
     map_class_id_to_class_name = {0: "head-age_0", 1: "head-age_1", 2: "head-age_2"}
 
+    def class_name_for_id(self, class_id):
+        return str(self.map_class_id_to_class_name.get(int(class_id), class_id))
+
     def convert_img_from_tensor_to_numpy(self, img):
         return np.zeros((32, 48, 3), dtype=np.uint8)
 

@@ -5,7 +5,7 @@
 
 1. ``w`` 或 ``h`` 非正
 2. 其余里短边 ``min(w*img_w, h*img_h)`` 小于 ``min_side_px``
-3. 其余里类别不在映射或 ``class_groups`` 中
+3. 其余里类别不在 ``class_groups`` 中。未传分组时这一项为 0
 
 几何量只在保留下来的框上计算。建议损失权重为 ``n / (k * n_c)``，``k`` 是有样本的类别数，均值为 1。
 """
@@ -40,9 +40,11 @@ def box_keep_masks(
     min_side_px: float,
     has_label: bool,
     class_groups: Optional[dict[int, list[int]]],
-    target_map: dict[int, str],
 ) -> dict[str, pd.Series]:
-    """返回与 ``table`` 对齐的互斥布尔掩码：``invalid_wh``、``short_side``、``class_excluded``、``keep``。"""
+    """返回与 ``table`` 对齐的互斥布尔掩码：``invalid_wh``、``short_side``、``class_excluded``、``keep``。
+
+    ``class_groups is None`` 时不按类别丢掉框。空字典表示没有要保留的原始 id。
+    """
     width = table["w"].astype(float)
     height = table["h"].astype(float)
     valid_wh = (width > 0) & (height > 0)
@@ -56,7 +58,7 @@ def box_keep_masks(
     else:
         short_side = pd.Series(False, index=table.index)
     remaining = valid_wh & ~short_side
-    if has_label and class_groups:
+    if has_label and class_groups is not None:
         original_ids = table["class_id"].map(_parse_original_class_id)
         allowed = {
             original_id
@@ -64,9 +66,6 @@ def box_keep_masks(
             for original_id in members
         }
         class_excluded = remaining & ~original_ids.isin(allowed)
-    elif has_label and target_map:
-        names = set(target_map.values())
-        class_excluded = remaining & ~table["class_name"].isin(names)
     else:
         class_excluded = pd.Series(False, index=table.index)
     keep = remaining & ~class_excluded
