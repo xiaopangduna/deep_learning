@@ -146,6 +146,7 @@ model:
       class_path: lovely_deep_learning.loss.image_classifier.ImageClassifierCriterion
       init_args:
         label_smoothing: 0.0
+        weight: [0.67, 0.92, 2.41]
     postprocess:
       class_path: lovely_deep_learning.postprocess.image_classifier.ImageClassifierPostProcessor
       init_args:

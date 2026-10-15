@@ -119,7 +119,8 @@ python scripts/train.py fit \
 ```bash
 python scripts/train.py validate \
   --config logs/image_classifiter_IMAGE_NETTE/version_0/config.yaml \
-  --ckpt_path logs/image_classifiter_IMAGE_NETTE/version_0/checkpoints/last.ckpt
+  --ckpt_path logs/image_classifiter_IMAGE_NETTE/version_0/checkpoints/last.ckpt \
+  --trainer.logger.0.init_args.version 4
 
 python scripts/train.py test \
   --config logs/image_classifiter_IMAGE_NETTE/version_0/config.yaml \
