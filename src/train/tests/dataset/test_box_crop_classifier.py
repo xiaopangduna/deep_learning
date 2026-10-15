@@ -140,6 +140,51 @@ def test_class_groups_merge_original_ids_and_drop_the_rest(tmp_path):
     assert len(dataset) == 4
 
 
+def test_class_groups_warn_when_a_member_is_absent(tmp_path):
+    csv_path = tmp_path / "age.csv"
+    rows = []
+    for index, (class_id, class_name) in enumerate([(0, "head-age_0"), (2, "head-age_2")]):
+        rows.append(
+            {
+                "path_img": f"/tmp/img_{index}.jpg",
+                "class_name": class_name,
+                "class_id": class_id,
+                "cx": 0.5,
+                "cy": 0.5,
+                "w": 0.4,
+                "h": 0.4,
+                "img_w": 100,
+                "img_h": 100,
+            }
+        )
+    pd.DataFrame(rows).to_csv(csv_path, index=False)
+    with pytest.warns(UserWarning, match=r"不存在: \[1\]"):
+        dataset = ImageClassifierFromDetectBoxDataset(
+            [csv_path],
+            class_groups={0: [0, 1], 1: [2]},
+            min_side_px=1,
+        )
+    assert dataset.map_class_id_to_class_name == {0: "head-age_0", 1: "head-age_2"}
+    assert set(dataset.sample_path_table["class_id"].astype(int)) == {0, 1}
+    members = dataset.distribution["classes"][0]["members"]
+    assert members == [
+        {"class_id": 0, "class_name": "head-age_0", "count": 1},
+        {"class_id": 1, "class_name": "", "count": 0},
+    ]
+
+
+def test_class_groups_reject_a_merged_id_with_no_rows(tmp_path):
+    csv_path = tmp_path / "age.csv"
+    _write_age_csv(csv_path)
+    with pytest.warns(UserWarning, match=r"不存在: \[9\]"):
+        with pytest.raises(ValueError, match="训练 id \\[1\\] 没有样本"):
+            ImageClassifierFromDetectBoxDataset(
+                [csv_path],
+                class_groups={0: [0], 1: [9]},
+                min_side_px=1,
+            )
+
+
 def test_class_groups_reject_overlap_gap_and_empty_group(tmp_path):
     csv_path = tmp_path / "age.csv"
     _write_age_csv(csv_path)

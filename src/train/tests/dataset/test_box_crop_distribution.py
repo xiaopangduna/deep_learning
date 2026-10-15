@@ -100,7 +100,7 @@ def test_short_side_bin_edges():
     assert bins["64_128"] == 0
 
 
-def test_missing_class_weight_is_not_a_short_vector(tmp_path):
+def test_merged_id_dropped_by_short_side_is_rejected(tmp_path):
     csv_path = tmp_path / "train.csv"
     _write(
         csv_path,
@@ -109,22 +109,24 @@ def test_missing_class_weight_is_not_a_short_vector(tmp_path):
             _row("img_b.jpg", "car", 2, 0.5, 0.5, 0.1, 0.1),
         ],
     )
-    dataset = ImageClassifierFromDetectBoxDataset(
-        [csv_path],
-        class_groups=PERSON_CAR,
-        min_side_px=16,
-    )
-    by_id = {item["class_id"]: item for item in dataset.distribution["classes"]}
-    assert by_id[1]["count"] == 0
-    assert by_id[1]["weight"] is None
-    assert dataset.distribution["suggested_weight_class_ids"] == [0]
+    with pytest.raises(ValueError, match="训练 id \\[1\\] 没有样本"):
+        ImageClassifierFromDetectBoxDataset(
+            [csv_path],
+            class_groups=PERSON_CAR,
+            min_side_px=16,
+        )
     text = format_distribution_report(
         {
             "splits": [
                 {
                     "title": "训练集",
                     "csv_paths": [str(csv_path)],
-                    "classes": training_class_rows(dataset.distribution["classes"]),
+                    "classes": training_class_rows(
+                        [
+                            {"class_id": 0, "class_name": "person", "count": 1, "ratio": 1.0},
+                            {"class_id": 1, "class_name": "car", "count": 0, "ratio": 0.0},
+                        ]
+                    ),
                 }
             ]
         }

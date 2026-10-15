@@ -118,6 +118,20 @@ def test_ImageClassifierDataset_draw_target_and_predict_label_on_numpy():
     #     "./tmp/test_ImageClassifierDataset_draw_target_and_predict_label_on_numpy.jpg", img_with_label)
 
 
+def test_class_groups_warn_when_a_member_is_absent(tmp_path):
+    csv_path = tmp_path / "images.csv"
+    csv_path.write_text(
+        "path_img,class_name,class_id\n"
+        "a.jpg,cat,0\n"
+        "b.jpg,dog,2\n",
+        encoding="utf-8",
+    )
+    with pytest.warns(UserWarning, match=r"不存在: \[1\]"):
+        dataset = ImageClassifierDataset([csv_path], class_groups={0: [0, 1], 1: [2]})
+    assert len(dataset) == 2
+    assert dataset.map_class_id_to_class_name == {0: "cat", 1: "dog"}
+
+
 def test_class_groups_merge_rows_and_reject_background():
     dataset = ImageClassifierDataset(PATH_CSV, class_groups={0: [0, 1]})
     assert len(dataset) == 2

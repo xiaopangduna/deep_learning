@@ -2,6 +2,7 @@
 
 import csv
 import random
+import warnings
 from typing import List, Dict, Optional, Callable, Any, Union, Sequence
 from pathlib import Path
 
@@ -42,6 +43,7 @@ class ImageClassifierDataset(BaseDataset):
     ``None`` 使用 :attr:`DEFAULT_KEY_MAP`，``{}`` 表示不重命名。
     预测表没有标签列时，传入只含图像路径的 ``key_map``。
     不传 ``class_groups`` 时，CSV 里出现的 ``class_id`` 全部保留，训练 id 和名字保持原值。
+    分组里某个原始 id 在当前 CSV 中没有行时只警告。合并后的训练 id 在筛选后须至少有一行。
     """
 
     DEFAULT_KEY_MAP = {
@@ -145,8 +147,7 @@ class ImageClassifierDataset(BaseDataset):
             return
         merged = self.group_names(self.sample_path_table, self.class_groups)
         filtered = self.rows_in_groups(self.sample_path_table, self.class_groups, merged)
-        if len(filtered) == 0:
-            raise ValueError("筛选后没有样本。检查 class_groups")
+        self.require_merged_samples(filtered, self.class_groups)
         self.sample_path_table = filtered
         self.map_class_id_to_class_name = merged
 
@@ -383,7 +384,11 @@ class ImageClassifierDataset(BaseDataset):
 
     @staticmethod
     def group_names(table, groups: Dict[int, list[int]]) -> Dict[int, str]:
-        """分组训练 id 到用 ``+`` 拼起来的原名。原始 id 不在表里则报错。"""
+        """分组训练 id 到用 ``+`` 拼起来的原名。
+
+        某个原始 id 在当前表里没有行时只警告，名字里跳过它。
+        合并后的训练 id 是否还有样本，由 :meth:`require_merged_samples` 在筛选之后检查。
+        """
         names = ImageClassifierDataset.names_by_original_id(table)
         missing = sorted(
             {
@@ -394,11 +399,32 @@ class ImageClassifierDataset(BaseDataset):
             }
         )
         if missing:
-            raise ValueError(f"class_groups 中的原始 class_id 在 CSV 里不存在: {missing}")
+            warnings.warn(
+                f"class_groups 中的原始 class_id 在 CSV 里不存在: {missing}",
+                UserWarning,
+                stacklevel=2,
+            )
         return {
-            group_id: "+".join(names[original_id] for original_id in members)
+            group_id: "+".join(
+                names[original_id] for original_id in members if original_id in names
+            )
             for group_id, members in groups.items()
         }
+
+    @staticmethod
+    def require_merged_samples(table, groups: Dict[int, list[int]]) -> None:
+        """每个合并后的训练 id 在筛选后的表里至少有一行。"""
+        if not groups:
+            return
+        present = set()
+        if len(table) and "class_id" in table.columns:
+            for value in table["class_id"]:
+                text = str(value).strip()
+                if text:
+                    present.add(int(text))
+        missing = sorted(group_id for group_id in groups if group_id not in present)
+        if missing:
+            raise ValueError(f"筛选后训练 id {missing} 没有样本。检查 class_groups")
 
     @staticmethod
     def rows_in_groups(table, groups: Dict[int, list[int]], merged: Dict[int, str]):
@@ -657,7 +683,7 @@ class ImageClassifierFromDetectBoxDataset(ImageClassifierDataset):
             group_id: [
                 {
                     "class_id": original_id,
-                    "class_name": names[original_id],
+                    "class_name": names.get(original_id, ""),
                     "count": int((original_ids == original_id).sum()),
                 }
                 for original_id in members
@@ -681,6 +707,7 @@ class ImageClassifierFromDetectBoxDataset(ImageClassifierDataset):
         if self._has_label and self.class_groups is not None:
             class_map = self.group_names(table, self.class_groups)
             filtered = self.rows_in_groups(filtered, self.class_groups, class_map)
+            self.require_merged_samples(filtered, self.class_groups)
             member_counts = self._member_counts(table, keep)
         elif self._has_label and len(filtered):
             class_map = self.names_by_original_id(filtered)

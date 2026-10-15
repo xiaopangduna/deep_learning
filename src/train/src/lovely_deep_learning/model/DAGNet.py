@@ -94,11 +94,11 @@ class DAGNet(nn.Module):
             x = [x]
         outputs = {}
         for i, node in enumerate(self.inputs):
-            outputs[node["name"]] = x[i]
+            outputs[str(node["name"])] = x[i]
 
         for cfg in self.layers_config:
-            name = cfg["name"]
-            from_layers = cfg.get("from", [])
+            name = str(cfg["name"])
+            from_layers = [str(src) for src in cfg.get("from", [])]
             layer = self.layers[name]
 
             if len(from_layers) == 1:
@@ -108,7 +108,7 @@ class DAGNet(nn.Module):
 
             outputs[name] = layer(inp)
 
-        return tuple(outputs[n["from"][0]] for n in self.outputs)
+        return tuple(outputs[str(n["from"][0])] for n in self.outputs)
 
     @staticmethod
     def _validate_named_nodes(label: str, nodes: Any) -> None:
@@ -148,7 +148,8 @@ class DAGNet(nn.Module):
             if "children" in cfg:
                 children = []
                 for child_cfg in cfg["children"]:
-                    child_name = child_cfg["name"]
+                    # YAML reloads unquoted "0" as int; nn.Sequential requires str names.
+                    child_name = str(child_cfg["name"])
                     children.append((child_name, build_module(child_cfg)))
                 return nn.Sequential(OrderedDict(children))
             module = cfg["module"]
@@ -156,5 +157,5 @@ class DAGNet(nn.Module):
             return dynamic_class_instantiate_from_string(module, **args)
 
         for cfg in self.layers_config:
-            name = cfg["name"]
+            name = str(cfg["name"])
             self.layers[name] = build_module(cfg)

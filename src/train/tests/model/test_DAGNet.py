@@ -131,3 +131,30 @@ def test_DAGWeightLoader_yolov8_n_fused_matches_official():
     assert len(dag_out) == 3
     for i in range(3):
         assert torch.allclose(dag_out[i], official_out[1][i], atol=1e-5)
+
+
+def test_integer_child_names_from_yaml_reload():
+    """Lightning 存盘会去掉数字层名的引号，YAML 再读回来是 int。"""
+    structure = {
+        "inputs": [{"name": "input", "shape": [3, 8, 8]}],
+        "outputs": [{"name": "classification", "from": ["head"]}],
+        "layers": [
+            {
+                "name": "head",
+                "from": ["input"],
+                "module": "torch.nn.Sequential",
+                "children": [
+                    {"name": 0, "module": "torch.nn.Flatten", "args": {"start_dim": 1}},
+                    {
+                        "name": 1,
+                        "module": "torch.nn.Linear",
+                        "args": {"in_features": 192, "out_features": 2},
+                    },
+                ],
+            }
+        ],
+    }
+    net = DAGNet(structure)
+    out = net(torch.randn(2, 3, 8, 8))[0]
+    assert out.shape == (2, 2)
+    assert "0" in net.layers["head"]._modules
