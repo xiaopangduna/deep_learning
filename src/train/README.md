@@ -15,6 +15,7 @@
 - [导出与剪枝](#导出与剪枝)
 - [板端转换](#板端转换)
 - [训练日志](#训练日志)
+- [分类结果写回 FiftyOne](#分类结果写回-fiftyone)
 - [测试](#测试)
 
 ## 环境安装
@@ -269,6 +270,33 @@ tensorboard --logdir logs
 ```
 
 checkpoint 与 `config.yaml` 在 `logs/<实验名>/version_N/`。测试 / 预测可视化默认写到 YAML 里配置的 `tmp/`。
+
+## 分类结果写回 FiftyOne
+
+对框级分类器（GT 框 crop）打分，可选写入 `BBM08S_head` 的 `pred_eye_<ver>`，用 `--care-classes` 只把「关注类 vs 非关注类」不一致标成 ERR（例如只关心 `eye_open_2`）。不改 GT 的 `eye_open_*` tag。`--ckpt` 须与 `--config` 的分类头一致（2 类用 v100，含 background 的 3 类用 v000）。
+
+本机若已有 mongod 在 27017，脚本会默认连 `mongodb://127.0.0.1:27017`（也可用环境变量 `FIFTYONE_DATABASE_URI` 覆盖）。
+
+```bash
+# 只打分
+uv run scripts/val_classifier_with_fiftyone.py \
+  --ckpt logs/image_classifiter_from_detect_box_head_eye_open/version_6/checkpoints/epoch=19-val_acc=0.96.ckpt \
+  --config configs/experiments/image_classifiter_from_detect_box_head_eye_open_v100.yaml \
+  --csv datasets/head_eye_open/test_v301.csv \
+  --care-classes eye_open_2
+
+# 写入 FiftyOne
+uv run scripts/val_classifier_with_fiftyone.py \
+  --ckpt logs/image_classifiter_from_detect_box_head_eye_open/version_6/checkpoints/epoch=19-val_acc=0.96.ckpt \
+  --config configs/experiments/image_classifiter_from_detect_box_head_eye_open_v100.yaml \
+  --csv datasets/head_eye_open/test_v301.csv \
+  --dataset BBM08S_head \
+  --care-classes eye_open_2 \
+  --write-fo --ver v100
+
+# App 筛错：sample tag pred_eye_v100_bad，或 detection tag v100_ERR
+uv run fiftyone app launch BBM08S_head --address 0.0.0.0 --port 5151
+```
 
 ## 测试
 
