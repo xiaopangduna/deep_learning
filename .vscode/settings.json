@@ -4,5 +4,6 @@
     "python-envs.pythonProjects": [],
     "files.associations": {
         "ostream": "cpp"
-    }
+    },
+    "cmake.sourceDirectory": "/home/huangwenhua/Desktop/project/tools/deep_learning/src/deploy_percept"
 }
