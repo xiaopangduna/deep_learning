@@ -27,7 +27,8 @@ dependencies = [
     "tensorrt-cu12 (==10.15.1.29)",
     "tensorrt-cu12-libs==10.15.1.29",
     "torch-pruning (>=1.6.1,<2.0.0)",
-    "onnxslim (==0.1.65)"
+    "onnxslim (==0.1.65)",
+    "fiftyone>=1.22.1",
 ]
 
 

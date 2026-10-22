@@ -20,7 +20,7 @@ trainer:
       init_args:
         monitor: train_loss
         min_delta: 0.00
-        patience: 10  # 总轮次的 5-10%
+        patience: 20  # 总轮次的 5-10%
         verbose: true
         mode: min
     - class_path: lightning.pytorch.callbacks.ModelCheckpoint
@@ -57,12 +57,12 @@ trainer:
 data:
   class_path: lovely_deep_learning.data_module.image_classifier.ImageClassifierFromDetectBoxDataModule
   init_args:
-    box_scale: 1.2
-    min_side_px: 16
-    train_csv_paths: [datasets/head_eye_open/train_v101.csv]
-    val_csv_paths: [datasets/head_eye_open/test_v101.csv]
-    test_csv_paths: [datasets/head_eye_open/test_v101.csv]
-    predict_csv_paths: [datasets/head_eye_open/test_v101.csv]
+    box_scale: 1.0
+    min_side_px: 128
+    train_csv_paths: [datasets/head_eye_open/train_v301.csv]
+    val_csv_paths: [datasets/head_eye_open/test_v301.csv]
+    test_csv_paths: [datasets/head_eye_open/test_v301.csv]
+    predict_csv_paths: [datasets/head_eye_open/test_v301.csv]
     key_map : {"img_path": "path_img", "class_name": "class_name", "class_id": "class_id", "cx": "cx", "cy": "cy", "w": "w", "h": "h", "img_w": "img_w", "img_h": "img_h"}
     predict_key_map : {"img_path": "path_img", "cx": "cx", "cy": "cy", "w": "w", "h": "h", "img_w": "img_w", "img_h": "img_h"}
     background_ratio: 1.0 # 背景比例,这个得结合background，如果不设置，则实际没有背景，因为训练集和验证集没有背景，所以需要设置背景比例为1.0，这样在训练集和验证集就会生成背景，然后进行训练和验证。
@@ -99,17 +99,7 @@ data:
             init_args:
               mean: [0.485, 0.456, 0.406]
               std: [0.229, 0.224, 0.225]
-          - class_path: torchvision.transforms.v2.RandomErasing
-            init_args:
-              p: 0.25
-              scale:
-              - 0.02
-              - 0.33
-              ratio:
-              - 0.3
-              - 3.3
-              value: 0.0
-              inplace: false
+
     transform_val:
       class_path: torchvision.transforms.v2.Compose
       init_args:
@@ -146,7 +136,7 @@ model:
       class_path: lovely_deep_learning.loss.image_classifier.ImageClassifierCriterion
       init_args:
         label_smoothing: 0.0
-        weight: [0.67, 0.92, 2.41]
+        weight: [0.50, 0.70, 4.00]
     postprocess:
       class_path: lovely_deep_learning.postprocess.image_classifier.ImageClassifierPostProcessor
       init_args:
@@ -156,16 +146,16 @@ model:
       init_args:
         num_classes: 3
     model:
-      model_name: mobilenet_v3_large
+      model_name: mobilenet_v2
       pretrained: true
       weight:
         map_location: cpu
         strict: false
         stages: 
           - format: official
-            path: pretrained_models/mobilenet_v3_large-5c1a4163.pth
+            path: pretrained_models/mobilenet_v2-b0353104.pth
             opts:
-              url: https://download.pytorch.org/models/mobilenet_v3_large-5c1a4163.pth
+              url: https://download.pytorch.org/models/mobilenet_v2-b0353104.pth
               src_key_prefix: layers.
               src_key_slice_start: 0
         # # 剪枝后微调：在 stages 中追加或替换，例如::
@@ -208,56 +198,63 @@ model:
             module: torch.nn.Sequential
             children:
               - name: "0"
-                module: lovely_deep_learning.nn.mobilenet_v3.Conv2dNormActivation
-                args: {in_channels: 3, out_channels: 16, kernel_size: 3, stride: 2, bn_eps: 0.001, bn_momentum: 0.01, activation_layer: hswish}
+                module: lovely_deep_learning.nn.mobilenet_v2.Conv2dNormActivation
+                args: {in_channels: 3, out_channels: 32, kernel_size: 3, stride: 2, activation_layer: relu6}
               - name: "1"
-                module: lovely_deep_learning.nn.mobilenet_v3.InvertedResidual
-                args: {input_channels: 16, kernel: 3, expanded_channels: 16, out_channels: 16, use_se: false, use_hs: false, stride: 1, dilation: 1}
+                module: lovely_deep_learning.nn.mobilenet_v2.InvertedResidual
+                args: {input_channels: 32, output_channels: 16, expand_ratio: 1, stride: 1}
               - name: "2"
-                module: lovely_deep_learning.nn.mobilenet_v3.InvertedResidual
-                args: {input_channels: 16, kernel: 3, expanded_channels: 64, out_channels: 24, use_se: false, use_hs: false, stride: 2, dilation: 1}
+                module: lovely_deep_learning.nn.mobilenet_v2.InvertedResidual
+                args: {input_channels: 16, output_channels: 24, expand_ratio: 6, stride: 2}
               - name: "3"
-                module: lovely_deep_learning.nn.mobilenet_v3.InvertedResidual
-                args: {input_channels: 24, kernel: 3, expanded_channels: 72, out_channels: 24, use_se: false, use_hs: false, stride: 1, dilation: 1}
+                module: lovely_deep_learning.nn.mobilenet_v2.InvertedResidual
+                args: {input_channels: 24, output_channels: 24, expand_ratio: 6, stride: 1}
               - name: "4"
-                module: lovely_deep_learning.nn.mobilenet_v3.InvertedResidual
-                args: {input_channels: 24, kernel: 5, expanded_channels: 72, out_channels: 40, use_se: true, use_hs: false, stride: 2, dilation: 1}
+                module: lovely_deep_learning.nn.mobilenet_v2.InvertedResidual
+                args: {input_channels: 24, output_channels: 32, expand_ratio: 6, stride: 2}
               - name: "5"
-                module: lovely_deep_learning.nn.mobilenet_v3.InvertedResidual
-                args: {input_channels: 40, kernel: 5, expanded_channels: 120, out_channels: 40, use_se: true, use_hs: false, stride: 1, dilation: 1}
+                module: lovely_deep_learning.nn.mobilenet_v2.InvertedResidual
+                args: {input_channels: 32, output_channels: 32, expand_ratio: 6, stride: 1}
               - name: "6"
-                module: lovely_deep_learning.nn.mobilenet_v3.InvertedResidual
-                args: {input_channels: 40, kernel: 5, expanded_channels: 120, out_channels: 40, use_se: true, use_hs: false, stride: 1, dilation: 1}
+                module: lovely_deep_learning.nn.mobilenet_v2.InvertedResidual
+                args: {input_channels: 32, output_channels: 32, expand_ratio: 6, stride: 1}
               - name: "7"
-                module: lovely_deep_learning.nn.mobilenet_v3.InvertedResidual
-                args: {input_channels: 40, kernel: 3, expanded_channels: 240, out_channels: 80, use_se: false, use_hs: true, stride: 2, dilation: 1}
+                module: lovely_deep_learning.nn.mobilenet_v2.InvertedResidual
+                args: {input_channels: 32, output_channels: 64, expand_ratio: 6, stride: 2}
               - name: "8"
-                module: lovely_deep_learning.nn.mobilenet_v3.InvertedResidual
-                args: {input_channels: 80, kernel: 3, expanded_channels: 200, out_channels: 80, use_se: false, use_hs: true, stride: 1, dilation: 1}
+                module: lovely_deep_learning.nn.mobilenet_v2.InvertedResidual
+                args: {input_channels: 64, output_channels: 64, expand_ratio: 6, stride: 1}
               - name: "9"
-                module: lovely_deep_learning.nn.mobilenet_v3.InvertedResidual
-                args: {input_channels: 80, kernel: 3, expanded_channels: 184, out_channels: 80, use_se: false, use_hs: true, stride: 1, dilation: 1}
+                module: lovely_deep_learning.nn.mobilenet_v2.InvertedResidual
+                args: {input_channels: 64, output_channels: 64, expand_ratio: 6, stride: 1}
               - name: "10"
-                module: lovely_deep_learning.nn.mobilenet_v3.InvertedResidual
-                args: {input_channels: 80, kernel: 3, expanded_channels: 184, out_channels: 80, use_se: false, use_hs: true, stride: 1, dilation: 1}
+                module: lovely_deep_learning.nn.mobilenet_v2.InvertedResidual
+                args: {input_channels: 64, output_channels: 64, expand_ratio: 6, stride: 1}
               - name: "11"
-                module: lovely_deep_learning.nn.mobilenet_v3.InvertedResidual
-                args: {input_channels: 80, kernel: 3, expanded_channels: 480, out_channels: 112, use_se: true, use_hs: true, stride: 1, dilation: 1}
+                module: lovely_deep_learning.nn.mobilenet_v2.InvertedResidual
+                args: {input_channels: 64, output_channels: 96, expand_ratio: 6, stride: 1}
               - name: "12"
-                module: lovely_deep_learning.nn.mobilenet_v3.InvertedResidual
-                args: {input_channels: 112, kernel: 3, expanded_channels: 672, out_channels: 112, use_se: true, use_hs: true, stride: 1, dilation: 1}
+                module: lovely_deep_learning.nn.mobilenet_v2.InvertedResidual
+                args: {input_channels: 96, output_channels: 96, expand_ratio: 6, stride: 1}
               - name: "13"
-                module: lovely_deep_learning.nn.mobilenet_v3.InvertedResidual
-                args: {input_channels: 112, kernel: 5, expanded_channels: 672, out_channels: 160, use_se: true, use_hs: true, stride: 2, dilation: 1}
+                module: lovely_deep_learning.nn.mobilenet_v2.InvertedResidual
+                args: {input_channels: 96, output_channels: 96, expand_ratio: 6, stride: 1}
               - name: "14"
-                module: lovely_deep_learning.nn.mobilenet_v3.InvertedResidual
-                args: {input_channels: 160, kernel: 5, expanded_channels: 960, out_channels: 160, use_se: true, use_hs: true, stride: 1, dilation: 1}
+                module: lovely_deep_learning.nn.mobilenet_v2.InvertedResidual
+                args: {input_channels: 96, output_channels: 160, expand_ratio: 6, stride: 2}
               - name: "15"
-                module: lovely_deep_learning.nn.mobilenet_v3.InvertedResidual
-                args: {input_channels: 160, kernel: 5, expanded_channels: 960, out_channels: 160, use_se: true, use_hs: true, stride: 1, dilation: 1}
+                module: lovely_deep_learning.nn.mobilenet_v2.InvertedResidual
+                args: {input_channels: 160, output_channels: 160, expand_ratio: 6, stride: 1}
               - name: "16"
-                module: lovely_deep_learning.nn.mobilenet_v3.Conv2dNormActivation
-                args: {in_channels: 160, out_channels: 960, kernel_size: 1, stride: 1, bn_eps: 0.001, bn_momentum: 0.01, activation_layer: hswish}
+                module: lovely_deep_learning.nn.mobilenet_v2.InvertedResidual
+                args: {input_channels: 160, output_channels: 160, expand_ratio: 6, stride: 1}
+              - name: "17"
+                module: lovely_deep_learning.nn.mobilenet_v2.InvertedResidual
+                args: {input_channels: 160, output_channels: 320, expand_ratio: 6, stride: 1}
+              - name: "18"
+                module: lovely_deep_learning.nn.mobilenet_v2.Conv2dNormActivation
+                args: {in_channels: 320, out_channels: 1280, kernel_size: 1, stride: 1, activation_layer: relu6}
+
           - name: avgpool
             from: [features]
             module: torch.nn.AdaptiveAvgPool2d
@@ -270,7 +267,5 @@ model:
             from: [flatten]
             module: torch.nn.Sequential
             children:
-              - {name: "0", module: torch.nn.Linear, args: {in_features: 960, out_features: 1280}}
-              - {name: "1", module: torch.nn.Hardswish, args: {inplace: true}}
-              - {name: "2", module: torch.nn.Dropout, args: {p: 0.2, inplace: true}}
-              - {name: "3", module: torch.nn.Linear, args: {in_features: 1280, out_features: 3}}
+              - {name: "0", module: torch.nn.Dropout, args: {p: 0.2}}
+              - {name: "1", module: torch.nn.Linear, args: {in_features: 1280, out_features: 3}}
