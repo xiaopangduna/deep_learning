@@ -196,9 +196,10 @@ class ImageClassifierDataset(BaseDataset):
         else:
             # 情况3: 标准化的tensor，需要反标准化
             if self.norm_mean is not None and self.norm_std is not None:
-                # 反归一化: img * std + mean
-                mean = torch.tensor(self.norm_mean).view(3, 1, 1)
-                std = torch.tensor(self.norm_std).view(3, 1, 1)
+                # 反归一化: img * std + mean（通道数随 norm_mean/norm_std 长度，支持 1/3 通道）
+                c = len(self.norm_mean)
+                mean = torch.tensor(self.norm_mean).view(c, 1, 1)
+                std = torch.tensor(self.norm_std).view(c, 1, 1)
                 img = img * std + mean
             # 确保值在合理范围内
             img_clamped = torch.clamp(img, 0, 1)

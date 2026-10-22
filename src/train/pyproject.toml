@@ -22,13 +22,13 @@ dependencies = [
     "torchmetrics (>=1.3.0,<2.0.0)",
     "pycocotools (>=2.0.8)",
     "onnx (==1.16.1)",
-    "onnxruntime-gpu (==1.13.1)",
     "netron (>=9.0.1,<10.0.0)",
     "tensorrt-cu12 (==10.15.1.29)",
     "tensorrt-cu12-libs==10.15.1.29",
     "torch-pruning (>=1.6.1,<2.0.0)",
     "onnxslim (==0.1.65)",
     "fiftyone>=1.22.1",
+    "onnxruntime==1.23.2",
 ]
 
 
@@ -40,6 +40,9 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 include = ["lovely_deep_learning*"]
 namespaces = true
+
+[[tool.uv.index]]
+url = "https://pypi.org/simple"
 
 [[tool.uv.index]]
 name = "tuna"

@@ -1,0 +1,277 @@
+# 人/车框级分类。CSV 保留全部 COCO 类别；人和车、短边过滤在 Dataset 里做。
+#   python scripts/yolo_to_box_crop_csv.py --train-csv datasets/COCO/train.csv --val-csv datasets/COCO/val.csv --out-dir datasets/COCO_class
+#   python scripts/train.py fit --config configs/experiments/box_crop_person_car_COCO.yaml
+# 模型、损失、指标沿用 ImageClassifierModule。分类头输出 2 类。
+
+trainer:
+  max_epochs: 50 # 随机初始化500，微调50
+  accelerator: auto
+  accumulate_grad_batches: 8
+  callbacks:
+    - class_path: lovely_deep_learning.callback.image_classifier.LogImageClassifierTrainValVisualizationCallback
+      init_args:
+        max_images: 9
+        nrow: 3
+    - class_path: lovely_deep_learning.callback.image_classifier.SaveImageClassifierTestPredictVisualizationCallback
+      init_args:
+        save_dir: null      # null：写入本次 test 的 logger 目录 logs/.../version_N
+        test_only_save_mistake: true  # 只保存预测错误的样本，按 真值__预测 分目录
+    - class_path: lightning.pytorch.callbacks.EarlyStopping
+      init_args:
+        monitor: train_loss
+        min_delta: 0.00
+        patience: 20  # 总轮次的 5-10%
+        verbose: true
+        mode: min
+    - class_path: lightning.pytorch.callbacks.ModelCheckpoint
+      init_args:
+        monitor: "val_acc"
+        filename: "{epoch:02d}-{val_acc:.2f}"
+        save_top_k: 1
+        save_last: true
+        mode: max
+    - class_path: lightning.pytorch.callbacks.LearningRateMonitor
+      init_args:
+        logging_interval: epoch   # 可选: "step" / "epoch" / null
+        log_momentum: false      # 是否记录 momentum（一般不用）
+        log_weight_decay: false  # 是否记录 weight decay
+    # 冻结训练,随机初始化则不冻结，剪枝后不冻结
+    - class_path: lovely_deep_learning.callback.finetuning.DAGNetMilestoneUnfreezeFinetuning
+      init_args:
+        unfreeze_layers: ["classifier"]   # 自始可训的层（少）；其余 DAGNet.layers 先冻，到 unfreeze_epoch 一并解冻
+        unfreeze_epoch: 20           # 微调与max_epochs一致,剪枝后不冻结
+
+  logger:
+    - class_path: lightning.pytorch.loggers.TensorBoardLogger
+      init_args:
+        save_dir: logs
+        name: image_classifiter_from_detect_box_head_eye_open  
+        version: null
+  # profiler:
+  #   class_path: lightning.pytorch.profilers.SimpleProfiler
+  #   init_args:
+  #     filename: profiler
+  #     extended: true
+
+
+data:
+  class_path: lovely_deep_learning.data_module.image_classifier.ImageClassifierFromDetectBoxDataModule
+  init_args:
+    box_scale: 1.0
+    min_side_px: 128
+    train_csv_paths: [datasets/head_eye_open/train_v301.csv]
+    val_csv_paths: [datasets/head_eye_open/test_v301.csv]
+    test_csv_paths: [datasets/head_eye_open/test_v301.csv]
+    predict_csv_paths: [datasets/head_eye_open/test_v301.csv]
+    key_map : {"img_path": "path_img", "class_name": "class_name", "class_id": "class_id", "cx": "cx", "cy": "cy", "w": "w", "h": "h", "img_w": "img_w", "img_h": "img_h"}
+    predict_key_map : {"img_path": "path_img", "cx": "cx", "cy": "cy", "w": "w", "h": "h", "img_w": "img_w", "img_h": "img_h"}
+    background_ratio: 1.0 # 背景比例,这个得结合background，如果不设置，则实际没有背景，因为训练集和验证集没有背景，所以需要设置背景比例为1.0，这样在训练集和验证集就会生成背景，然后进行训练和验证。
+    background_iou: 0.3   # 背景与框的IoU阈值,
+    # 原始 class_id 合并成训练标签。键须为 0..组数-1；未列出的原始类丢掉。
+    class_groups:
+      0: background
+      1: [0, 1]
+      2: [2]
+
+    norm_mean : [0.449]  # 单通道；须与 transform 中 Normalize 一致（ImageNet RGB 均值近似）
+    norm_std : [0.226]  # 单通道；须与 transform 中 Normalize 一致
+    batch_size: 64
+    num_workers: 8  # nproc 查看cpu核心数;先单核找到最大的batch_size，然后batch_size减少，提高num_workers,num_workers可以先用一半的cpu核心数
+    transform_train:
+      class_path: torchvision.transforms.v2.Compose
+      init_args:
+        transforms:
+          - class_path: lovely_deep_learning.transforms.letterbox.LetterBox
+            init_args:
+              size: [224, 224]
+              fill: 114
+              center: true
+              scaleup: true
+              interpolation: 2
+          - class_path: torchvision.transforms.v2.RandomHorizontalFlip
+            init_args:
+              p: 0.5
+          - class_path: torchvision.transforms.v2.Grayscale
+            init_args:
+              num_output_channels: 1
+          - class_path: torchvision.transforms.v2.ToDtype
+            init_args:
+              dtype: torch.float32
+              scale: true
+          - class_path: torchvision.transforms.v2.Normalize
+            init_args:
+              mean: [0.449]
+              std: [0.226]
+
+    transform_val:
+      class_path: torchvision.transforms.v2.Compose
+      init_args:
+        transforms:
+          - class_path: lovely_deep_learning.transforms.letterbox.LetterBox
+            init_args:
+              size: [224, 224]
+              fill: 114
+              center: true
+              scaleup: true
+              interpolation: 2
+          - class_path: torchvision.transforms.v2.Grayscale
+            init_args:
+              num_output_channels: 1
+          - class_path: torchvision.transforms.v2.ToDtype
+            init_args:
+              dtype: torch.float32
+              scale: true
+          - class_path: torchvision.transforms.v2.Normalize
+            init_args:
+              mean: [0.449]
+              std: [0.226]
+          
+model:
+  class_path: lovely_deep_learning.module.image_classifier.ImageClassifierModule
+  init_args:
+    optimizer:
+      class_path: torch.optim.RAdam
+      init_args:
+        lr: 1e-2 # 随机初始化1e-2,微调1e-2，剪枝
+    lr_scheduler:
+      class_path: torch.optim.lr_scheduler.CosineAnnealingLR
+      init_args:
+        T_max: 50  # 一般等于max_epochs
+        eta_min: 1.0e-4 # 随机初始化1e-4,微调1e-4
+    criterion:
+      class_path: lovely_deep_learning.loss.image_classifier.ImageClassifierCriterion
+      init_args:
+        label_smoothing: 0.0
+        weight: [0.50, 0.70, 4.00]
+    postprocess:
+      class_path: lovely_deep_learning.postprocess.image_classifier.ImageClassifierPostProcessor
+      init_args:
+        temperature: 1.0
+    metrics:
+      class_path: lovely_deep_learning.metric.image_classifier.ImageClassifierMetric
+      init_args:
+        num_classes: 3
+    model:
+      model_name: mobilenet_v2
+      pretrained: true
+      weight:
+        map_location: cpu
+        strict: false
+        stages: 
+          - format: official
+            path: pretrained_models/mobilenet_v2-b0353104.pth
+            opts:
+              url: https://download.pytorch.org/models/mobilenet_v2-b0353104.pth
+              src_key_prefix: layers.
+              src_key_slice_start: 0
+        # # 剪枝后微调：在 stages 中追加或替换，例如::
+          # - format: torch_pruning
+          #   path: logs/image_classifiter_IMAGE_NETTE/unfreeze/checkpoints/pruning0p25_epoch=27-val_acc=0.99.pth
+      exporter:
+        class_path: lovely_deep_learning.export.base.BaseExporter
+        init_args:
+          onnx_cfg:
+            input_shape: [1, 1, 224, 224]
+            path_save_onnx: null  # 如果不指定，则与pt同路径
+            cfg_for_torch_onnx_export:
+              export_params: true
+              opset_version: 17
+              input_names: ["images"]
+              output_names: ["classification"]
+          trt_cfg: {}
+      pruner:
+        class_path: lovely_deep_learning.pruning.image_classifier.ImageClassifierPruner
+        init_args:
+          ignored_layer_names: [classifier]  # DAGNet.layers 顶层键，非 torch_pruning 参数
+          importance_cfg:
+            class_name: GroupMagnitudeImportance
+            init_args:
+              p: 1
+          tp_pruner_cfg:
+            class_name: GroupNormPruner
+            init_args:
+              pruning_ratio: 0.25
+              global_pruning: false
+              round_to: null
+              iterative_steps: 1
+
+      structure:
+        inputs: [{name: input, shape: [1, 224, 224]}]
+        outputs: [{name: classification, from: [classifier]}]
+        layers:
+          - name: features
+            from: [input]
+            module: torch.nn.Sequential
+            children:
+              - name: "0"
+                module: lovely_deep_learning.nn.mobilenet_v2.Conv2dNormActivation
+                args: {in_channels: 1, out_channels: 32, kernel_size: 3, stride: 2, activation_layer: relu6}
+              - name: "1"
+                module: lovely_deep_learning.nn.mobilenet_v2.InvertedResidual
+                args: {input_channels: 32, output_channels: 16, expand_ratio: 1, stride: 1}
+              - name: "2"
+                module: lovely_deep_learning.nn.mobilenet_v2.InvertedResidual
+                args: {input_channels: 16, output_channels: 24, expand_ratio: 6, stride: 2}
+              - name: "3"
+                module: lovely_deep_learning.nn.mobilenet_v2.InvertedResidual
+                args: {input_channels: 24, output_channels: 24, expand_ratio: 6, stride: 1}
+              - name: "4"
+                module: lovely_deep_learning.nn.mobilenet_v2.InvertedResidual
+                args: {input_channels: 24, output_channels: 32, expand_ratio: 6, stride: 2}
+              - name: "5"
+                module: lovely_deep_learning.nn.mobilenet_v2.InvertedResidual
+                args: {input_channels: 32, output_channels: 32, expand_ratio: 6, stride: 1}
+              - name: "6"
+                module: lovely_deep_learning.nn.mobilenet_v2.InvertedResidual
+                args: {input_channels: 32, output_channels: 32, expand_ratio: 6, stride: 1}
+              - name: "7"
+                module: lovely_deep_learning.nn.mobilenet_v2.InvertedResidual
+                args: {input_channels: 32, output_channels: 64, expand_ratio: 6, stride: 2}
+              - name: "8"
+                module: lovely_deep_learning.nn.mobilenet_v2.InvertedResidual
+                args: {input_channels: 64, output_channels: 64, expand_ratio: 6, stride: 1}
+              - name: "9"
+                module: lovely_deep_learning.nn.mobilenet_v2.InvertedResidual
+                args: {input_channels: 64, output_channels: 64, expand_ratio: 6, stride: 1}
+              - name: "10"
+                module: lovely_deep_learning.nn.mobilenet_v2.InvertedResidual
+                args: {input_channels: 64, output_channels: 64, expand_ratio: 6, stride: 1}
+              - name: "11"
+                module: lovely_deep_learning.nn.mobilenet_v2.InvertedResidual
+                args: {input_channels: 64, output_channels: 96, expand_ratio: 6, stride: 1}
+              - name: "12"
+                module: lovely_deep_learning.nn.mobilenet_v2.InvertedResidual
+                args: {input_channels: 96, output_channels: 96, expand_ratio: 6, stride: 1}
+              - name: "13"
+                module: lovely_deep_learning.nn.mobilenet_v2.InvertedResidual
+                args: {input_channels: 96, output_channels: 96, expand_ratio: 6, stride: 1}
+              - name: "14"
+                module: lovely_deep_learning.nn.mobilenet_v2.InvertedResidual
+                args: {input_channels: 96, output_channels: 160, expand_ratio: 6, stride: 2}
+              - name: "15"
+                module: lovely_deep_learning.nn.mobilenet_v2.InvertedResidual
+                args: {input_channels: 160, output_channels: 160, expand_ratio: 6, stride: 1}
+              - name: "16"
+                module: lovely_deep_learning.nn.mobilenet_v2.InvertedResidual
+                args: {input_channels: 160, output_channels: 160, expand_ratio: 6, stride: 1}
+              - name: "17"
+                module: lovely_deep_learning.nn.mobilenet_v2.InvertedResidual
+                args: {input_channels: 160, output_channels: 320, expand_ratio: 6, stride: 1}
+              - name: "18"
+                module: lovely_deep_learning.nn.mobilenet_v2.Conv2dNormActivation
+                args: {in_channels: 320, out_channels: 1280, kernel_size: 1, stride: 1, activation_layer: relu6}
+
+          - name: avgpool
+            from: [features]
+            module: torch.nn.AdaptiveAvgPool2d
+            args: {output_size: 1}
+          - name: flatten
+            from: [avgpool]
+            module: torch.nn.Flatten
+            args: {start_dim: 1}
+          - name: classifier
+            from: [flatten]
+            module: torch.nn.Sequential
+            children:
+              - {name: "0", module: torch.nn.Dropout, args: {p: 0.2}}
+              - {name: "1", module: torch.nn.Linear, args: {in_features: 1280, out_features: 3}}

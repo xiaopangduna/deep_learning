@@ -282,12 +282,18 @@ class BaseDataset(Dataset):
 
     @staticmethod
     def convert_img_from_tensor_to_numpy_uint8(img: torch.Tensor) -> np.ndarray:
-        """RGB ``(C, H, W)`` uint8 张量转为 BGR ``(H, W, C)`` uint8 数组。"""
+        """``(C, H, W)`` uint8 张量转为 BGR ``(H, W, 3)`` uint8 数组。
+
+        支持 RGB（C=3）与灰度（C=1）；灰度会扩成 3 通道便于可视化画框/写字。
+        """
         img = img.detach().cpu()
         img_np = img.permute(1, 2, 0).numpy()
         img_np = img_np.astype(np.uint8)
 
-        img_np = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
+        if img_np.shape[2] == 1:
+            img_np = cv2.cvtColor(img_np, cv2.COLOR_GRAY2BGR)
+        else:
+            img_np = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
 
         return img_np
 
