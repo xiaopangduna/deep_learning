@@ -73,8 +73,9 @@ data:
       1: [0, 1]
       2: [2]
 
-    norm_mean : [0.449]  # 单通道；须与 transform 中 Normalize 一致（ImageNet RGB 均值近似）
-    norm_std : [0.226]  # 单通道；须与 transform 中 Normalize 一致
+    # 暂不使用 mean/std 标准化，仅 ToDtype(scale=true) 除以 255 到 [0,1]
+    # norm_mean : [0.449]  # 单通道；须与 transform 中 Normalize 一致（ImageNet RGB 均值近似）
+    # norm_std : [0.226]  # 单通道；须与 transform 中 Normalize 一致
     batch_size: 64
     num_workers: 8  # nproc 查看cpu核心数;先单核找到最大的batch_size，然后batch_size减少，提高num_workers,num_workers可以先用一半的cpu核心数
     transform_train:
@@ -97,11 +98,11 @@ data:
           - class_path: torchvision.transforms.v2.ToDtype
             init_args:
               dtype: torch.float32
-              scale: true
-          - class_path: torchvision.transforms.v2.Normalize
-            init_args:
-              mean: [0.449]
-              std: [0.226]
+              scale: true  # /255 → [0,1]
+          # - class_path: torchvision.transforms.v2.Normalize
+          #   init_args:
+          #     mean: [0.449]
+          #     std: [0.226]
 
     transform_val:
       class_path: torchvision.transforms.v2.Compose
@@ -120,12 +121,12 @@ data:
           - class_path: torchvision.transforms.v2.ToDtype
             init_args:
               dtype: torch.float32
-              scale: true
-          - class_path: torchvision.transforms.v2.Normalize
-            init_args:
-              mean: [0.449]
-              std: [0.226]
-          
+              scale: true  # /255 → [0,1]
+          # - class_path: torchvision.transforms.v2.Normalize
+          #   init_args:
+          #     mean: [0.449]
+          #     std: [0.226]
+
 model:
   class_path: lovely_deep_learning.module.image_classifier.ImageClassifierModule
   init_args:
