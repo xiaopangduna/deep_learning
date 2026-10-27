@@ -145,7 +145,7 @@ bash convert.sh -a detection/yolov8 -c config/detection_yolov8.cfg -p ../SGS_IPU
 转换产物：`OpenDLAModel_20250721/output/pcupid_<日期>/`，例如 `yolov8n_640x640.img`。  
 仿真产物：`detection/yolov8/log/output/unknown_yolov8n_float.sim_<图片名>.txt`（同一天目录名才对得上 float.sim）。
 
-本项目自有转换配置放 `exports/sigmastar/<模型名>/`，不要改 `sdk/` 里的原厂示例。
+本项目自有转换配置放 `exports/sigmastar/<模型名>/`，不要改 `sdk/` 里的原厂示例。MobileNetV2 分类在 `exports/sigmastar/mobilenet_v2/`，用 `-c` 选择灰度或 RGB 配置，省略 `-a` 和 `-d`。
 
 ### 一键转换（Quick Start）
 

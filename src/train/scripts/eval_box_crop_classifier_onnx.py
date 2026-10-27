@@ -3,7 +3,9 @@
 """原图 + CSV → ONNX 分类 dump（列格式与板端 dump 一致）。
 
 预处理对齐 ``ImageClassifierFromDetectBoxDataset`` / 训练 transform_val：
-  BGR 读图 → crop_cxcywh(box_scale) → LetterBox(fill=114) → RGB /255 → ImageNet Normalize
+  BGR 读图 → crop_cxcywh(box_scale) → LetterBox(fill=114)
+  3 通道：RGB /255 → ImageNet Normalize
+  1 通道（灰度实验）：RGB uint8 → Grayscale(1) → /255，不做 mean/std
 
 默认标签映射 A（与 ``image_classifiter_from_detect_box_head_eye_open`` 的 class_groups 一致）：
   CSV class_id 0/1 → gt_id=1，2 → gt_id=2。不合成 background。
@@ -90,13 +92,19 @@ def preprocess_bgr(
     box_scale: float,
     model_w: int,
     model_h: int,
+    in_channels: int,
 ) -> np.ndarray:
     crop = ImageClassifierFromDetectBoxDataset.crop_cxcywh(bgr, cx, cy, w, h, box_scale)
     letterboxed = letterbox_bgr(crop, model_w, model_h, LETTERBOX_FILL)
-    # 与 Dataset：BGR → RGB CHW uint8 → float /255 → Normalize
+    # 与 Dataset：BGR → RGB CHW uint8。灰度在 uint8 上做，与 torchvision Grayscale 截断一致。
     img_tv = BaseDataset.convert_img_from_numpy_to_tensor_uint8(letterboxed)
+    if in_channels == 1:
+        img_tv = F.rgb_to_grayscale(img_tv, num_output_channels=1)
+    elif in_channels != 3:
+        raise ValueError(f"unsupported input channels: {in_channels}")
     img_tv = F.to_dtype(img_tv, dtype=torch.float32, scale=True)
-    img_tv = F.normalize(img_tv, mean=list(IMAGENET_MEAN), std=list(IMAGENET_STD))
+    if in_channels == 3:
+        img_tv = F.normalize(img_tv, mean=list(IMAGENET_MEAN), std=list(IMAGENET_STD))
     return img_tv.unsqueeze(0).contiguous().numpy()
 
 
@@ -136,15 +144,19 @@ def main() -> int:
     input_meta = session.get_inputs()[0]
     input_name = input_meta.name
     shape = input_meta.shape
+    in_channels = int(shape[1]) if isinstance(shape[1], int) else 3
     model_h = int(shape[2]) if isinstance(shape[2], int) else 224
     model_w = int(shape[3]) if isinstance(shape[3], int) else 224
+    if in_channels not in (1, 3):
+        print(f"unsupported input channels: {in_channels}", file=sys.stderr)
+        return 1
 
     print("eval_box_crop_classifier_onnx.py")
     print(f"  model     : {model_path}")
     print(f"  csv       : {csv_path}")
     print(f"  out       : {args.out}")
     print(f"  box-scale : {args.box_scale}")
-    print(f"  input     : {input_name} {[1, 3, model_h, model_w]}")
+    print(f"  input     : {input_name} {[1, in_channels, model_h, model_w]}")
 
     ok_count = 0
     skip_count = 0
@@ -189,6 +201,7 @@ def main() -> int:
                 args.box_scale,
                 model_w,
                 model_h,
+                in_channels,
             )
             outputs = session.run(None, {input_name: tensor})
             logits = np.asarray(outputs[0], dtype=np.float32).reshape(-1)
