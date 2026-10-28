@@ -125,11 +125,34 @@ def test_exact_group_match_without_care(vc):
     )
 
 
-def test_yolo_to_fo_box(vc):
-    assert vc.yolo_cxcywh_to_fo_box(0.5, 0.5, 0.2, 0.4) == pytest.approx([0.4, 0.3, 0.2, 0.4])
+def test_pred_tag_for_closed_open_and_background(vc):
+    groups = {1: [0, 1], 2: [2]}
+    assert vc.pred_tag_for_group(0, groups, 0) == "pred_background"
+    assert vc.pred_tag_for_group(1, groups, 0) == "pred_eye_open_0"
+    assert vc.pred_tag_for_group(2, groups, 0) == "pred_eye_open_2"
 
 
-def test_pred_field_and_tags(vc):
-    assert vc.pred_field_name("v100") == "pred_eye_v100"
-    assert vc.det_tag("v100", "ERR") == "v100_ERR"
-    assert vc.sample_tag_bad("v100") == "pred_eye_v100_bad"
+def test_apply_eval_tags_keeps_ground_truth_tags(vc):
+    tags = vc.apply_eval_tags(
+        ["eye_open_0", "changed", "eval_ok", "pred_eye_open_2"],
+        is_err=True,
+        pred_tag="pred_eye_open_0",
+    )
+    assert tags == ["eye_open_0", "changed", "eval_err", "pred_eye_open_0"]
+    correct = vc.apply_eval_tags(
+        ["eye_open_2", "eval_ok", "pred_eye_open_0"],
+        is_err=False,
+        pred_tag="pred_eye_open_2",
+    )
+    assert correct == ["eye_open_2", "pred_eye_open_2"]
+    assert vc.strip_eval_tags(["eye_open_1", "eval_err", "pred_background", "ignore"]) == [
+        "eye_open_1",
+        "ignore",
+    ]
+
+
+def test_eye_open_code_uses_highest_and_defaults_to_zero(vc):
+    assert vc.eye_open_code(None) == 0
+    assert vc.eye_open_code(["ignore"]) == 0
+    assert vc.eye_open_code(["eye_open_1", "eye_open_2"]) == 2
+    assert vc.eye_class_name("head", 0) == "head-eye_open_0"

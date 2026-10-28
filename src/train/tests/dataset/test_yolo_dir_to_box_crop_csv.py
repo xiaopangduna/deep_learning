@@ -44,10 +44,10 @@ def test_convert_one_csv_resolves_symlink_and_skips_empty(tmp_path: Path):
     Image.new("RGB", (20, 10), color=(4, 5, 6)).save(real_image)
     data_root = tmp_path / "yolo"
     _write_dataset(data_root, real_image)
-    out_csv = tmp_path / "out" / "train.csv"
 
-    _mod.convert(data_root, out_csv)
+    _mod.convert(data_root)
 
+    out_csv = data_root / "train_v011.csv"
     table = pd.read_csv(out_csv)
     assert list(table.columns) == _mod.LABEL_COLUMNS
     assert len(table) == 3
@@ -60,10 +60,29 @@ def test_convert_one_csv_resolves_symlink_and_skips_empty(tmp_path: Path):
     assert "empty" not in "".join(table["path_img"])
 
 
-def test_split_required_when_multiple(tmp_path: Path):
+def test_convert_writes_one_csv_per_split(tmp_path: Path):
+    real_image = tmp_path / "source.jpg"
+    Image.new("RGB", (4, 4), color=(0, 0, 0)).save(real_image)
+    data_root = tmp_path / "yolo"
+    _write_dataset(data_root, real_image)
+    test_images = data_root / "images" / "test_v301"
+    test_labels = data_root / "labels" / "test_v301"
+    test_images.mkdir()
+    test_labels.mkdir()
+    (test_images / "b.jpg").symlink_to(real_image)
+    (test_labels / "b.txt").write_text("1 0.5 0.5 0.2 0.2\n", encoding="utf-8")
+
+    _mod.convert(data_root)
+
+    assert (data_root / "train_v011.csv").is_file()
+    test_table = pd.read_csv(data_root / "test_v301.csv")
+    assert len(test_table) == 1
+    assert test_table.iloc[0]["class_name"] == "head-age_1"
+
+
+def test_unpaired_split_raises(tmp_path: Path):
     data_root = tmp_path / "yolo"
     (data_root / "images" / "a").mkdir(parents=True)
-    (data_root / "images" / "b").mkdir()
-    (data_root / "dataset.yaml").write_text("names:\n  0: a\n", encoding="utf-8")
-    with pytest.raises(ValueError, match="--split"):
-        _mod.resolve_split(data_root, None)
+    (data_root / "labels" / "b").mkdir(parents=True)
+    with pytest.raises(FileNotFoundError, match="划分不一致"):
+        _mod.list_splits(data_root)

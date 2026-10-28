@@ -1,36 +1,31 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""对 GT 框跑分类器，可选写入 FiftyOne（``pred_eye_<ver>`` + OK/ERR tags）。
+"""对 FiftyOne 里已有的头框打分，可选把结果写回这些真值框的 tag。
 
-样本用原图 SHA-256 对齐数据集 ``sha256`` 字段。默认只打分；``--write-fo --ver``
-才改库。``--care-classes`` 指定关注类时，ERR 按「是否属于 care」的 XOR 判定
-（如只关心 ``eye_open_2``）；未指定则在训练组空间一一对应。
+``--sample-tags`` 选图。眼睛真值读框上的 ``eye_open_*``，多个时取最大编号，
+没有则视为 ``eye_open_0``。不改 ``eye_open_*`` 和 ``changed``。默认只打分；
+``--write-fo`` 才写回原框。判错写 ``eval_err`` 以及 ``pred_eye_open_<n>``
+或 ``pred_background``；判对只写预测标签，不写 ``eval_ok``。再次写入会清掉旧的
+``eval_ok``。``--care-classes`` 指定关注类时，ERR 按「是否属于 care」
+的 XOR 判定（如只关心 ``eye_open_2``）；未指定则在训练组空间一一对应。
 
 示例::
 
-    # 只打分（不写 FO）
-    uv run scripts/val_classifier_with_fiftyone.py \\
-        --ckpt logs/image_classifiter_from_detect_box_head_eye_open/version_6/checkpoints/epoch=19-val_acc=0.96.ckpt \\
-        --config configs/experiments/image_classifiter_from_detect_box_head_eye_open_v100.yaml \\
-        --csv datasets/head_eye_open/test_v301.csv \\
-        --care-classes eye_open_2
-
-    # 写入 BBM08S_head（本机已有 mongod 时默认连 27017）
-    export FIFTYONE_DATABASE_URI=mongodb://127.0.0.1:27017   # 可选
+    export FIFTYONE_DATABASE_URI=mongodb://127.0.0.1:27017   # 可选，本机已有 mongod 时脚本会默认连上
     uv run scripts/val_classifier_with_fiftyone.py \\
         --ckpt logs/.../epoch=19-val_acc=0.96.ckpt \\
         --config configs/experiments/image_classifiter_from_detect_box_head_eye_open_v100.yaml \\
-        --csv datasets/head_eye_open/test_v301.csv \\
         --dataset BBM08S_head \\
+        --sample-tags test_v301 \\
+        --box-labels head \\
         --care-classes eye_open_2 \\
-        --write-fo --ver v100
+        --write-fo
 """
 
 from __future__ import annotations
 
 import argparse
 import copy
-import hashlib
 import json
 import os
 import sys
@@ -38,7 +33,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import pandas as pd
 import torch
@@ -55,16 +50,21 @@ from lovely_deep_learning.dataset.image_classifier import (
 )
 
 ROOT = Path(__file__).resolve().parents[1]
-SHA256_CHUNK_SIZE = 1024 * 1024
-VERSION_DET_TAGS = ("OK", "ERR")
+EYE_TAG_PREFIX = "eye_open_"
+EVAL_OK = "eval_ok"
+EVAL_ERR = "eval_err"
+PRED_TAG_PREFIX = "pred_eye_open_"
+PRED_BACKGROUND = "pred_background"
+DEFAULT_EXCLUDE_TAGS = ("dup_repeat_drop", "dup_near_drop")
 
 
 @dataclass
 class BoxPrediction:
     """One GT-box classification result."""
 
+    sample_id: str
+    detection_id: str
     img_path: Path
-    sha256: str
     cx: float
     cy: float
     w: float
@@ -74,6 +74,7 @@ class BoxPrediction:
     gt_group_id: int
     pred_group_id: int
     pred_group_name: str
+    pred_tag: str
     pred_conf: float
     is_err: bool
 
@@ -134,45 +135,79 @@ def nonempty(value: str) -> str:
     return stripped
 
 
-def parse_ver(value: str) -> str:
-    stripped = value.strip()
-    if not stripped or "/" in stripped or "\\" in stripped or stripped in {".", ".."}:
-        raise argparse.ArgumentTypeError("--ver must be a short token like v100")
-    if stripped.startswith("pred_"):
-        raise argparse.ArgumentTypeError("--ver should be like v100 (pred_eye_ prefix is added automatically)")
-    return stripped
+def comma_names(value: str) -> list[str]:
+    names = [part.strip() for part in value.replace("，", ",").split(",") if part.strip()]
+    if not names:
+        raise argparse.ArgumentTypeError("provide at least one name")
+    if len(names) != len(set(names)):
+        raise argparse.ArgumentTypeError("duplicate names are not allowed")
+    return names
 
 
-def compute_sha256_hex(file_path: Path) -> str:
-    digest = hashlib.sha256()
-    with file_path.open("rb") as handle:
-        while True:
-            chunk = handle.read(SHA256_CHUNK_SIZE)
-            if not chunk:
-                break
-            digest.update(chunk)
-    return digest.hexdigest()
+def comma_names_optional(value: str) -> list[str]:
+    return [part.strip() for part in value.replace("，", ",").split(",") if part.strip()]
 
 
-def pred_field_name(ver: str) -> str:
-    return f"pred_eye_{ver}"
+def eye_open_code(tags: object) -> int:
+    """框上 ``eye_open_<n>`` 的最大 n。没有这种标签时返回 0。"""
+    codes: list[int] = []
+    for tag in tags or []:
+        if not isinstance(tag, str) or not tag.startswith(EYE_TAG_PREFIX):
+            continue
+        suffix = tag[len(EYE_TAG_PREFIX) :]
+        if suffix.isdigit():
+            codes.append(int(suffix))
+    if not codes:
+        return 0
+    return max(codes)
 
 
-def det_tag(ver: str, kind: str) -> str:
-    return f"{ver}_{kind}"
+def eye_class_name(label: str, code: int) -> str:
+    return f"{label}-eye_open_{code}"
 
 
-def sample_tag_ok(ver: str) -> str:
-    return f"pred_eye_{ver}_ok"
+def fo_xywh_to_yolo_cxcywh(box: list[float]) -> tuple[float, float, float, float]:
+    x, y, width, height = (float(value) for value in box)
+    return x + width / 2.0, y + height / 2.0, width, height
 
 
-def sample_tag_bad(ver: str) -> str:
-    return f"pred_eye_{ver}_bad"
+def is_eval_tag(tag: object) -> bool:
+    """评估写在真值框上的标签。不含 ``eye_open_*`` 和 ``changed``。"""
+    if not isinstance(tag, str):
+        return False
+    if tag in {EVAL_OK, EVAL_ERR, PRED_BACKGROUND}:
+        return True
+    if tag.startswith(PRED_TAG_PREFIX) and tag[len(PRED_TAG_PREFIX) :].isdigit():
+        return True
+    return False
 
 
-def yolo_cxcywh_to_fo_box(cx: float, cy: float, w: float, h: float) -> list[float]:
-    """YOLO relative cxcywh → FiftyOne relative top-left xywh."""
-    return [float(cx) - float(w) / 2.0, float(cy) - float(h) / 2.0, float(w), float(h)]
+def pred_tag_for_group(
+    pred_group_id: int,
+    groups: dict[int, list[int]] | None,
+    background_id: int | None,
+) -> str:
+    """训练组 → ``pred_background`` 或 ``pred_eye_open_<最小原始 id>``。"""
+    group_id = int(pred_group_id)
+    if background_id is not None and group_id == int(background_id):
+        return PRED_BACKGROUND
+    members = (groups or {}).get(group_id)
+    if not members:
+        raise ValueError(f"预测组 {group_id} 不在 class_groups 里")
+    return f"{PRED_TAG_PREFIX}{min(int(item) for item in members)}"
+
+
+def strip_eval_tags(tags: object) -> list[str]:
+    return [str(tag) for tag in (tags or []) if not is_eval_tag(tag)]
+
+
+def apply_eval_tags(tags: object, *, is_err: bool, pred_tag: str) -> list[str]:
+    """判错写 ``eval_err`` 和预测标签；判对只写预测标签。"""
+    updated = strip_eval_tags(tags)
+    if is_err:
+        updated.append(EVAL_ERR)
+    updated.append(pred_tag)
+    return updated
 
 
 def load_yaml(path: Path) -> dict[str, Any]:
@@ -381,23 +416,97 @@ def append_problem(problems: list[dict], **fields: object) -> None:
     problems.append({key: value for key, value in fields.items()})
 
 
-def build_sha256_index(dataset) -> tuple[dict[str, list[str]], int]:
-    ids, hashes = dataset.values(["id", "sha256"])
-    index: dict[str, list[str]] = defaultdict(list)
-    missing = 0
-    for sample_id, digest in zip(ids, hashes):
-        if not digest:
-            missing += 1
+def image_size(sample) -> tuple[int, int] | None:
+    meta = getattr(sample, "metadata", None)
+    width = getattr(meta, "width", None) if meta is not None else None
+    height = getattr(meta, "height", None) if meta is not None else None
+    if width and height:
+        return int(width), int(height)
+    path = Path(str(sample.filepath))
+    if not path.is_file():
+        return None
+    from PIL import Image
+
+    with Image.open(path) as image:
+        return int(image.size[0]), int(image.size[1])
+
+
+def collect_labeled_boxes(
+    dataset,
+    *,
+    sample_tags: list[str],
+    exclude_tags: list[str],
+    label_field: str,
+    box_labels: set[str],
+    problems: list[dict],
+) -> tuple[list[dict[str, object]], list[str]]:
+    """从 FiftyOne 框收集分类 CSV 行，并返回本次选中的样本 id。"""
+    import fiftyone as fo
+
+    if label_field not in dataset.get_field_schema():
+        raise ValueError(f"数据集没有字段 {label_field}")
+    field = dataset.get_field(label_field)
+    if not issubclass(field.document_type, fo.Detections):
+        raise ValueError(f"字段 {label_field} 不是 Detections")
+    view = dataset.match_tags(sample_tags, bool=True, all=True)
+    excluded = set(exclude_tags)
+    rows: list[dict[str, object]] = []
+    sample_ids: list[str] = []
+    for sample in view.iter_samples(progress=True, autosave=False):
+        tags = {str(tag) for tag in (sample.tags or [])}
+        if tags & excluded:
             continue
-        index[str(digest)].append(str(sample_id))
-    return dict(index), missing
-
-
-def update_sample_tags(sample, ver: str, is_bad: bool) -> None:
-    ok, bad = sample_tag_ok(ver), sample_tag_bad(ver)
-    tags = [tag for tag in (sample.tags or []) if tag not in {ok, bad}]
-    tags.append(bad if is_bad else ok)
-    sample.tags = tags
+        size = image_size(sample)
+        if size is None:
+            append_problem(
+                problems,
+                sample_id=str(sample.id),
+                file=str(sample.filepath),
+                reason="missing_image",
+            )
+            continue
+        sample_ids.append(str(sample.id))
+        img_w, img_h = size
+        label = sample[label_field]
+        for detection in list(getattr(label, "detections", None) or []):
+            if str(detection.label) not in box_labels:
+                continue
+            box = list(getattr(detection, "bounding_box", None) or [])
+            if len(box) != 4:
+                append_problem(
+                    problems,
+                    sample_id=str(sample.id),
+                    detection_id=str(getattr(detection, "id", "")),
+                    reason="bad_box",
+                )
+                continue
+            cx, cy, width, height = fo_xywh_to_yolo_cxcywh(box)
+            if width <= 0 or height <= 0:
+                append_problem(
+                    problems,
+                    sample_id=str(sample.id),
+                    detection_id=str(detection.id),
+                    reason="invalid_box",
+                )
+                continue
+            code = eye_open_code(detection.tags)
+            det_label = str(detection.label)
+            rows.append(
+                {
+                    "path_img": str(sample.filepath),
+                    "class_name": eye_class_name(det_label, code),
+                    "class_id": code,
+                    "cx": cx,
+                    "cy": cy,
+                    "w": width,
+                    "h": height,
+                    "img_w": img_w,
+                    "img_h": img_h,
+                    "sample_id": str(sample.id),
+                    "detection_id": str(detection.id),
+                }
+            )
+    return rows, sample_ids
 
 
 def write_json(path: Path, payload: dict) -> None:
@@ -412,7 +521,6 @@ def run_inference(
     batch_size: int,
     num_workers: int,
     care_ids: set[int] | None,
-    problems: list[dict],
 ) -> list[BoxPrediction]:
     groups = dataset.class_groups
     background_id = dataset.background_id
@@ -427,7 +535,6 @@ def run_inference(
         pin_memory=device.type == "cuda",
     )
     rows: list[BoxPrediction] = []
-    sha_cache: dict[Path, str] = {}
     offset = 0
     with torch.inference_mode():
         for net_in, net_out in tqdm(loader, desc="infer", unit="batch"):
@@ -441,20 +548,6 @@ def run_inference(
             for i in range(batch_n):
                 index = offset + i
                 img_path = Path(str(net_in[i]["img_path"])).expanduser().resolve()
-                try:
-                    digest = sha_cache.get(img_path)
-                    if digest is None:
-                        digest = compute_sha256_hex(img_path)
-                        sha_cache[img_path] = digest
-                except OSError as error:
-                    append_problem(
-                        problems,
-                        file=str(img_path),
-                        reason="read_error",
-                        detail=str(error),
-                        row=index,
-                    )
-                    continue
                 table_row = dataset.sample_path_table.iloc[index]
                 gt_original_id = int(dataset._original_class_ids[index])
                 gt_original_name = str(dataset._original_class_names[index])
@@ -463,6 +556,7 @@ def run_inference(
                 )
                 pred_group_id = int(pred_ids[i].item())
                 pred_group_name = dataset.class_name_for_id(pred_group_id)
+                pred_tag = pred_tag_for_group(pred_group_id, groups, background_id)
                 conf = float(pred_conf[i].item())
                 err = is_error(
                     gt_original_id=gt_original_id,
@@ -474,8 +568,9 @@ def run_inference(
                 )
                 rows.append(
                     BoxPrediction(
+                        sample_id=str(table_row["sample_id"]),
+                        detection_id=str(table_row["detection_id"]),
                         img_path=img_path,
-                        sha256=digest,
                         cx=float(table_row["cx"]),
                         cy=float(table_row["cy"]),
                         w=float(table_row["w"]),
@@ -485,6 +580,7 @@ def run_inference(
                         gt_group_id=gt_group_id,
                         pred_group_id=pred_group_id,
                         pred_group_name=pred_group_name,
+                        pred_tag=pred_tag,
                         pred_conf=conf,
                         is_err=err,
                     )
@@ -500,100 +596,70 @@ def ensure_fiftyone_database_uri() -> None:
 
 def write_fiftyone(
     *,
-    dataset_name: str,
+    dataset,
     rows: list[BoxPrediction],
-    ver: str,
+    sample_ids: list[str],
+    label_field: str,
+    box_labels: set[str],
     problems: list[dict],
-) -> tuple[int, int, int, int]:
-    ensure_fiftyone_database_uri()
-    import fiftyone as fo
-
-    if dataset_name not in fo.list_datasets():
-        raise SystemExit(f"error: FiftyOne dataset not found: {dataset_name}")
-    dataset = fo.load_dataset(dataset_name)
-    hash_index, missing_hash_samples = build_sha256_index(dataset)
-    pred_field = pred_field_name(ver)
-    tag_ok = det_tag(ver, "OK")
-    tag_err = det_tag(ver, "ERR")
-
-    by_sample: dict[str, list[BoxPrediction]] = defaultdict(list)
-    seen_paths: dict[str, str] = {}
-    for row in rows:
-        candidates = hash_index.get(row.sha256, [])
-        if not candidates:
-            append_problem(
-                problems,
-                file=str(row.img_path),
-                sha256=row.sha256,
-                reason="not_in_fiftyone",
-            )
-            continue
-        if len(candidates) > 1:
-            append_problem(
-                problems,
-                file=str(row.img_path),
-                sha256=row.sha256,
-                reason="ambiguous_sha256",
-                sample_ids=candidates,
-            )
-            continue
-        sample_id = candidates[0]
-        prev = seen_paths.get(row.sha256)
-        if prev is not None and prev != str(row.img_path):
-            append_problem(
-                problems,
-                file=str(row.img_path),
-                sha256=row.sha256,
-                reason="sha256_path_conflict",
-                other_file=prev,
-            )
-            continue
-        seen_paths[row.sha256] = str(row.img_path)
-        by_sample[sample_id].append(row)
-
-    n_written = n_ok = n_bad = 0
-    for sample_id, sample_rows in tqdm(by_sample.items(), desc="write-fo", unit="sample"):
+) -> int:
+    """清掉选中框上的旧评估标签，再给打分框写上本次结果。"""
+    by_detection = {row.detection_id: row for row in rows}
+    tagged = 0
+    for sample_id in tqdm(sample_ids, desc="write-fo", unit="sample"):
         sample = dataset[sample_id]
-        detections = []
-        any_err = False
-        for row in sample_rows:
-            kind = tag_err if row.is_err else tag_ok
-            any_err = any_err or row.is_err
-            det = fo.Detection(
-                label=row.pred_group_name,
-                bounding_box=yolo_cxcywh_to_fo_box(row.cx, row.cy, row.w, row.h),
-                confidence=round(row.pred_conf, 6),
-                tags=[kind],
-            )
-            det["gt_original_name"] = row.gt_original_name
-            det["gt_original_id"] = int(row.gt_original_id)
-            det["pred_group_id"] = int(row.pred_group_id)
-            detections.append(det)
-        sample[pred_field] = fo.Detections(detections=detections)
-        update_sample_tags(sample, ver, any_err)
-        sample.save()
-        n_written += 1
-        if any_err:
-            n_bad += 1
-        else:
-            n_ok += 1
-    print(f"dataset_samples_missing_sha256={missing_hash_samples}")
-    return n_written, n_ok, n_bad, missing_hash_samples
+        label = sample[label_field]
+        detections = list(getattr(label, "detections", None) or [])
+        changed = False
+        seen: set[str] = set()
+        for detection in detections:
+            if str(detection.label) not in box_labels:
+                continue
+            detection_id = str(detection.id)
+            seen.add(detection_id)
+            result = by_detection.get(detection_id)
+            if result is None:
+                new_tags = strip_eval_tags(detection.tags)
+            else:
+                new_tags = apply_eval_tags(detection.tags, is_err=result.is_err, pred_tag=result.pred_tag)
+                tagged += 1
+            if [str(tag) for tag in (detection.tags or [])] != new_tags:
+                detection.tags = new_tags
+                changed = True
+        if changed:
+            sample[label_field] = label
+            sample.save()
+        for row in rows:
+            if row.sample_id == sample_id and row.detection_id not in seen:
+                append_problem(
+                    problems,
+                    sample_id=sample_id,
+                    detection_id=row.detection_id,
+                    reason="missing_detection",
+                )
+    return tagged
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--ckpt", required=True, type=Path, help="Lightning .ckpt path")
     parser.add_argument("--config", required=True, type=Path, help="Experiment YAML (must match ckpt head)")
-    parser.add_argument("--csv", required=True, type=Path, help="Box-crop CSV with labels")
-    parser.add_argument("--dataset", type=nonempty, default=None, help="FiftyOne dataset name")
+    parser.add_argument("--dataset", required=True, type=nonempty, help="FiftyOne dataset name")
+    parser.add_argument("--sample-tags", required=True, type=comma_names, help="样本须同时带有这些 tag")
+    parser.add_argument("--box-labels", required=True, type=comma_names, help="要评估的 detection.label，例如 head")
+    parser.add_argument("--label-field", default="ground_truth", help="检测框字段，默认 ground_truth")
+    parser.add_argument(
+        "--exclude-tags",
+        type=comma_names_optional,
+        default=list(DEFAULT_EXCLUDE_TAGS),
+        help="带其中任一 tag 的样本跳过。默认 dup_repeat_drop,dup_near_drop",
+    )
     parser.add_argument(
         "--care-classes",
         default=None,
         help="Comma-separated focus classes (id / name / eye_open_2). Omit for exact group match.",
     )
-    parser.add_argument("--write-fo", action="store_true", help="Write pred_eye_<ver> into FiftyOne")
-    parser.add_argument("--ver", type=parse_ver, default=None, help="Version token, required with --write-fo")
+    parser.add_argument("--write-fo", action="store_true", help="判错写 eval_err 和预测标签；判对只写预测标签")
     parser.add_argument("--device", default=None, help="cuda / cpu / cuda:0 (default: auto)")
     parser.add_argument("--batch-size", type=int, default=None, help="Override data.batch_size")
     parser.add_argument("--num-workers", type=int, default=None, help="Override data.num_workers")
@@ -608,24 +674,13 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    if args.write_fo and not args.ver:
-        print("error: --write-fo requires --ver (e.g. v100)", file=sys.stderr)
-        return 2
-    if args.write_fo and not args.dataset:
-        print("error: --write-fo requires --dataset", file=sys.stderr)
-        return 2
-
     ckpt_path = args.ckpt.expanduser().resolve()
     config_path = args.config.expanduser().resolve()
-    csv_path = args.csv.expanduser().resolve()
     if not ckpt_path.is_file():
         print(f"error: ckpt not found: {ckpt_path}", file=sys.stderr)
         return 2
     if not config_path.is_file():
         print(f"error: config not found: {config_path}", file=sys.stderr)
-        return 2
-    if not csv_path.is_file():
-        print(f"error: csv not found: {csv_path}", file=sys.stderr)
         return 2
 
     if args.device:
@@ -636,7 +691,44 @@ def main(argv: list[str] | None = None) -> int:
     module, cfg = load_module(config_path, ckpt_path, device)
     init_args = data_init_args(cfg)
     groups, background_id = parse_class_groups_from_cfg(init_args)
-    dataset = build_dataset(cfg, csv_path)
+
+    ensure_fiftyone_database_uri()
+    try:
+        import fiftyone as fo
+    except ImportError:
+        print("error: fiftyone is not installed in this environment", file=sys.stderr)
+        return 2
+    if not fo.dataset_exists(args.dataset):
+        print(f"error: FiftyOne dataset not found: {args.dataset}", file=sys.stderr)
+        return 2
+    fo_dataset = fo.load_dataset(args.dataset)
+
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    out_dir = (args.out_dir or (ROOT / "logs" / "val_classifier_fo" / stamp)).expanduser().resolve()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    problems: list[dict] = []
+    try:
+        labeled_rows, sample_ids = collect_labeled_boxes(
+            fo_dataset,
+            sample_tags=args.sample_tags,
+            exclude_tags=args.exclude_tags,
+            label_field=args.label_field,
+            box_labels=set(args.box_labels),
+            problems=problems,
+        )
+    except ValueError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
+    if not labeled_rows:
+        print("error: 没有样本同时带有 --sample-tags，或这些样本没有可评估的框", file=sys.stderr)
+        return 2
+    csv_path = out_dir / "boxes.csv"
+    pd.DataFrame(labeled_rows).to_csv(csv_path, index=False)
+    try:
+        dataset = build_dataset(cfg, csv_path)
+    except ValueError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
     id_to_name = ImageClassifierDataset.names_by_original_id(
         pd.DataFrame(
             {
@@ -654,18 +746,14 @@ def main(argv: list[str] | None = None) -> int:
     batch_size = int(args.batch_size or init_args.get("batch_size") or 32)
     num_workers = int(args.num_workers if args.num_workers is not None else init_args.get("num_workers") or 0)
 
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    out_dir = (args.out_dir or (ROOT / "logs" / "val_classifier_fo" / stamp)).expanduser().resolve()
-    out_dir.mkdir(parents=True, exist_ok=True)
-
-    problems: list[dict] = []
     print(f"device={device}")
     print(f"ckpt={ckpt_path}")
     print(f"config={config_path}")
-    print(f"csv={csv_path} boxes={len(dataset)}")
+    print(f"dataset={args.dataset} label_field={args.label_field} boxes={len(dataset)}")
+    print(f"sample_tags={args.sample_tags} exclude_tags={args.exclude_tags} box_labels={args.box_labels}")
     print(f"class_groups={groups} background_id={background_id}")
     print(f"care_classes={sorted(care_ids) if care_ids is not None else None}")
-    print(f"write_fo={args.write_fo} ver={args.ver} dataset={args.dataset}")
+    print(f"write_fo={args.write_fo}")
 
     rows = run_inference(
         module,
@@ -674,7 +762,6 @@ def main(argv: list[str] | None = None) -> int:
         batch_size=batch_size,
         num_workers=num_workers,
         care_ids=care_ids,
-        problems=problems,
     )
     stats = EvalStats()
     for row in rows:
@@ -684,8 +771,9 @@ def main(argv: list[str] | None = None) -> int:
     pd.DataFrame(
         [
             {
+                "sample_id": row.sample_id,
+                "detection_id": row.detection_id,
                 "img_path": str(row.img_path),
-                "sha256": row.sha256,
                 "cx": row.cx,
                 "cy": row.cy,
                 "w": row.w,
@@ -695,6 +783,7 @@ def main(argv: list[str] | None = None) -> int:
                 "gt_group_id": row.gt_group_id,
                 "pred_group_id": row.pred_group_id,
                 "pred_group_name": row.pred_group_name,
+                "pred_tag": row.pred_tag,
                 "pred_conf": row.pred_conf,
                 "is_err": row.is_err,
             }
@@ -702,23 +791,16 @@ def main(argv: list[str] | None = None) -> int:
         ]
     ).to_csv(results_csv, index=False)
 
-    n_written = n_ok = n_bad = missing_hash = 0
+    n_tagged = 0
     if args.write_fo:
-        assert args.ver is not None and args.dataset is not None
-        try:
-            n_written, n_ok, n_bad, missing_hash = write_fiftyone(
-                dataset_name=args.dataset,
-                rows=rows,
-                ver=args.ver,
-                problems=problems,
-            )
-        except ImportError:
-            print(
-                "error: fiftyone is not installed in this environment; "
-                "install it or run scoring without --write-fo",
-                file=sys.stderr,
-            )
-            return 2
+        n_tagged = write_fiftyone(
+            dataset=fo_dataset,
+            rows=rows,
+            sample_ids=sample_ids,
+            label_field=args.label_field,
+            box_labels=set(args.box_labels),
+            problems=problems,
+        )
 
     problems_path = out_dir / "problems.jsonl"
     with problems_path.open("w", encoding="utf-8") as handle:
@@ -728,11 +810,14 @@ def main(argv: list[str] | None = None) -> int:
     summary = {
         "ckpt": str(ckpt_path),
         "config": str(config_path),
-        "csv": str(csv_path),
         "dataset": args.dataset,
+        "sample_tags": args.sample_tags,
+        "exclude_tags": args.exclude_tags,
+        "box_labels": args.box_labels,
+        "label_field": args.label_field,
+        "boxes_csv": str(csv_path),
         "write_fo": args.write_fo,
-        "ver": args.ver,
-        "pred_field": pred_field_name(args.ver) if args.ver else None,
+        "eval_tags": [EVAL_ERR],
         "care_classes": sorted(care_ids) if care_ids is not None else None,
         "care_class_names": (
             [id_to_name[i] for i in sorted(care_ids) if i in id_to_name] if care_ids is not None else None
@@ -745,14 +830,8 @@ def main(argv: list[str] | None = None) -> int:
         "n_err": stats.n_err,
         "err_rate": (stats.n_err / stats.n_boxes) if stats.n_boxes else 0.0,
         "by_gt": dict(stats.by_gt),
-        "n_written": n_written,
-        "n_sample_ok": n_ok,
-        "n_sample_bad": n_bad,
-        "dataset_samples_missing_sha256": missing_hash,
+        "n_tagged": n_tagged,
         "n_problems": len(problems),
-        "sample_tag_ok": sample_tag_ok(args.ver) if args.ver else None,
-        "sample_tag_bad": sample_tag_bad(args.ver) if args.ver else None,
-        "det_tags": [det_tag(args.ver, kind) for kind in VERSION_DET_TAGS] if args.ver else [],
         "results_csv": str(results_csv),
         "problems_path": str(problems_path),
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -767,9 +846,8 @@ def main(argv: list[str] | None = None) -> int:
         rate = (bucket["err"] / bucket["n"]) if bucket["n"] else 0.0
         print(f"  gt={name} n={bucket['n']} err={bucket['err']} err_rate={rate:.4f}")
     if args.write_fo:
-        print(f"written={n_written} sample_ok={n_ok} sample_bad={n_bad}")
-        print(f"pred_field={pred_field_name(args.ver)}")
-        print(f"app filter: sample tag `{sample_tag_bad(args.ver)}` or detection tag `{det_tag(args.ver, 'ERR')}`")
+        print(f"tagged={n_tagged}")
+        print(f"app filter: detection tag `{EVAL_ERR}`")
     print(f"results_csv={results_csv}")
     print(f"summary={out_dir / 'summary.json'}")
     print(f"problems_path={problems_path}")

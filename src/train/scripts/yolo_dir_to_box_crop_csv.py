@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""把 YOLO 目录按框展开成一张分类 CSV。原图不复制，不筛选类别，不改 class_id。
+"""把 YOLO 目录的每个划分按框展开成一张分类 CSV。原图不复制，不筛选类别，不改 class_id。
 
 目录布局::
 
@@ -8,16 +8,15 @@
     <data-root>/images/<split>/*
     <data-root>/labels/<split>/*.txt
 
-``--split`` 省略且 ``images`` 下只有一个子目录时，用该子目录。
-空标签（负样本图）不写行。``path_img`` 相对输出 CSV 所在目录；符号链接先解析到真实文件。
+划分取 ``images`` 与 ``labels`` 都存在的子目录，各写成 ``<data-root>/<split>.csv``。
+只在一侧出现的子目录直接报错。空标签（负样本图）不写行。
+``path_img`` 相对数据根目录；符号链接先解析到真实文件。
 类别、无效框、短边过滤在 ``ImageClassifierFromDetectBoxDataset`` 初始化时完成。
 
 示例::
 
 python scripts/yolo_dir_to_box_crop_csv.py \\
-    --data-root /home/huangwenhua/project/dataset/head/v011_head_age \\
-    --split train_v011 \\
-    --out datasets/head_age/train_v011.csv
+    --data-root /home/huangwenhua/project/dataset/eye/v301_eye
 """
 
 from __future__ import annotations
@@ -87,23 +86,27 @@ def load_class_names(data_root: Path) -> dict[int, str]:
     raise ValueError(f"{yaml_path} 的 names 须为字典或列表，收到 {type(names).__name__}")
 
 
-def resolve_split(data_root: Path, split: str | None) -> str:
-    """定位 ``images/<split>`` 与 ``labels/<split>``。"""
+def list_splits(data_root: Path) -> list[str]:
+    """返回 ``images`` 与 ``labels`` 都存在的划分名，按名字排序。"""
     images_root = data_root / "images"
+    labels_root = data_root / "labels"
     if not images_root.is_dir():
         raise FileNotFoundError(f"缺少图像目录：{images_root}")
-    if split is None:
-        subs = sorted(path.name for path in images_root.iterdir() if path.is_dir())
-        if len(subs) != 1:
-            raise ValueError(f"请用 --split 指定划分，images 下有 {subs}")
-        split = subs[0]
-    images_dir = images_root / split
-    labels_dir = data_root / "labels" / split
-    if not images_dir.is_dir():
-        raise FileNotFoundError(f"缺少图像划分：{images_dir}")
-    if not labels_dir.is_dir():
-        raise FileNotFoundError(f"缺少标签划分：{labels_dir}")
-    return split
+    if not labels_root.is_dir():
+        raise FileNotFoundError(f"缺少标签目录：{labels_root}")
+    image_splits = {path.name for path in images_root.iterdir() if path.is_dir()}
+    label_splits = {path.name for path in labels_root.iterdir() if path.is_dir()}
+    only_images = sorted(image_splits - label_splits)
+    only_labels = sorted(label_splits - image_splits)
+    if only_images or only_labels:
+        raise FileNotFoundError(
+            "图像与标签划分不一致："
+            f"仅图像 {only_images}，仅标签 {only_labels}"
+        )
+    splits = sorted(image_splits)
+    if not splits:
+        raise ValueError(f"images 与 labels 下没有划分目录：{data_root}")
+    return splits
 
 
 def _index_by_stem(directory: Path, suffixes: set[str]) -> dict[str, Path]:
@@ -195,33 +198,27 @@ def write_box_crop_csv(rows: list[dict[str, object]], out_csv: Path) -> None:
     pd.DataFrame(relativized, columns=LABEL_COLUMNS).to_csv(out_csv, index=False)
 
 
-def convert(data_root: Path, out_csv: Path, split: str | None = None) -> None:
+def convert(data_root: Path) -> None:
     data_root = data_root.expanduser().resolve()
-    out_csv = out_csv.expanduser().resolve()
     names = load_class_names(data_root)
-    split_name = resolve_split(data_root, split)
-    rows, n_empty = boxes_from_yolo_split(data_root, split_name, names)
-    write_box_crop_csv(rows, out_csv)
-    print(f"写出 {out_csv} ：{len(rows)} 框，跳过空标签 {n_empty} 张（split={split_name}）")
+    for split_name in list_splits(data_root):
+        rows, n_empty = boxes_from_yolo_split(data_root, split_name, names)
+        out_csv = data_root / f"{split_name}.csv"
+        write_box_crop_csv(rows, out_csv)
+        print(f"写出 {out_csv} ：{len(rows)} 框，跳过空标签 {n_empty} 张（split={split_name}）")
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="YOLO 目录 → 一张框级分类 CSV（保留全部类别，不复制图像）"
+        description="YOLO 目录 → 每个划分一张框级分类 CSV（保留全部类别，不复制图像）"
     )
     parser.add_argument("--data-root", type=Path, required=True)
-    parser.add_argument(
-        "--split",
-        default=None,
-        help="images/<split> 与 labels/<split>。省略且只有一个子目录时自动使用",
-    )
-    parser.add_argument("--out", type=Path, required=True)
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    convert(args.data_root, args.out, args.split)
+    convert(args.data_root)
 
 
 if __name__ == "__main__":
