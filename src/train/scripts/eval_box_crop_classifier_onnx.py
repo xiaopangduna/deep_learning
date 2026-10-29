@@ -41,7 +41,7 @@ from lovely_deep_learning.transforms.letterbox import letterbox_resize_and_pad
 try:
     import onnxruntime as ort
 except ImportError as exc:  # pragma: no cover
-    raise SystemExit("需要 onnxruntime：pip install onnxruntime") from exc
+    raise SystemExit("需要 onnxruntime-gpu：uv add onnxruntime-gpu==1.23.2") from exc
 
 IMAGENET_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_STD = (0.229, 0.224, 0.225)
@@ -108,6 +108,29 @@ def preprocess_bgr(
     return img_tv.unsqueeze(0).contiguous().numpy()
 
 
+def make_session(model_path: Path) -> ort.InferenceSession:
+    """优先 CUDA。torch 已先导入，再预加载 pip 里的 CUDA/cuDNN。"""
+    if hasattr(ort, "preload_dlls"):
+        try:
+            ort.preload_dlls()
+        except Exception as exc:
+            print(f"preload_dlls skipped: {exc}", file=sys.stderr)
+
+    available = ort.get_available_providers()
+    providers = (
+        ["CUDAExecutionProvider", "CPUExecutionProvider"]
+        if "CUDAExecutionProvider" in available
+        else ["CPUExecutionProvider"]
+    )
+    try:
+        return ort.InferenceSession(str(model_path), providers=providers)
+    except Exception as exc:
+        if providers == ["CPUExecutionProvider"]:
+            raise
+        print(f"CUDA session failed ({exc}); fallback to CPU", file=sys.stderr)
+        return ort.InferenceSession(str(model_path), providers=["CPUExecutionProvider"])
+
+
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="ONNX box-crop classifier dump (same CSV schema as board dump)"
@@ -140,7 +163,7 @@ def main() -> int:
         return 1
 
     csv_dir = csv_path.parent
-    session = ort.InferenceSession(str(model_path), providers=["CPUExecutionProvider"])
+    session = make_session(model_path)
     input_meta = session.get_inputs()[0]
     input_name = input_meta.name
     shape = input_meta.shape
@@ -156,6 +179,7 @@ def main() -> int:
     print(f"  csv       : {csv_path}")
     print(f"  out       : {args.out}")
     print(f"  box-scale : {args.box_scale}")
+    print(f"  provider  : {session.get_providers()}")
     print(f"  input     : {input_name} {[1, in_channels, model_h, model_w]}")
 
     ok_count = 0

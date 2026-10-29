@@ -28,7 +28,7 @@ dependencies = [
     "torch-pruning (>=1.6.1,<2.0.0)",
     "onnxslim (==0.1.65)",
     "fiftyone>=1.22.1",
-    "onnxruntime==1.23.2",
+    "onnxruntime-gpu==1.23.2",
 ]
 
 
