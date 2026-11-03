@@ -82,10 +82,10 @@ source cfg_env.sh
 
 ## 模型转换
 
-建议日常用 **OpenDLAModel 调度脚本**，不要直接手填子目录 `convert.sh` 的 9 个位置参数。
+日常在 `exports/sigmastar/<模型名>/` 下转换。下面是原厂 OpenDLA 的调度方式，项目脚本沿用它的三步，但不再手填子目录 `convert.sh` 的位置参数。
 
 ```text
-OpenDLAModel_20250721/convert.sh          # 调度：读 cfg、source 工具链、按模型循环
+OpenDLAModel_20250721/convert.sh          # 原厂调度：读 cfg、source 工具链、按模型循环
   ├─ detection/yolov8/convert.sh          # CPU 后处理：ONNX → float.sim → fixed.sim → .img
   └─ detection/yolov8/convert_ipu.sh      # IPU 后处理：额外挂 yolov8_post.py（NMS 等进 IPU）
 ```
@@ -102,50 +102,35 @@ OpenDLAModel_20250721/convert.sh          # 调度：读 cfg、source 工具链�
 
 
 
-### YOLOv8（推荐）
+### YOLOv8
 
-`-s`（转换 / 仿真）和 `-d`（CPU / IPU 后处理）不要混用：`-d ipu` 会丢掉 `-s`。
-
-在容器内先 `cd` 到 OpenDLA 目录：
+项目入口在 `exports/sigmastar/yolov8/`。`-d cpu`（默认）后处理在 CPU，`-d ipu` 把 NMS 放进 IPU。`-d ipu` 不要再写 `-s`。
 
 ```bash
-cd /work/SGS_V1.8_18.04/src/train/exports/sigmastar/sdk/IPU_SDK_Release_25121210/OpenDLAModel_20250721
+cd exports/sigmastar/yolov8
+
+# CPU 后处理。COCO yolov8n，640x640，芯片 pcupid
+bash convert.sh \
+  -c config/detection_yolov8.cfg \
+  -p ../sdk/IPU_SDK_Release_25121210/SGS_IPU_Toolchain_25121210 \
+  -s false
+
+# IPU 后处理（NMS 进 IPU）
+bash convert.sh \
+  -c config/detection_yolov8.cfg \
+  -p ../sdk/IPU_SDK_Release_25121210/SGS_IPU_Toolchain_25121210 \
+  -d ipu
+
+# 头检测。灰度 1x1x352x640，2 类，芯片 iford
+bash convert.sh \
+  -c config/detection_yolov8_head.cfg \
+  -p ../sdk/IPU_SDK_Release_25121210/SGS_IPU_Toolchain_25121210 \
+  -s false
 ```
 
-转换（二选一）：
+产物在 `release/<芯片>_<日期>/`。`sdk/` 里的 OpenDLA `detection/yolov8` 是原厂示例，不要改。
 
-```bash
-# CPU 后处理
-bash convert.sh -a detection/yolov8 -c config/detection_yolov8.cfg -p ../SGS_IPU_Toolchain_25121210 -s false
-
-# IPU 后处理（NMS 进 IPU；不要再写 -s）
-bash convert.sh -a detection/yolov8 -c config/detection_yolov8.cfg -p ../SGS_IPU_Toolchain_25121210 -d ipu
-```
-
-仿真（须先转换，且不要带 `-d ipu`）：
-
-```bash
-bash convert.sh -a detection/yolov8 -c config/detection_yolov8.cfg -p ../SGS_IPU_Toolchain_25121210 -s true
-```
-
-| 参数 | 含义 |
-|------|------|
-| `-a` | 算法目录（相对 `OpenDLAModel_20250721/`） |
-| `-c` | 转换配置，默认芯片 `pcupid`、模型 `yolov8n` |
-| `-p` | 工具链真实路径（相对或绝对均可） |
-| `-s false` | CPU 路径：转换 |
-| `-s true` | CPU 路径：仿真已有 `*_float.sim` |
-| `-d ipu` | IPU 路径：只转换，忽略 `-s` |
-
-`config/detection_yolov8.cfg` 会指定模型名、输入尺寸、校准数据目录、输出 `.img` 名。转换前确认：
-
-- `detection/yolov8/onnx/yolov8n.onnx`
-- `detection/yolov8/quant_data/`（校准图）
-
-转换产物：`OpenDLAModel_20250721/output/pcupid_<日期>/`，例如 `yolov8n_640x640.img`。  
-仿真产物：`detection/yolov8/log/output/unknown_yolov8n_float.sim_<图片名>.txt`（同一天目录名才对得上 float.sim）。
-
-本项目自有转换配置放 `exports/sigmastar/<模型名>/`，不要改 `sdk/` 里的原厂示例。MobileNetV2 分类在 `exports/sigmastar/mobilenet_v2/`，RTMPose 人脸关键点在 `exports/sigmastar/rtmpose/`。两者都用 `-c` 选择配置，省略 `-a` 和 `-d`。
+本项目自有转换配置放 `exports/sigmastar/<模型名>/`。MobileNetV2 分类在 `exports/sigmastar/mobilenet_v2/`，RTMPose 人脸关键点在 `exports/sigmastar/rtmpose/`，YOLOv8 检测在 `exports/sigmastar/yolov8/`。分类和关键点省略 `-d`；检测用 `-d` 选择后处理放在 CPU 还是 IPU。
 
 ### 一键转换（Quick Start）
 
