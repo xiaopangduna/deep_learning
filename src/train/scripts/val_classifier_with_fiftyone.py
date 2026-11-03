@@ -12,13 +12,13 @@
 示例::
 
     export FIFTYONE_DATABASE_URI=mongodb://127.0.0.1:27017   # 可选，本机已有 mongod 时脚本会默认连上
-    uv run scripts/val_classifier_with_fiftyone.py \\
-        --ckpt logs/.../epoch=19-val_acc=0.96.ckpt \\
-        --config configs/experiments/image_classifiter_from_detect_box_head_eye_open_v100.yaml \\
-        --dataset BBM08S_head \\
-        --sample-tags test_v301 \\
-        --box-labels head \\
-        --care-classes eye_open_2 \\
+    uv run scripts/val_classifier_with_fiftyone.py 
+        --ckpt logs/.../epoch=19-val_acc=0.96.ckpt 
+        --config configs/experiments/image_classifiter_from_detect_box_head_eye_open_v100.yaml 
+        --dataset BBM08S_head 
+        --sample-tags test_v301 
+        --box-labels head 
+        --care-classes eye_open_2 
         --write-fo
 """
 
@@ -29,7 +29,7 @@ import copy
 import json
 import os
 import sys
-from collections import defaultdict
+from collections import OrderedDict, defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -56,6 +56,8 @@ EVAL_ERR = "eval_err"
 PRED_TAG_PREFIX = "pred_eye_open_"
 PRED_BACKGROUND = "pred_background"
 DEFAULT_EXCLUDE_TAGS = ("dup_repeat_drop", "dup_near_drop")
+FO_SAMPLE_BATCH = 100
+IMG_CACHE_SIZE = 16
 
 
 @dataclass
@@ -100,6 +102,41 @@ class EvalStats:
 
 class BoxCropEvalDataset(ImageClassifierFromDetectBoxDataset):
     """框级数据集；在 ``class_groups`` 改写前保留原始 ``class_id`` / ``class_name``。"""
+
+    def _read_img_cached(self, img_path: str):
+        """同一 worker 里按路径缓存整图，连续同图多框只解码一次。"""
+        cache = getattr(self, "_img_cache", None)
+        if cache is None:
+            cache = OrderedDict()
+            self._img_cache = cache
+        hit = cache.get(img_path)
+        if hit is not None:
+            cache.move_to_end(img_path)
+            return hit
+        decoded = self.read_img(img_path, None)
+        cache[img_path] = decoded
+        while len(cache) > IMG_CACHE_SIZE:
+            cache.popitem(last=False)
+        return decoded
+
+    def __getitem__(self, index):
+        n_positive = len(self.sample_path_table)
+        if index >= n_positive:
+            return self._background_item()
+        row = self.sample_path_table.iloc[index]
+        img_path = str(row["img_path"])
+        img_np, img_shape = self._read_img_cached(img_path)
+        crop = self.crop_cxcywh(
+            img_np,
+            float(row["cx"]),
+            float(row["cy"]),
+            float(row["w"]),
+            float(row["h"]),
+            self.box_scale,
+        )
+        class_name = row["class_name"] if self._has_label else None
+        class_id = int(row["class_id"]) if self._has_label else None
+        return self._pack_crop(img_path, img_shape, crop, class_name, class_id)
 
     def _filter_boxes(self) -> None:
         table = self.sample_path_table
@@ -431,6 +468,33 @@ def image_size(sample) -> tuple[int, int] | None:
         return int(image.size[0]), int(image.size[1])
 
 
+def collect_eval_view(
+    dataset,
+    *,
+    sample_tags: list[str],
+    exclude_tags: list[str],
+    label_field: str,
+):
+    """带 tag 过滤和字段裁剪的评估视图；缺 metadata 时补一次。"""
+    import fiftyone as fo
+
+    if label_field not in dataset.get_field_schema():
+        raise ValueError(f"数据集没有字段 {label_field}")
+    field = dataset.get_field(label_field)
+    if not issubclass(field.document_type, fo.Detections):
+        raise ValueError(f"字段 {label_field} 不是 Detections")
+    view = dataset.match_tags(sample_tags, bool=True, all=True)
+    if exclude_tags:
+        view = view.match(~fo.ViewField("tags").contains(list(exclude_tags), all=False))
+    schema = dataset.get_field_schema()
+    keep = [name for name in ("filepath", "tags", "metadata", label_field) if name in schema]
+    if keep:
+        view = view.select_fields(keep)
+    if "metadata" in schema and view.exists("metadata.width", False).limit(1).count() > 0:
+        view.compute_metadata(overwrite=False)
+    return view
+
+
 def collect_labeled_boxes(
     dataset,
     *,
@@ -440,22 +504,16 @@ def collect_labeled_boxes(
     box_labels: set[str],
     problems: list[dict],
 ) -> tuple[list[dict[str, object]], list[str]]:
-    """从 FiftyOne 框收集分类 CSV 行，并返回本次选中的样本 id。"""
-    import fiftyone as fo
-
-    if label_field not in dataset.get_field_schema():
-        raise ValueError(f"数据集没有字段 {label_field}")
-    field = dataset.get_field(label_field)
-    if not issubclass(field.document_type, fo.Detections):
-        raise ValueError(f"字段 {label_field} 不是 Detections")
-    view = dataset.match_tags(sample_tags, bool=True, all=True)
-    excluded = set(exclude_tags)
+    """从 FiftyOne 框收集分类 CSV 行，并返回有待评估框的样本 id。"""
+    view = collect_eval_view(
+        dataset,
+        sample_tags=sample_tags,
+        exclude_tags=exclude_tags,
+        label_field=label_field,
+    )
     rows: list[dict[str, object]] = []
     sample_ids: list[str] = []
-    for sample in view.iter_samples(progress=True, autosave=False):
-        tags = {str(tag) for tag in (sample.tags or [])}
-        if tags & excluded:
-            continue
+    for sample in view.iter_samples(progress=True, autosave=False, batch_size=FO_SAMPLE_BATCH):
         size = image_size(sample)
         if size is None:
             append_problem(
@@ -465,9 +523,11 @@ def collect_labeled_boxes(
                 reason="missing_image",
             )
             continue
-        sample_ids.append(str(sample.id))
         img_w, img_h = size
         label = sample[label_field]
+        n_before = len(rows)
+        sample_id = str(sample.id)
+        filepath = str(sample.filepath)
         for detection in list(getattr(label, "detections", None) or []):
             if str(detection.label) not in box_labels:
                 continue
@@ -475,7 +535,7 @@ def collect_labeled_boxes(
             if len(box) != 4:
                 append_problem(
                     problems,
-                    sample_id=str(sample.id),
+                    sample_id=sample_id,
                     detection_id=str(getattr(detection, "id", "")),
                     reason="bad_box",
                 )
@@ -484,7 +544,7 @@ def collect_labeled_boxes(
             if width <= 0 or height <= 0:
                 append_problem(
                     problems,
-                    sample_id=str(sample.id),
+                    sample_id=sample_id,
                     detection_id=str(detection.id),
                     reason="invalid_box",
                 )
@@ -493,7 +553,7 @@ def collect_labeled_boxes(
             det_label = str(detection.label)
             rows.append(
                 {
-                    "path_img": str(sample.filepath),
+                    "path_img": filepath,
                     "class_name": eye_class_name(det_label, code),
                     "class_id": code,
                     "cx": cx,
@@ -502,10 +562,12 @@ def collect_labeled_boxes(
                     "h": height,
                     "img_w": img_w,
                     "img_h": img_h,
-                    "sample_id": str(sample.id),
+                    "sample_id": sample_id,
                     "detection_id": str(detection.id),
                 }
             )
+        if len(rows) > n_before:
+            sample_ids.append(sample_id)
     return rows, sample_ids
 
 
@@ -526,14 +588,29 @@ def run_inference(
     background_id = dataset.background_id
     original_to_group = original_to_group_map(groups)
     collate = ImageClassifierDataset.get_collate_fn_for_dataloader()
-    loader = DataLoader(
-        dataset,
-        batch_size=batch_size,
-        shuffle=False,
-        num_workers=num_workers,
-        collate_fn=collate,
-        pin_memory=device.type == "cuda",
-    )
+    loader_kwargs: dict[str, Any] = {
+        "dataset": dataset,
+        "batch_size": batch_size,
+        "shuffle": False,
+        "num_workers": num_workers,
+        "collate_fn": collate,
+        "pin_memory": device.type == "cuda",
+    }
+    if num_workers > 0:
+        loader_kwargs["persistent_workers"] = True
+        loader_kwargs["prefetch_factor"] = 4
+    loader = DataLoader(**loader_kwargs)
+    table = dataset.sample_path_table
+    sample_ids = table["sample_id"].astype(str).to_numpy()
+    detection_ids = table["detection_id"].astype(str).to_numpy()
+    img_paths = table["img_path"].astype(str).to_numpy()
+    cxs = table["cx"].to_numpy(dtype=float, copy=False)
+    cys = table["cy"].to_numpy(dtype=float, copy=False)
+    ws = table["w"].to_numpy(dtype=float, copy=False)
+    hs = table["h"].to_numpy(dtype=float, copy=False)
+    original_ids = dataset._original_class_ids
+    original_names = dataset._original_class_names
+    group_names = dict(dataset.map_class_id_to_class_name)
     rows: list[BoxPrediction] = []
     offset = 0
     with torch.inference_mode():
@@ -545,17 +622,21 @@ def run_inference(
             pred_ids = metric_preds["pred_ids"].detach().cpu()
             pred_conf = metric_preds["pred_conf"].detach().cpu()
             batch_n = len(net_in)
+            batch_gt_groups = (
+                net_out["class_id"].tolist() if net_out else [None] * batch_n
+            )
             for i in range(batch_n):
                 index = offset + i
-                img_path = Path(str(net_in[i]["img_path"])).expanduser().resolve()
-                table_row = dataset.sample_path_table.iloc[index]
-                gt_original_id = int(dataset._original_class_ids[index])
-                gt_original_name = str(dataset._original_class_names[index])
-                gt_group_id = int(net_out["class_id"][i].item()) if net_out else int(
-                    original_to_group.get(gt_original_id, -1)
-                )
+                gt_original_id = int(original_ids[index])
+                gt_original_name = str(original_names[index])
+                if batch_gt_groups[i] is None:
+                    gt_group_id = int(original_to_group.get(gt_original_id, -1))
+                else:
+                    gt_group_id = int(batch_gt_groups[i])
                 pred_group_id = int(pred_ids[i].item())
-                pred_group_name = dataset.class_name_for_id(pred_group_id)
+                pred_group_name = group_names.get(
+                    pred_group_id, dataset.class_name_for_id(pred_group_id)
+                )
                 pred_tag = pred_tag_for_group(pred_group_id, groups, background_id)
                 conf = float(pred_conf[i].item())
                 err = is_error(
@@ -568,18 +649,18 @@ def run_inference(
                 )
                 rows.append(
                     BoxPrediction(
-                        sample_id=str(table_row["sample_id"]),
-                        detection_id=str(table_row["detection_id"]),
-                        img_path=img_path,
-                        cx=float(table_row["cx"]),
-                        cy=float(table_row["cy"]),
-                        w=float(table_row["w"]),
-                        h=float(table_row["h"]),
+                        sample_id=str(sample_ids[index]),
+                        detection_id=str(detection_ids[index]),
+                        img_path=Path(str(img_paths[index])),
+                        cx=float(cxs[index]),
+                        cy=float(cys[index]),
+                        w=float(ws[index]),
+                        h=float(hs[index]),
                         gt_original_id=gt_original_id,
                         gt_original_name=gt_original_name,
                         gt_group_id=gt_group_id,
                         pred_group_id=pred_group_id,
-                        pred_group_name=pred_group_name,
+                        pred_group_name=str(pred_group_name),
                         pred_tag=pred_tag,
                         pred_conf=conf,
                         is_err=err,
@@ -604,10 +685,19 @@ def write_fiftyone(
     problems: list[dict],
 ) -> int:
     """清掉选中框上的旧评估标签，再给打分框写上本次结果。"""
+    ids = list(dict.fromkeys(sample_ids))
+    if not ids:
+        return 0
     by_detection = {row.detection_id: row for row in rows}
+    by_sample: dict[str, list[BoxPrediction]] = defaultdict(list)
+    for row in rows:
+        by_sample[row.sample_id].append(row)
     tagged = 0
-    for sample_id in tqdm(sample_ids, desc="write-fo", unit="sample"):
-        sample = dataset[sample_id]
+    # 不要 select_fields：从裁剪视图 save 可能清掉未选字段。
+    view = dataset.select(ids)
+    print("write-fo")
+    for sample in view.iter_samples(progress=True, autosave=True, batch_size=FO_SAMPLE_BATCH):
+        sample_id = str(sample.id)
         label = sample[label_field]
         detections = list(getattr(label, "detections", None) or [])
         changed = False
@@ -628,9 +718,8 @@ def write_fiftyone(
                 changed = True
         if changed:
             sample[label_field] = label
-            sample.save()
-        for row in rows:
-            if row.sample_id == sample_id and row.detection_id not in seen:
+        for row in by_sample.get(sample_id, ()):
+            if row.detection_id not in seen:
                 append_problem(
                     problems,
                     sample_id=sample_id,
