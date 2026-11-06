@@ -39,7 +39,7 @@ trainer:
     - class_path: lovely_deep_learning.callback.finetuning.DAGNetMilestoneUnfreezeFinetuning
       init_args:
         unfreeze_layers: ["classifier"]   # 自始可训的层（少）；其余 DAGNet.layers 先冻，到 unfreeze_epoch 一并解冻
-        unfreeze_epoch: 10           # 微调与max_epochs一致,剪枝后不冻结
+        unfreeze_epoch: 5           # 微调与max_epochs一致,剪枝后不冻结
 
   logger:
     - class_path: lightning.pytorch.loggers.TensorBoardLogger
@@ -59,7 +59,7 @@ data:
   init_args:
     box_scale: 1.0
     min_side_px: 128
-    train_csv_paths: [/home/huangwenhua/project/dataset/eye/v301_eye/train_v301.csv]
+    train_csv_paths: [/home/huangwenhua/project/dataset/eye/v302_eye/train_v302.csv]
     val_csv_paths: [/home/huangwenhua/project/dataset/eye/v301_eye/test_v302.csv]
     test_csv_paths: [/home/huangwenhua/project/dataset/eye/v301_eye/test_v302.csv]
     predict_csv_paths: [/home/huangwenhua/project/dataset/eye/v301_eye/test_v302.csv]
@@ -132,7 +132,7 @@ model:
     optimizer:
       class_path: torch.optim.RAdam
       init_args:
-        lr: 1e-3 # 随机初始化1e-2,微调1e-2，剪枝
+        lr: 1e-4 # 随机初始化1e-2,微调1e-2，剪枝
     lr_scheduler:
       class_path: torch.optim.lr_scheduler.CosineAnnealingLR
       init_args:
@@ -142,7 +142,7 @@ model:
       class_path: lovely_deep_learning.loss.image_classifier.ImageClassifierCriterion
       init_args:
         label_smoothing: 0.0
-        weight: [0.50, 1.00]
+        weight: [0.547, 0.453]
     postprocess:
       class_path: lovely_deep_learning.postprocess.image_classifier.ImageClassifierPostProcessor
       init_args:
@@ -153,7 +153,7 @@ model:
         num_classes: 2
     model:
       model_name: mobilenet_v2
-      pretrained: true
+      pretrained: True
       weight:
         map_location: cpu
         strict: false
