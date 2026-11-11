@@ -14,7 +14,8 @@ from ultralytics.utils.ops import non_max_suppression
 
 from .base import BaseDataset
 from ..nn.head import Detect
-from ..transforms.mosaic import mosaic4
+from ..transforms.mosaic import mosaic4, resize_long_side
+from ..transforms.yolo_aug import hsv_bgr_, letterbox_bgr, maybe_fliplr, random_affine
 
 
 def iou_xyxy_pair(a: np.ndarray, b: np.ndarray) -> float:
@@ -268,6 +269,15 @@ class ObjectDetectDataset(BaseDataset):
         norm_std: Optional[List[float]] = None,
         mosaic_prob: float = 0.0,
         mosaic_size: int = 640,
+        yolo_numpy_aug: bool = False,
+        degrees: float = 0.0,
+        translate: float = 0.1,
+        scale: float = 0.5,
+        hsv_h: float = 0.015,
+        hsv_s: float = 0.7,
+        hsv_v: float = 0.4,
+        fliplr: float = 0.5,
+        batch_size: int = 16,
     ):
         super().__init__(csv_paths=csv_paths, key_map=key_map, transform=transform)
         self.map_class_id_to_class_name = map_class_id_to_class_name
@@ -275,7 +285,24 @@ class ObjectDetectDataset(BaseDataset):
         self.norm_std = norm_std
         self.mosaic_prob = float(mosaic_prob)
         self.mosaic_size = int(mosaic_size)
+        self.yolo_numpy_aug = bool(yolo_numpy_aug)
+        self.degrees = float(degrees)
+        self.translate = float(translate)
+        self.scale = float(scale)
+        self.hsv_h = float(hsv_h)
+        self.hsv_s = float(hsv_s)
+        self.hsv_v = float(hsv_v)
+        self.fliplr = float(fliplr)
+        self.batch_size = int(batch_size)
         self._has_label = "object_label_path" in self.sample_path_table.columns
+        self._img_paths: list[str] | None = None
+        self._labels: list[tuple[np.ndarray, np.ndarray]] | None = None
+        self.ims: list[np.ndarray | None] | None = None
+        self._im_hw: list[tuple[int, int] | None] | None = None
+        self.buffer: list[int] = []
+        self.max_buffer = 0
+        if self.yolo_numpy_aug and self._has_label:
+            self._prepare_numpy_aug()
 
     def _load_bgr_and_labels(
         self, index: int
@@ -295,6 +322,124 @@ class ObjectDetectDataset(BaseDataset):
         )
         return img_path, img_shape, img_np, cls, bboxes_abs_xyxy, bboxes_cxcywh_rel
 
+    def _prepare_numpy_aug(self) -> None:
+        """训练前把标签读进内存，并准备最近若干张已缩放图的缓冲。"""
+        n = len(self)
+        self._img_paths = self.sample_path_table["img_path"].astype(str).tolist()
+        label_paths = self.sample_path_table["object_label_path"].astype(str).tolist()
+        labels: list[tuple[np.ndarray, np.ndarray]] = []
+        for path in label_paths:
+            if not path or path.lower() == "nan":
+                labels.append(
+                    (
+                        np.zeros((0,), dtype=np.int32),
+                        np.zeros((0, 4), dtype=np.float32),
+                    )
+                )
+                continue
+            labels.append(ObjectDetectDataset.read_yolo_detection_labels(path))
+        self._labels = labels
+        self.ims = [None] * n
+        self._im_hw = [None] * n
+        self.buffer = []
+        self.max_buffer = min(n, max(self.batch_size, 1) * 8, 1000)
+
+    def _load_resized(self, index: int) -> tuple[np.ndarray, tuple[int, int]]:
+        """长边缩到 ``mosaic_size`` 的 BGR 图。命中缓冲时不再读盘。"""
+        assert self.ims is not None and self._im_hw is not None and self._img_paths is not None
+        cached = self.ims[index]
+        hw = self._im_hw[index]
+        if cached is not None and hw is not None:
+            return cached, hw
+        img = cv2.imread(self._img_paths[index])
+        if img is None:
+            raise FileNotFoundError(self._img_paths[index])
+        img, _boxes = resize_long_side(
+            img, np.zeros((0, 4), dtype=np.float32), self.mosaic_size
+        )
+        hw = (int(img.shape[0]), int(img.shape[1]))
+        self.ims[index] = img
+        self._im_hw[index] = hw
+        self.buffer.append(index)
+        while len(self.buffer) > self.max_buffer:
+            old = self.buffer.pop(0)
+            self.ims[old] = None
+            self._im_hw[old] = None
+        return img, hw
+
+    def _xyxy_for_index(self, index: int, hw: tuple[int, int]) -> tuple[np.ndarray, np.ndarray]:
+        assert self._labels is not None
+        cls, rel = self._labels[index]
+        xyxy = ObjectDetectDataset.convert_bboxes_from_cxcywh_relative_to_xyxy_absolute(
+            rel, hw
+        )
+        return cls, xyxy
+
+    def _getitem_numpy_aug(self, index: int) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        """Mosaic + 一次仿射 + HSV + 翻转，输出 uint8 RGB ``(3, s, s)``。"""
+        assert self._img_paths is not None and self._labels is not None
+        n = max(len(self), 1)
+        s = self.mosaic_size
+        img_path = self._img_paths[index]
+        use_mosaic = self.mosaic_prob > 0.0 and random.random() < self.mosaic_prob
+        if use_mosaic:
+            indices = [index] + [random.randint(0, n - 1) for _ in range(3)]
+            images: list[np.ndarray] = []
+            boxes_list: list[np.ndarray] = []
+            cls_list: list[np.ndarray] = []
+            for j in indices:
+                im, hw = self._load_resized(j)
+                cls_j, xyxy_j = self._xyxy_for_index(j, hw)
+                images.append(im)
+                boxes_list.append(xyxy_j)
+                cls_list.append(cls_j)
+            canvas, xyxy, cls = mosaic4(images, boxes_list, cls_list, imgsz=s)
+            img, xyxy, cls = random_affine(
+                canvas,
+                xyxy,
+                cls,
+                degrees=self.degrees,
+                translate=self.translate,
+                scale=self.scale,
+                border=(-s // 2, -s // 2),
+            )
+        else:
+            im, hw = self._load_resized(index)
+            cls, xyxy = self._xyxy_for_index(index, hw)
+            img, xyxy = letterbox_bgr(im, xyxy, s)
+            img, xyxy, cls = random_affine(
+                img,
+                xyxy,
+                cls,
+                degrees=self.degrees,
+                translate=self.translate,
+                scale=self.scale,
+                border=(0, 0),
+            )
+        hsv_bgr_(img, self.hsv_h, self.hsv_s, self.hsv_v)
+        img, xyxy = maybe_fliplr(img, xyxy, self.fliplr)
+        rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        img_tv = tv_tensors.Image(torch.from_numpy(rgb).permute(2, 0, 1).contiguous())
+        out_h, out_w = int(rgb.shape[0]), int(rgb.shape[1])
+        bboxes_tv = tv_tensors.BoundingBoxes(
+            torch.from_numpy(np.ascontiguousarray(xyxy, dtype=np.float32)),
+            format="XYXY",
+            canvas_size=(out_h, out_w),
+        )
+        cls0, rel0 = self._labels[index]
+        net_in: Dict[str, Any] = {
+            "img_path": img_path,
+            "img_shape": (out_h, out_w),
+            "img_tv_transformed": img_tv,
+        }
+        net_out = {
+            "cls_np": cls0,
+            "bboxes_cxcywh_rel_np": rel0,
+            "cls_tv_transformed": torch.from_numpy(np.asarray(cls, dtype=np.int32)),
+            "bboxes_xyxy_abs_tv_transformed": bboxes_tv,
+        }
+        return net_in, net_out
+
     def __getitem__(self, index: int) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         img_path = str(self.sample_path_table["img_path"].iloc[index])
         if not self._has_label:
@@ -310,6 +455,9 @@ class ObjectDetectDataset(BaseDataset):
                 ),
             }
             return net_in, {}
+
+        if self.yolo_numpy_aug:
+            return self._getitem_numpy_aug(index)
 
         use_mosaic = self.mosaic_prob > 0.0 and random.random() < self.mosaic_prob
         if use_mosaic:
@@ -663,6 +811,10 @@ class ObjectDetectDataset(BaseDataset):
                 labels = [x.split()
                           for x in f.read().strip().splitlines() if len(x)]
                 labels = np.array(labels, dtype=np.float32)
+                if labels.size == 0:
+                    labels = np.empty((0, 5), dtype=np.float32)
+                elif labels.ndim == 1:
+                    labels = labels.reshape(1, -1)
 
         cls = labels[:, 0].astype(np.int32)
         bbox = labels[:, 1:5].astype(np.float32)

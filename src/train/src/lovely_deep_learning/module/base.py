@@ -155,7 +155,7 @@ class BaseModule(pl.LightningModule):
             检测为每图 list[dict]）。
         """
         net_in, net_out = batch
-        imgs = BaseDataset.stack_batch_images(net_in)
+        imgs = BaseDataset.model_float_images(BaseDataset.stack_batch_images(net_in))
         batch_size = imgs.shape[0]
         preds = self(imgs)
         loss = self.criterion(preds, net_out=net_out, net_in=net_in)
@@ -212,7 +212,7 @@ class BaseModule(pl.LightningModule):
     def predict_step(self, batch, batch_idx):
         """推理阶段不算 loss / metrics，仅 postprocess 后返回 ``metric_preds``。"""
         net_in, _net_out = batch
-        imgs = BaseDataset.stack_batch_images(net_in)
+        imgs = BaseDataset.model_float_images(BaseDataset.stack_batch_images(net_in))
         with torch.inference_mode():
             preds = self(imgs)
             metric_preds = self.postprocess.run(preds)

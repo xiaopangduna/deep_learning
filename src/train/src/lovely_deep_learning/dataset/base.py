@@ -333,6 +333,13 @@ class BaseDataset(Dataset):
         return torch.stack(tensors, dim=0)
 
     @staticmethod
+    def model_float_images(imgs: torch.Tensor) -> torch.Tensor:
+        """uint8 NCHW 在模型所在设备上变成 ``[0, 1]`` float；已经是 float 则原样返回。"""
+        if imgs.dtype == torch.uint8:
+            return imgs.float().mul_(1.0 / 255.0)
+        return imgs
+
+    @staticmethod
     def get_collate_fn_for_dataloader():
         """返回 DataLoader 的 ``collate_fn``，输出 ``(net_in 元组, net_out 元组)``。"""
         def collate_fn(x):

@@ -8,6 +8,7 @@
 trainer:
   max_epochs: 500
   accelerator: auto
+  precision: 16-mixed
   accumulate_grad_batches: 4  # ObjectDetectModule 会把 backward loss ×4，抵消 Lightning 的 /acc，对齐官方求和
   callbacks:
     # 须排在 ModelCheckpoint 之前：val 期间模型上是 EMA，存盘与官方 best.pt 一致
@@ -75,46 +76,21 @@ data:
     norm_mean: null
     norm_std: null
     batch_size: 16
-    # WSL 约 8GB RAM：Mosaic 每样本读 4 张图，8 workers 在 train→val 切换时会被 OOM killer 杀掉
-    num_workers: 2
+    num_workers: 8
     mosaic_prob: 1.0
     mosaic_size: 640
+    # 训练增强在 Dataset 里用 numpy 完成：读图时长边缩到 640，Mosaic 后一次 warpAffine 得到 640。
+    # worker 交出 uint8，/255 在 GPU 上做。下面的几何参数与官方 hyp 一致。
+    yolo_numpy_aug: true
+    degrees: 0.0
+    translate: 0.1
+    scale: 0.5
+    hsv_h: 0.015
+    hsv_s: 0.7
+    hsv_v: 0.4
+    fliplr: 0.5
     transform_train:
-      class_path: torchvision.transforms.v2.Compose
-      init_args:
-        transforms:
-          # mosaic 已是 1280×1280：跳过 LetterBox，仿射在画布上做完再中心裁 640（对齐官方 mosaic border）
-          - class_path: lovely_deep_learning.transforms.letterbox.LetterBox
-            init_args:
-              size: [640, 640]
-              fill: 114
-              center: true
-              scaleup: true
-              interpolation: 2
-              skip_if_size: [1280, 1280]
-          - class_path: torchvision.transforms.v2.RandomAffine
-            init_args:
-              degrees: [0.0, 0.0]
-              # 0.05×1280 = 64px = 官方 translate 0.1×640；非 mosaic 的 640 图偏保守
-              translate: [0.05, 0.05]
-              scale: [0.5, 1.5]
-              interpolation: 2
-              fill: 114
-          - class_path: torchvision.transforms.v2.CenterCrop
-            init_args:
-              size: [640, 640]
-          - class_path: lovely_deep_learning.transforms.hsv.RandomHSV
-            init_args:
-              hgain: 0.015
-              sgain: 0.7
-              vgain: 0.4
-          - class_path: torchvision.transforms.v2.RandomHorizontalFlip
-            init_args:
-              p: 0.5
-          - class_path: torchvision.transforms.v2.ToDtype
-            init_args:
-              dtype: torch.float32
-              scale: true
+      class_path: torchvision.transforms.v2.Identity
     transform_val:
       class_path: torchvision.transforms.v2.Compose
       init_args:

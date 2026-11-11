@@ -28,6 +28,14 @@ class ObjectDetectDataModule(BaseDataModule):
         norm_std=None,
         mosaic_prob: float = 0.0,
         mosaic_size: int = 640,
+        yolo_numpy_aug: bool = False,
+        degrees: float = 0.0,
+        translate: float = 0.1,
+        scale: float = 0.5,
+        hsv_h: float = 0.015,
+        hsv_s: float = 0.7,
+        hsv_v: float = 0.4,
+        fliplr: float = 0.5,
         **kwargs,
     ):
         """
@@ -60,6 +68,14 @@ class ObjectDetectDataModule(BaseDataModule):
         self.norm_std = norm_std
         self.mosaic_prob = float(mosaic_prob)
         self.mosaic_size = int(mosaic_size)
+        self.yolo_numpy_aug = bool(yolo_numpy_aug)
+        self.degrees = float(degrees)
+        self.translate = float(translate)
+        self.scale = float(scale)
+        self.hsv_h = float(hsv_h)
+        self.hsv_s = float(hsv_s)
+        self.hsv_v = float(hsv_v)
+        self.fliplr = float(fliplr)
 
     def setup(self, stage=None):
         """按 Lightning ``stage`` 创建对应 Dataset；``stage is None`` 时构建全部阶段所用数据集。
@@ -81,6 +97,15 @@ class ObjectDetectDataModule(BaseDataModule):
                 norm_std=self.norm_std,
                 mosaic_prob=self.mosaic_prob,
                 mosaic_size=self.mosaic_size,
+                yolo_numpy_aug=self.yolo_numpy_aug,
+                degrees=self.degrees,
+                translate=self.translate,
+                scale=self.scale,
+                hsv_h=self.hsv_h,
+                hsv_s=self.hsv_s,
+                hsv_v=self.hsv_v,
+                fliplr=self.fliplr,
+                batch_size=self.batch_size,
             )
             self.val_dataset = ObjectDetectDataset(
                 self.val_csv_paths,

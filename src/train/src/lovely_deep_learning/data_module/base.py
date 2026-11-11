@@ -1,6 +1,7 @@
 from typing import List
 
 import lightning.pytorch as pl
+import torch
 from torch.utils.data import DataLoader
 
 
@@ -74,10 +75,11 @@ class BaseDataModule(pl.LightningDataModule):
             "batch_size": self.batch_size,
             "shuffle": shuffle,
             "num_workers": self.num_workers,
+            "pin_memory": torch.cuda.is_available(),
         }
         if self.num_workers > 0:
-            kwargs["prefetch_factor"] = 1
-            kwargs["persistent_workers"] = False
+            kwargs["prefetch_factor"] = 4
+            kwargs["persistent_workers"] = True
         return kwargs
 
     def train_dataloader(self):
@@ -89,11 +91,11 @@ class BaseDataModule(pl.LightningDataModule):
         )
 
     def val_dataloader(self):
-        """验证 DataLoader；当前实现中 ``shuffle=True``（与常见验证集不打乱不同，需注意）。"""
+        """验证 DataLoader，不打乱顺序。"""
         return DataLoader(
             self.val_dataset,
             collate_fn=self.val_dataset.get_collate_fn_for_dataloader(),
-            **self._dataloader_kwargs(shuffle=True),
+            **self._dataloader_kwargs(shuffle=False),
         )
 
     def test_dataloader(self):
