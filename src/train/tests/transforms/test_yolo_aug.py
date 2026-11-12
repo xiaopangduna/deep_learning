@@ -48,13 +48,19 @@ def test_mosaic_border_warp_outputs_half_canvas():
 
 
 def test_numpy_aug_dataset_returns_uint8_square():
+    from lovely_deep_learning.transforms.yolov8_train import YOLOv8TrainAugment
+
     dataset = ObjectDetectDataset(
         csv_paths=["tests/test_data/coco8/train.csv"],
         key_map={"img_path": "path_img", "object_label_path": "path_label_detect_yolo"},
-        transform=None,
-        mosaic_prob=1.0,
-        mosaic_size=64,
-        yolo_numpy_aug=True,
+        transform=YOLOv8TrainAugment(
+            mosaic_prob=1.0,
+            mosaic_size=64,
+            degrees=0.0,
+            translate=0.1,
+            scale=0.5,
+            fliplr=0.5,
+        ),
         batch_size=2,
     )
     net_in, net_out = dataset[0]

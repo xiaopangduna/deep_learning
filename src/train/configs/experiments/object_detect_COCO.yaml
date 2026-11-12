@@ -77,20 +77,20 @@ data:
     norm_std: null
     batch_size: 16
     num_workers: 8
-    mosaic_prob: 1.0
-    mosaic_size: 640
-    # 训练增强在 Dataset 里用 numpy 完成：读图时长边缩到 640，Mosaic 后一次 warpAffine 得到 640。
-    # worker 交出 uint8，/255 在 GPU 上做。下面的几何参数与官方 hyp 一致。
-    yolo_numpy_aug: true
-    degrees: 0.0
-    translate: 0.1
-    scale: 0.5
-    hsv_h: 0.015
-    hsv_s: 0.7
-    hsv_v: 0.4
-    fliplr: 0.5
+    # 训练增强是一条 numpy 管道。Mosaic 在 bind 之后调用 Dataset.load_raw。
+    # worker 交出 uint8，/255 在 GPU 上做。几何参数与官方 hyp 一致。
     transform_train:
-      class_path: torchvision.transforms.v2.Identity
+      class_path: lovely_deep_learning.transforms.yolov8_train.YOLOv8TrainAugment
+      init_args:
+        mosaic_prob: 1.0
+        mosaic_size: 640
+        degrees: 0.0
+        translate: 0.1
+        scale: 0.5
+        hsv_h: 0.015
+        hsv_s: 0.7
+        hsv_v: 0.4
+        fliplr: 0.5
     transform_val:
       class_path: torchvision.transforms.v2.Compose
       init_args:

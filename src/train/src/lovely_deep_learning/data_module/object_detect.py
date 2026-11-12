@@ -26,16 +26,6 @@ class ObjectDetectDataModule(BaseDataModule):
         map_class_id_to_class_name=None,
         norm_mean=None,
         norm_std=None,
-        mosaic_prob: float = 0.0,
-        mosaic_size: int = 640,
-        yolo_numpy_aug: bool = False,
-        degrees: float = 0.0,
-        translate: float = 0.1,
-        scale: float = 0.5,
-        hsv_h: float = 0.015,
-        hsv_s: float = 0.7,
-        hsv_v: float = 0.4,
-        fliplr: float = 0.5,
         **kwargs,
     ):
         """
@@ -54,10 +44,8 @@ class ObjectDetectDataModule(BaseDataModule):
             与训练时 Normalize 一致的均值、方差，用于 tensor→numpy 可视化时的反标准化。
         **kwargs
             交给 ``BaseDataModule.__init__``（各阶段 ``*_csv_paths``、``transform_*``、
-            ``batch_size``、``num_workers`` 等）。
-        mosaic_prob, mosaic_size
-            仅训练 Dataset：4 图 Mosaic 概率（默认 0，行为与旧实验一致）与单图边长 ``s``。
-            验证 / 测试 / 预测不启用。
+            ``batch_size``、``num_workers`` 等）。跨图训练增强放在 ``transform_train``
+            （``YOLOv8TrainAugment``），由 Dataset 在构造时 ``bind``。
         """
         super().__init__(**kwargs)
         self.key_map = key_map
@@ -66,16 +54,6 @@ class ObjectDetectDataModule(BaseDataModule):
         self.map_class_id_to_class_name: dict[int, str] = {}
         self.norm_mean = norm_mean
         self.norm_std = norm_std
-        self.mosaic_prob = float(mosaic_prob)
-        self.mosaic_size = int(mosaic_size)
-        self.yolo_numpy_aug = bool(yolo_numpy_aug)
-        self.degrees = float(degrees)
-        self.translate = float(translate)
-        self.scale = float(scale)
-        self.hsv_h = float(hsv_h)
-        self.hsv_s = float(hsv_s)
-        self.hsv_v = float(hsv_v)
-        self.fliplr = float(fliplr)
 
     def setup(self, stage=None):
         """按 Lightning ``stage`` 创建对应 Dataset；``stage is None`` 时构建全部阶段所用数据集。
@@ -95,16 +73,6 @@ class ObjectDetectDataModule(BaseDataModule):
                 map_class_id_to_class_name=self.map_class_id_to_class_name,
                 norm_mean=self.norm_mean,
                 norm_std=self.norm_std,
-                mosaic_prob=self.mosaic_prob,
-                mosaic_size=self.mosaic_size,
-                yolo_numpy_aug=self.yolo_numpy_aug,
-                degrees=self.degrees,
-                translate=self.translate,
-                scale=self.scale,
-                hsv_h=self.hsv_h,
-                hsv_s=self.hsv_s,
-                hsv_v=self.hsv_v,
-                fliplr=self.fliplr,
                 batch_size=self.batch_size,
             )
             self.val_dataset = ObjectDetectDataset(

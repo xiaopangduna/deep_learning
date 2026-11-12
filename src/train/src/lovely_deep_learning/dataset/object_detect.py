@@ -2,7 +2,6 @@
 
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, Union, Sequence, Callable, List
-import random
 
 import numpy as np
 import pandas as pd
@@ -14,8 +13,7 @@ from ultralytics.utils.ops import non_max_suppression
 
 from .base import BaseDataset
 from ..nn.head import Detect
-from ..transforms.mosaic import mosaic4, resize_long_side
-from ..transforms.yolo_aug import hsv_bgr_, letterbox_bgr, maybe_fliplr, random_affine
+from ..transforms.mosaic import resize_long_side
 
 
 def iou_xyxy_pair(a: np.ndarray, b: np.ndarray) -> float:
@@ -267,32 +265,12 @@ class ObjectDetectDataset(BaseDataset):
         map_class_id_to_class_name: Optional[Union[Dict[Any, str], str]] = None,
         norm_mean: Optional[List[float]] = None,
         norm_std: Optional[List[float]] = None,
-        mosaic_prob: float = 0.0,
-        mosaic_size: int = 640,
-        yolo_numpy_aug: bool = False,
-        degrees: float = 0.0,
-        translate: float = 0.1,
-        scale: float = 0.5,
-        hsv_h: float = 0.015,
-        hsv_s: float = 0.7,
-        hsv_v: float = 0.4,
-        fliplr: float = 0.5,
         batch_size: int = 16,
     ):
         super().__init__(csv_paths=csv_paths, key_map=key_map, transform=transform)
         self.map_class_id_to_class_name = map_class_id_to_class_name
         self.norm_mean = norm_mean
         self.norm_std = norm_std
-        self.mosaic_prob = float(mosaic_prob)
-        self.mosaic_size = int(mosaic_size)
-        self.yolo_numpy_aug = bool(yolo_numpy_aug)
-        self.degrees = float(degrees)
-        self.translate = float(translate)
-        self.scale = float(scale)
-        self.hsv_h = float(hsv_h)
-        self.hsv_s = float(hsv_s)
-        self.hsv_v = float(hsv_v)
-        self.fliplr = float(fliplr)
         self.batch_size = int(batch_size)
         self._has_label = "object_label_path" in self.sample_path_table.columns
         self._img_paths: list[str] | None = None
@@ -301,30 +279,16 @@ class ObjectDetectDataset(BaseDataset):
         self._im_hw: list[tuple[int, int] | None] | None = None
         self.buffer: list[int] = []
         self.max_buffer = 0
-        if self.yolo_numpy_aug and self._has_label:
-            self._prepare_numpy_aug()
+        self._cache_imgsz = 0
+        if self.transform is not None and getattr(self.transform, "reads_dataset", False):
+            self.transform.bind(self)
 
-    def _load_bgr_and_labels(
-        self, index: int
-    ) -> tuple[str, tuple, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        img_path = str(self.sample_path_table["img_path"].iloc[index])
-        img_np, img_shape = BaseDataset.read_img(img_path, None)
-        object_label_path = str(
-            self.sample_path_table["object_label_path"].iloc[index]
-        )
-        cls, bboxes_cxcywh_rel = ObjectDetectDataset.read_yolo_detection_labels(
-            object_label_path
-        )
-        bboxes_abs_xyxy = (
-            ObjectDetectDataset.convert_bboxes_from_cxcywh_relative_to_xyxy_absolute(
-                bboxes_cxcywh_rel, img_shape
-            )
-        )
-        return img_path, img_shape, img_np, cls, bboxes_abs_xyxy, bboxes_cxcywh_rel
-
-    def _prepare_numpy_aug(self) -> None:
-        """训练前把标签读进内存，并准备最近若干张已缩放图的缓冲。"""
+    def prepare_train_cache(self, imgsz: int) -> None:
+        """把标签读进内存，并准备长边为 ``imgsz`` 的缩放图缓冲。由训练变换的 ``bind`` 调用。"""
+        if not self._has_label:
+            return
         n = len(self)
+        self._cache_imgsz = int(imgsz)
         self._img_paths = self.sample_path_table["img_path"].astype(str).tolist()
         label_paths = self.sample_path_table["object_label_path"].astype(str).tolist()
         labels: list[tuple[np.ndarray, np.ndarray]] = []
@@ -344,101 +308,33 @@ class ObjectDetectDataset(BaseDataset):
         self.buffer = []
         self.max_buffer = min(n, max(self.batch_size, 1) * 8, 1000)
 
-    def _load_resized(self, index: int) -> tuple[np.ndarray, tuple[int, int]]:
-        """长边缩到 ``mosaic_size`` 的 BGR 图。命中缓冲时不再读盘。"""
-        assert self.ims is not None and self._im_hw is not None and self._img_paths is not None
+    def load_raw(self, index: int) -> tuple[np.ndarray, tuple[int, int], np.ndarray, np.ndarray]:
+        """长边缩到缓存尺寸的 BGR 图、高宽、类别、像素 XYXY。命中缓冲时不再读盘。"""
+        if self.ims is None or self._im_hw is None or self._img_paths is None or self._labels is None:
+            raise RuntimeError("load_raw 须在 prepare_train_cache 之后调用")
         cached = self.ims[index]
         hw = self._im_hw[index]
-        if cached is not None and hw is not None:
-            return cached, hw
-        img = cv2.imread(self._img_paths[index])
-        if img is None:
-            raise FileNotFoundError(self._img_paths[index])
-        img, _boxes = resize_long_side(
-            img, np.zeros((0, 4), dtype=np.float32), self.mosaic_size
-        )
-        hw = (int(img.shape[0]), int(img.shape[1]))
-        self.ims[index] = img
-        self._im_hw[index] = hw
-        self.buffer.append(index)
-        while len(self.buffer) > self.max_buffer:
-            old = self.buffer.pop(0)
-            self.ims[old] = None
-            self._im_hw[old] = None
-        return img, hw
-
-    def _xyxy_for_index(self, index: int, hw: tuple[int, int]) -> tuple[np.ndarray, np.ndarray]:
-        assert self._labels is not None
+        if cached is None or hw is None:
+            img = cv2.imread(self._img_paths[index])
+            if img is None:
+                raise FileNotFoundError(self._img_paths[index])
+            img, _boxes = resize_long_side(
+                img, np.zeros((0, 4), dtype=np.float32), self._cache_imgsz
+            )
+            hw = (int(img.shape[0]), int(img.shape[1]))
+            self.ims[index] = img
+            self._im_hw[index] = hw
+            self.buffer.append(index)
+            while len(self.buffer) > self.max_buffer:
+                old = self.buffer.pop(0)
+                self.ims[old] = None
+                self._im_hw[old] = None
+            cached = img
         cls, rel = self._labels[index]
         xyxy = ObjectDetectDataset.convert_bboxes_from_cxcywh_relative_to_xyxy_absolute(
             rel, hw
         )
-        return cls, xyxy
-
-    def _getitem_numpy_aug(self, index: int) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-        """Mosaic + 一次仿射 + HSV + 翻转，输出 uint8 RGB ``(3, s, s)``。"""
-        assert self._img_paths is not None and self._labels is not None
-        n = max(len(self), 1)
-        s = self.mosaic_size
-        img_path = self._img_paths[index]
-        use_mosaic = self.mosaic_prob > 0.0 and random.random() < self.mosaic_prob
-        if use_mosaic:
-            indices = [index] + [random.randint(0, n - 1) for _ in range(3)]
-            images: list[np.ndarray] = []
-            boxes_list: list[np.ndarray] = []
-            cls_list: list[np.ndarray] = []
-            for j in indices:
-                im, hw = self._load_resized(j)
-                cls_j, xyxy_j = self._xyxy_for_index(j, hw)
-                images.append(im)
-                boxes_list.append(xyxy_j)
-                cls_list.append(cls_j)
-            canvas, xyxy, cls = mosaic4(images, boxes_list, cls_list, imgsz=s)
-            img, xyxy, cls = random_affine(
-                canvas,
-                xyxy,
-                cls,
-                degrees=self.degrees,
-                translate=self.translate,
-                scale=self.scale,
-                border=(-s // 2, -s // 2),
-            )
-        else:
-            im, hw = self._load_resized(index)
-            cls, xyxy = self._xyxy_for_index(index, hw)
-            img, xyxy = letterbox_bgr(im, xyxy, s)
-            img, xyxy, cls = random_affine(
-                img,
-                xyxy,
-                cls,
-                degrees=self.degrees,
-                translate=self.translate,
-                scale=self.scale,
-                border=(0, 0),
-            )
-        hsv_bgr_(img, self.hsv_h, self.hsv_s, self.hsv_v)
-        img, xyxy = maybe_fliplr(img, xyxy, self.fliplr)
-        rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        img_tv = tv_tensors.Image(torch.from_numpy(rgb).permute(2, 0, 1).contiguous())
-        out_h, out_w = int(rgb.shape[0]), int(rgb.shape[1])
-        bboxes_tv = tv_tensors.BoundingBoxes(
-            torch.from_numpy(np.ascontiguousarray(xyxy, dtype=np.float32)),
-            format="XYXY",
-            canvas_size=(out_h, out_w),
-        )
-        cls0, rel0 = self._labels[index]
-        net_in: Dict[str, Any] = {
-            "img_path": img_path,
-            "img_shape": (out_h, out_w),
-            "img_tv_transformed": img_tv,
-        }
-        net_out = {
-            "cls_np": cls0,
-            "bboxes_cxcywh_rel_np": rel0,
-            "cls_tv_transformed": torch.from_numpy(np.asarray(cls, dtype=np.int32)),
-            "bboxes_xyxy_abs_tv_transformed": bboxes_tv,
-        }
-        return net_in, net_out
+        return cached, hw, cls, xyxy
 
     def __getitem__(self, index: int) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         img_path = str(self.sample_path_table["img_path"].iloc[index])
@@ -456,65 +352,45 @@ class ObjectDetectDataset(BaseDataset):
             }
             return net_in, {}
 
-        if self.yolo_numpy_aug:
-            return self._getitem_numpy_aug(index)
+        if self.transform is not None and getattr(self.transform, "reads_dataset", False):
+            assert self._img_paths is not None and self._labels is not None
+            img_tv, cls_tensor, bboxes_tv = self.transform(index)
+            cls0, rel0 = self._labels[index]
+            out_h, out_w = int(img_tv.shape[-2]), int(img_tv.shape[-1])
+            net_in = {
+                "img_path": self._img_paths[index],
+                "img_shape": (out_h, out_w),
+                "img_tv_transformed": img_tv,
+            }
+            net_out = {
+                "cls_np": cls0,
+                "bboxes_cxcywh_rel_np": rel0,
+                "cls_tv_transformed": cls_tensor,
+                "bboxes_xyxy_abs_tv_transformed": bboxes_tv,
+            }
+            return net_in, net_out
 
-        use_mosaic = self.mosaic_prob > 0.0 and random.random() < self.mosaic_prob
-        if use_mosaic:
-            n = max(len(self), 1)
-            indices = [index] + [random.randint(0, n - 1) for _ in range(3)]
-            images_rgb = []
-            boxes_list = []
-            cls_list = []
-            img_path, img_shape, img_bgr0, cls, xyxy0, bboxes_cxcywh_rel = (
-                self._load_bgr_and_labels(indices[0])
+        img_np, img_shape = BaseDataset.read_img(img_path, None)
+        img_tv = tv_tensors.Image(
+            BaseDataset.convert_img_from_numpy_to_tensor_uint8(img_np)
+        )
+        object_label_path = str(
+            self.sample_path_table["object_label_path"].iloc[index]
+        )
+        cls, bboxes_cxcywh_rel = ObjectDetectDataset.read_yolo_detection_labels(
+            object_label_path
+        )
+        bboxes_abs_xyxy = (
+            ObjectDetectDataset.convert_bboxes_from_cxcywh_relative_to_xyxy_absolute(
+                bboxes_cxcywh_rel, img_shape
             )
-            images_rgb.append(cv2.cvtColor(img_bgr0, cv2.COLOR_BGR2RGB))
-            boxes_list.append(xyxy0)
-            cls_list.append(cls)
-            for j in indices[1:]:
-                _p, _shape, img_bgr, cls_j, xyxy_j, _rel = self._load_bgr_and_labels(j)
-                images_rgb.append(cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB))
-                boxes_list.append(xyxy_j)
-                cls_list.append(cls_j)
-            mosaic_hwc, mosaic_xyxy, mosaic_cls = mosaic4(
-                images_rgb,
-                boxes_list,
-                cls_list,
-                imgsz=self.mosaic_size,
-            )
-            img_tv = tv_tensors.Image(
-                torch.from_numpy(mosaic_hwc).permute(2, 0, 1).contiguous()
-            )
-            canvas_h, canvas_w = mosaic_hwc.shape[0], mosaic_hwc.shape[1]
-            cls_tensor = torch.from_numpy(mosaic_cls)
-            bboxes_tv = tv_tensors.BoundingBoxes(
-                torch.from_numpy(mosaic_xyxy.astype(np.float32, copy=False)),
-                format="XYXY",
-                canvas_size=(canvas_h, canvas_w),
-            )
-        else:
-            img_np, img_shape = BaseDataset.read_img(img_path, None)
-            img_tv = tv_tensors.Image(
-                BaseDataset.convert_img_from_numpy_to_tensor_uint8(img_np)
-            )
-            object_label_path = str(
-                self.sample_path_table["object_label_path"].iloc[index]
-            )
-            cls, bboxes_cxcywh_rel = ObjectDetectDataset.read_yolo_detection_labels(
-                object_label_path
-            )
-            bboxes_abs_xyxy = (
-                ObjectDetectDataset.convert_bboxes_from_cxcywh_relative_to_xyxy_absolute(
-                    bboxes_cxcywh_rel, img_shape
-                )
-            )
-            cls_tensor = torch.from_numpy(cls)
-            bboxes_tv = tv_tensors.BoundingBoxes(
-                torch.from_numpy(bboxes_abs_xyxy.astype(np.float32, copy=False)),
-                format="XYXY",
-                canvas_size=(img_shape[0], img_shape[1]),
-            )
+        )
+        cls_tensor = torch.from_numpy(cls)
+        bboxes_tv = tv_tensors.BoundingBoxes(
+            torch.from_numpy(bboxes_abs_xyxy.astype(np.float32, copy=False)),
+            format="XYXY",
+            canvas_size=(img_shape[0], img_shape[1]),
+        )
 
         net_in: Dict[str, Any] = {
             "img_path": img_path,

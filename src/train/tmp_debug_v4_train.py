@@ -54,7 +54,6 @@ def main() -> None:
         csv_paths=[str(root / "datasets/COCO/val.csv")],
         key_map={"img_path": "path_img", "object_label_path": "path_label_detect_yolo"},
         transform=val_tf,
-        mosaic_prob=0.0,
     )
     loader = DataLoader(
         ds,

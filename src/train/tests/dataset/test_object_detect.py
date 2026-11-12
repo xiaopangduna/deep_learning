@@ -220,33 +220,33 @@ def test_ObjectDetectDataset_draw_label_on_numpy_with_transform():
         "./tmp/test_ObjectDetectDataset_draw_label_on_numpy_with_transform.jpg", img_with_label)
 
 
-def test_ObjectDetectDataset_mosaic_prob_zero_keeps_original_hw():
+def test_ObjectDetectDataset_without_train_aug_keeps_original_hw():
     dataset = ObjectDetectDataset(
         csv_paths=PATH_CSV,
         key_map=KEY_MAP,
         transform=None,
-        mosaic_prob=0.0,
     )
     net_in, net_out = dataset[0]
     h, w = net_in["img_shape"][0], net_in["img_shape"][1]
     assert tuple(net_in["img_tv_transformed"].shape[-2:]) == (h, w)
 
 
-def test_ObjectDetectDataset_mosaic_prob_one_canvas_2s():
+def test_ObjectDetectDataset_yolov8_train_aug_outputs_square():
+    from lovely_deep_learning.transforms.yolov8_train import YOLOv8TrainAugment
+
     s = 64
     dataset = ObjectDetectDataset(
         csv_paths=PATH_CSV,
         key_map=KEY_MAP,
-        transform=None,
-        mosaic_prob=1.0,
-        mosaic_size=s,
+        transform=YOLOv8TrainAugment(mosaic_prob=1.0, mosaic_size=s, fliplr=0.0),
     )
     net_in, net_out = dataset[0]
-    assert tuple(net_in["img_tv_transformed"].shape) == (3, 2 * s, 2 * s)
+    assert tuple(net_in["img_tv_transformed"].shape) == (3, s, s)
+    assert net_in["img_tv_transformed"].dtype == torch.uint8
     boxes = net_out["bboxes_xyxy_abs_tv_transformed"]
-    assert tuple(boxes.canvas_size) == (2 * s, 2 * s)
+    assert tuple(boxes.canvas_size) == (s, s)
     xyxy = boxes.as_subclass(torch.Tensor)
     if xyxy.numel():
         assert torch.all(xyxy[:, 2] > xyxy[:, 0])
         assert torch.all(xyxy[:, 0] >= 0)
-        assert torch.all(xyxy[:, 2] <= 2 * s)
+        assert torch.all(xyxy[:, 2] <= s)
