@@ -39,9 +39,14 @@ trainer:
   logger:
     - class_path: lightning.pytorch.loggers.TensorBoardLogger
       init_args:
-        save_dir: logs
-        name: image_classifiter_IMAGE_NETTE  
-        version: null
+        save_dir: &logs_dir logs
+        name: &logger_name image_classifiter_IMAGE_NETTE  
+        version: &logger_version null
+    - class_path: lightning.pytorch.loggers.CSVLogger
+      init_args:
+        save_dir: *logs_dir
+        name: *logger_name  
+        version: *logger_version
   # profiler:
   #   class_path: lightning.pytorch.profilers.SimpleProfiler
   #   init_args:
