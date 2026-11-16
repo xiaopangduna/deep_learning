@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""MobileNetV2：比对板端 NPZ 与本目录 ONNX dump。
+"""比对同一张图的板端 NPZ 与 ONNX NPZ。
 
+板端文件来自 dump_img_output_from_image，ONNX 文件来自 dump_onnx_output_from_image.py。
 shape 必须已经一致。脚本不做转置。
 """
 from __future__ import annotations
@@ -15,9 +16,9 @@ import numpy as np
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Compare MobileNetV2 board and ONNX float32 NPZ dumps")
-    p.add_argument("--board", required=True, help="Board dump NPZ from img_tensor_dump_sigmastar")
-    p.add_argument("--onnx", required=True, help="ONNX dump NPZ from eval_onnx_dump.py")
+    p = argparse.ArgumentParser(description="Compare one image's board NPZ with its ONNX NPZ")
+    p.add_argument("--board", required=True, help="Board dump NPZ from dump_img_output_from_image")
+    p.add_argument("--onnx", required=True, help="ONNX dump NPZ from dump_onnx_output_from_image.py")
     return p.parse_args()
 
 

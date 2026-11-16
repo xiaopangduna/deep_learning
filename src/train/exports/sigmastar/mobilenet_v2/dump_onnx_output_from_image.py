@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
-"""MobileNetV2：一张图跑 ONNX，写成与板端 img_tensor_dump 相同的 NPZ。
+"""一张图跑 ONNX，写成与板端 dump_img_output_from_image 相同的 NPZ。
 
 只服务本目录的分类模型。图应已是模型输入尺寸；尺寸不同时才 INTER_LINEAR。
 输出按 Runtime 的顺序存 float32，不做转置。
+和 compare_img_and_onnx_dumps.py 配合：本脚本写出 <模型名>.npz，比对脚本再读它。
+
+不传 --mean 和 --std 时按 RGB ImageNet 做 (x - mean) / std。
+两边都写 none 时保持像素原值。灰度要显式传入 --mean 0 --std 255。
 """
 from __future__ import annotations
 
@@ -15,21 +19,86 @@ from typing import Any
 
 import numpy as np
 
+DEFAULT_MEAN = (123.68, 116.28, 103.53)
+DEFAULT_STD = (58.395, 57.12, 57.375)
+
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="Dump one MobileNetV2 ONNX inference to a float32 NPZ"
+        description="Dump one image's ONNX outputs to a float32 NPZ"
     )
     p.add_argument("--model", required=True, help="ONNX model path")
     p.add_argument("--image", required=True, help="One image, preferably already model HxW")
-    p.add_argument("--out", default="dump_onnx.npz", help="Output NPZ path")
     p.add_argument(
-        "--value-scale",
-        type=float,
-        default=1.0,
-        help="Multiply uint8 pixels after cast to float32 (1 keeps 0-255, 1/255 matches gray std_value=255)",
+        "--out",
+        default=None,
+        help="Output NPZ path. Default is the ONNX file stem with .npz",
+    )
+    p.add_argument(
+        "--mean",
+        default=None,
+        help="Per-channel mean, comma-separated. Omit with --std to use 123.68,116.28,103.53. 'none' keeps raw pixels",
+    )
+    p.add_argument(
+        "--std",
+        default=None,
+        help="Per-channel std, comma-separated. Omit with --mean to use 58.395,57.12,57.375. 'none' keeps raw pixels",
     )
     return p.parse_args()
+
+
+def _parse_floats(text: str, flag: str) -> list[float]:
+    parts = [item.strip() for item in text.split(",") if item.strip()]
+    if not parts:
+        raise SystemExit(f"{flag} is empty")
+    values: list[float] = []
+    for item in parts:
+        try:
+            values.append(float(item))
+        except ValueError:
+            raise SystemExit(f"{flag} value {item!r} is not a number or none") from None
+    return values
+
+
+def _expand(values: list[float], channels: int, flag: str) -> list[float]:
+    if len(values) == 1:
+        return values * channels
+    if len(values) == channels:
+        return values
+    raise SystemExit(f"{flag} has {len(values)} values, model has {channels} channels")
+
+
+def resolve_norm(
+    mean_text: str | None,
+    std_text: str | None,
+    channels: int,
+) -> tuple[np.ndarray | None, np.ndarray | None]:
+    """Return mean and std vectors, or (None, None) when pixels stay raw."""
+    if mean_text is not None:
+        mean_text = mean_text.strip()
+    if std_text is not None:
+        std_text = std_text.strip()
+    if mean_text is None and std_text is None:
+        mean_vals = list(DEFAULT_MEAN)
+        std_vals = list(DEFAULT_STD)
+    elif mean_text is None or std_text is None:
+        raise SystemExit("--mean and --std must be passed together")
+    elif mean_text.lower() == "none" and std_text.lower() == "none":
+        return None, None
+    elif mean_text.lower() == "none" or std_text.lower() == "none":
+        raise SystemExit("--mean and --std must both be none, or both be numbers")
+    else:
+        mean_vals = _parse_floats(mean_text, "--mean")
+        std_vals = _parse_floats(std_text, "--std")
+
+    mean_vals = _expand(mean_vals, channels, "--mean")
+    std_vals = _expand(std_vals, channels, "--std")
+    if any(value == 0.0 for value in std_vals):
+        raise SystemExit("--std contains 0")
+    return (
+        np.asarray(mean_vals, dtype=np.float32),
+        np.asarray(std_vals, dtype=np.float32),
+    )
 
 
 def file_sha256(path: Path) -> str:
@@ -73,7 +142,8 @@ def prepare_input(
     channels: int,
     model_h: int,
     model_w: int,
-    value_scale: float,
+    mean: np.ndarray | None,
+    std: np.ndarray | None,
 ) -> tuple[np.ndarray, int, int, bool, str]:
     import cv2
 
@@ -92,7 +162,12 @@ def prepare_input(
     else:
         color = "GRAY"
 
-    array = image.astype(np.float32) * np.float32(value_scale)
+    array = image.astype(np.float32)
+    if mean is not None and std is not None:
+        if array.ndim == 2:
+            array = (array - mean[0]) / std[0]
+        else:
+            array = (array - mean.reshape(1, 1, -1)) / std.reshape(1, 1, -1)
     if layout == "NCHW":
         if array.ndim == 2:
             array = array[None, None, :, :]
@@ -132,8 +207,13 @@ def main() -> int:
         return 1
     onnx_in = inputs[0]
     layout, channels, model_h, model_w = input_layout(list(onnx_in.shape))
+    mean, std = resolve_norm(args.mean, args.std, channels)
+    if mean is None:
+        print("norm: none")
+    else:
+        print(f"norm: mean={mean.tolist()} std={std.tolist()}")
     tensor, image_w, image_h, resized, color = prepare_input(
-        image_path, layout, channels, model_h, model_w, args.value_scale
+        image_path, layout, channels, model_h, model_w, mean, std
     )
 
     output_metas = sess.get_outputs()
@@ -171,7 +251,8 @@ def main() -> int:
         "image_h": int(image_h),
         "model_w": int(model_w),
         "model_h": int(model_h),
-        "value_scale": float(args.value_scale),
+        "mean": None if mean is None else [float(v) for v in mean],
+        "std": None if std is None else [float(v) for v in std],
         "input_layout": layout,
         "input_color": color,
         "input_name": onnx_in.name,
@@ -182,7 +263,7 @@ def main() -> int:
     meta_bytes = json.dumps(meta, separators=(",", ":")).encode("utf-8")
     arrays["meta"] = np.frombuffer(meta_bytes, dtype=np.uint8).copy()
 
-    out_path = Path(args.out)
+    out_path = Path(args.out) if args.out else Path(model_path.stem + ".npz")
     out_path.parent.mkdir(parents=True, exist_ok=True)
     np.savez(out_path, **arrays)
     print(f"done: {out_path}")
