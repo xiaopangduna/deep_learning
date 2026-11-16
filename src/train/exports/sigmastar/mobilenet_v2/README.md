@@ -86,3 +86,27 @@ output_0 shape=(1, 1000) max_abs=0.98135 mean_abs=0.21693 rmse=0.279152 cosine=0
 | rel | 平均绝对差除以 ONNX 输出的平均幅度 |
 
 这次 top-5 都是 249, 248, 250, 537, 235，top-1 的分数几乎相同。这是 INT16 量化误差，分类结果不变。换几张图仍然大于 0.99，这条转换链路就是稳的。
+
+## 整表精度
+
+`dump_onnx_classifier_json.py` 按 CSV 跑 ONNX，写成和板端 `image_classifiter_from_detect_box_sigmastar` 相同的 JSON。`score_classifier_json.py` 读这份 JSON，也读板端拷回来的 JSON。
+
+板端 JSON 的 `meta.acc1` / `acc5` 直接拿 CSV 的 `class_id` 比 `pred_id`。Imagenette 的 `class_id` 是 0–9，模型输出是 ImageNet-1000，这两套编号对不上。打分脚本把 10 个类映到 ImageNet 下标后再算 top-1、top-5。
+
+几何用 `--prep`，和板端同名。默认 `imagenet`：短边缩到 `floor(224/0.875)=256`，再中心裁 224。`--prep letterbox` 保持宽高比，空处填 114。`--prep resize` 直接拉到 224。像素是 `(x - mean) / std`。不写 `--mean` 和 `--std` 时用 `input_config.ini` 的 `123.68,116.28,103.53` 和 `58.395,57.12,57.375`。`.img` 里这步已经做了，ONNX 要在脚本里做。板端那份如果是 NV12 打包，logit 不会和 ONNX 逐元素相同；精度两边各自用打分脚本算。
+
+`tmp/mobilenet_v2_224_ssd2355.json` 的 meta 有 `letterbox_fill`、没有 `prep`，那次板端是 letterbox。要和它对齐，ONNX 加 `--prep letterbox`。
+
+```bash
+cd exports/sigmastar/mobilenet_v2
+
+python dump_onnx_classifier_json.py \
+  --model onnx/mobilenet_v2.onnx \
+  --csv ../../../datasets/IMAGENETTE/val.csv \
+  --out mobilenet_v2_imagenette_val.json
+
+python score_classifier_json.py --dump mobilenet_v2_imagenette_val.json
+python score_classifier_json.py --dump ../../../tmp/mobilenet_v2_224_ssd2355.json
+```
+
+`--limit N` 只跑 CSV 前 N 行。没有成功样本时 dump 脚本退出码为 1。

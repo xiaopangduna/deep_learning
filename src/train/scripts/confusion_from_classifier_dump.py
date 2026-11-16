@@ -1,20 +1,22 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""从分类 dump CSV（板端或 ONNX）计算 3×3 混淆矩阵与准确率。
+"""从分类 dump 计算混淆矩阵与准确率。
 
-Dump 列需含 ``gt_id,pred_id``（与板端 ``image_classifiter_from_detect_box_sigmastar`` /
-``eval_box_crop_classifier_onnx.py`` 一致）。
+板端 ``image_classifiter_from_detect_box_sigmastar`` 写 JSON，读 ``samples`` 里的
+``class_id,pred_id``。ONNX 脚本 ``eval_box_crop_classifier_onnx.py`` 仍写 CSV，用
+``gt_id,pred_id``（含标签映射）。
 
 示例::
 
-  python scripts/confusion_from_classifier_dump.py --dump dump_board.csv
-  python scripts/confusion_from_classifier_dump.py --dump dump_onnx.csv
+    python scripts/confusion_from_classifier_dump.py --dump dump_board.json
+    python scripts/confusion_from_classifier_dump.py --dump dump_onnx.csv
 """
 
 from __future__ import annotations
 
 import argparse
 import csv
+import json
 import sys
 from pathlib import Path
 
@@ -22,10 +24,47 @@ import numpy as np
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Confusion matrix from classifier dump CSV")
-    p.add_argument("--dump", required=True, help="dump CSV with gt_id,pred_id")
+    p = argparse.ArgumentParser(description="Confusion matrix from classifier dump JSON or CSV")
+    p.add_argument("--dump", required=True, help="board JSON (samples) or CSV with gt_id,pred_id")
     p.add_argument("--num-classes", type=int, default=3, help="matrix size (default: 3)")
     return p.parse_args()
+
+
+def load_pairs(dump_path: Path) -> list[tuple[int, int]] | None:
+    if dump_path.suffix.lower() == ".json":
+        try:
+            data = json.loads(dump_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            print(f"invalid json: {exc}", file=sys.stderr)
+            return None
+        samples = data.get("samples") if isinstance(data, dict) else None
+        if not isinstance(samples, list):
+            print("json missing samples array", file=sys.stderr)
+            return None
+        pairs: list[tuple[int, int]] = []
+        for i, row in enumerate(samples):
+            if not isinstance(row, dict) or "pred_id" not in row:
+                print(f"sample {i} missing pred_id", file=sys.stderr)
+                return None
+            if "class_id" in row:
+                label = int(row["class_id"])
+            elif "gt_id" in row:
+                label = int(row["gt_id"])
+            else:
+                print(f"sample {i} missing class_id", file=sys.stderr)
+                return None
+            pairs.append((label, int(row["pred_id"])))
+        return pairs
+
+    pairs = []
+    with dump_path.open(newline="") as ifs:
+        reader = csv.DictReader(ifs)
+        if reader.fieldnames is None or not {"gt_id", "pred_id"}.issubset(set(reader.fieldnames)):
+            print("dump must have gt_id,pred_id columns", file=sys.stderr)
+            return None
+        for row in reader:
+            pairs.append((int(float(row["gt_id"])), int(float(row["pred_id"]))))
+    return pairs
 
 
 def main() -> int:
@@ -38,24 +77,20 @@ def main() -> int:
         print(f"invalid --num-classes: {args.num_classes}", file=sys.stderr)
         return 1
 
+    pairs = load_pairs(dump_path)
+    if pairs is None:
+        return 1
+
     n = args.num_classes
     cm = np.zeros((n, n), dtype=np.int64)
     total = 0
     skipped = 0
-
-    with dump_path.open(newline="") as ifs:
-        reader = csv.DictReader(ifs)
-        if reader.fieldnames is None or not {"gt_id", "pred_id"}.issubset(set(reader.fieldnames)):
-            print("dump must have gt_id,pred_id columns", file=sys.stderr)
-            return 1
-        for row in reader:
-            gt = int(float(row["gt_id"]))
-            pred = int(float(row["pred_id"]))
-            if gt < 0 or gt >= n or pred < 0 or pred >= n:
-                skipped += 1
-                continue
-            cm[gt, pred] += 1
-            total += 1
+    for gt, pred in pairs:
+        if gt < 0 or gt >= n or pred < 0 or pred >= n:
+            skipped += 1
+            continue
+        cm[gt, pred] += 1
+        total += 1
 
     if total == 0:
         print("no valid rows", file=sys.stderr)
