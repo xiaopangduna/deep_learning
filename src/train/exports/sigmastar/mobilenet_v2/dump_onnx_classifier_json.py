@@ -11,6 +11,9 @@
 123.68,116.28,103.53 和 58.395,57.12,57.375，与 input_config.ini 一致。
 两边都写 none 时保持像素原值。
 
+推理优先用 CUDA。先 preload uv 装进 site-packages 的 CUDA 12 / cuDNN 9，
+这样不必依赖 shell 里的 LD_LIBRARY_PATH。CUDA 建不起来就退回 CPU。
+
 meta.acc1 / acc5 只比较 CSV 的 class_id 和 pred_id，不做 Imagenette 到 ImageNet 的映射。
 映射后的精度用 score_classifier_json.py。
 """
@@ -279,9 +282,18 @@ def to_model_input(
 def make_session(model_path: Path):
     import onnxruntime as ort
 
-    provider = "CPUExecutionProvider"
-    session = ort.InferenceSession(str(model_path), providers=[provider])
-    return session, provider
+    ort.preload_dlls()
+    available = ort.get_available_providers()
+    providers = [
+        name
+        for name in ("CUDAExecutionProvider", "CPUExecutionProvider")
+        if name in available
+    ]
+    if not providers:
+        raise SystemExit(f"no supported provider in {available}")
+    session = ort.InferenceSession(str(model_path), providers=providers)
+    used = session.get_providers()
+    return session, used[0] if used else providers[0]
 
 
 def write_dump(out_path: Path, meta: dict[str, Any], sample_path: Path, ok_count: int) -> None:

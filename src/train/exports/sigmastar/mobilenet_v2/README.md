@@ -95,6 +95,8 @@ output_0 shape=(1, 1000) max_abs=0.98135 mean_abs=0.21693 rmse=0.279152 cosine=0
 
 几何用 `--prep`，和板端同名。默认 `imagenet`：短边缩到 `floor(224/0.875)=256`，再中心裁 224。`--prep letterbox` 保持宽高比，空处填 114。`--prep resize` 直接拉到 224。像素是 `(x - mean) / std`。不写 `--mean` 和 `--std` 时用 `input_config.ini` 的 `123.68,116.28,103.53` 和 `58.395,57.12,57.375`。`.img` 里这步已经做了，ONNX 要在脚本里做。板端那份如果是 NV12 打包，logit 不会和 ONNX 逐元素相同；精度两边各自用打分脚本算。
 
+推理优先 CUDA。脚本会先加载 uv 环境里 `nvidia-*` 包的 CUDA 12 / cuDNN 9，不看 shell 的 `LD_LIBRARY_PATH`（那边如果还是 CUDA 11.8，对不上 onnxruntime-gpu 1.23）。CUDA 不可用时退回 CPU。启动时打印 `provider:`。
+
 `tmp/mobilenet_v2_224_ssd2355.json` 的 meta 有 `letterbox_fill`、没有 `prep`，那次板端是 letterbox。要和它对齐，ONNX 加 `--prep letterbox`。
 
 ```bash
