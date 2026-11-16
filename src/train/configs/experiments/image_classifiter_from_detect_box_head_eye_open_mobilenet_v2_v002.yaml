@@ -4,7 +4,7 @@
 # 模型、损失、指标沿用 ImageClassifierModule。分类头输出 2 类。
 
 trainer:
-  max_epochs: 30 # 随机初始化500，微调50
+  max_epochs: 50 # 随机初始化500，微调50
   accelerator: auto
   accumulate_grad_batches: 8
   callbacks:
@@ -39,7 +39,7 @@ trainer:
     - class_path: lovely_deep_learning.callback.finetuning.DAGNetMilestoneUnfreezeFinetuning
       init_args:
         unfreeze_layers: ["classifier"]   # 自始可训的层（少）；其余 DAGNet.layers 先冻，到 unfreeze_epoch 一并解冻
-        unfreeze_epoch: 5           # 微调与max_epochs一致,剪枝后不冻结
+        unfreeze_epoch: 10           # 微调与max_epochs一致,剪枝后不冻结
 
   logger:
     - class_path: lightning.pytorch.loggers.TensorBoardLogger
@@ -60,9 +60,9 @@ data:
     box_scale: 1.0
     min_side_px: 128
     train_csv_paths: [/home/huangwenhua/project/dataset/eye/v302_eye/train_v302.csv]
-    val_csv_paths: [/home/huangwenhua/project/dataset/eye/v301_eye/test_v302.csv]
-    test_csv_paths: [/home/huangwenhua/project/dataset/eye/v301_eye/test_v302.csv]
-    predict_csv_paths: [/home/huangwenhua/project/dataset/eye/v301_eye/test_v302.csv]
+    val_csv_paths: [/home/huangwenhua/project/dataset/eye/v302_eye/test_v302.csv]
+    test_csv_paths: [/home/huangwenhua/project/dataset/eye/v302_eye/test_v302.csv]
+    predict_csv_paths: [/home/huangwenhua/project/dataset/eye/v302_eye/test_v302.csv]
     key_map : {"img_path": "path_img", "class_name": "class_name", "class_id": "class_id", "cx": "cx", "cy": "cy", "w": "w", "h": "h", "img_w": "img_w", "img_h": "img_h"}
     predict_key_map : {"img_path": "path_img", "cx": "cx", "cy": "cy", "w": "w", "h": "h", "img_w": "img_w", "img_h": "img_h"}
     # background_ratio: 1.0 # 背景比例,这个得结合background，如果不设置，则实际没有背景，因为训练集和验证集没有背景，所以需要设置背景比例为1.0，这样在训练集和验证集就会生成背景，然后进行训练和验证。
@@ -132,17 +132,17 @@ model:
     optimizer:
       class_path: torch.optim.RAdam
       init_args:
-        lr: 1e-4 # 随机初始化1e-2,微调1e-2，剪枝
+        lr: 1e-3 # 随机初始化1e-2,微调1e-2，剪枝
     lr_scheduler:
       class_path: torch.optim.lr_scheduler.CosineAnnealingLR
       init_args:
-        T_max: 30  # 一般等于max_epochs
+        T_max: 50  # 一般等于max_epochs
         eta_min: 1.0e-4 # 随机初始化1e-4,微调1e-4
     criterion:
       class_path: lovely_deep_learning.loss.image_classifier.ImageClassifierCriterion
       init_args:
         label_smoothing: 0.0
-        weight: [0.547, 0.453]
+        weight: [0.316, 0.684]
     postprocess:
       class_path: lovely_deep_learning.postprocess.image_classifier.ImageClassifierPostProcessor
       init_args:
