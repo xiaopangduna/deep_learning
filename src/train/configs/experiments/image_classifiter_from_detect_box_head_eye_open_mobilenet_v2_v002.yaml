@@ -25,8 +25,8 @@ trainer:
         mode: min
     - class_path: lightning.pytorch.callbacks.ModelCheckpoint
       init_args:
-        monitor: "val_acc"
-        filename: "{epoch:02d}-{val_acc:.2f}"
+        monitor: "val_acc_macro"
+        filename: "{epoch:02d}-{val_acc_macro:.3f}"
         save_top_k: 1
         save_last: true
         mode: max
@@ -151,6 +151,7 @@ model:
       class_path: lovely_deep_learning.metric.image_classifier.ImageClassifierMetric
       init_args:
         num_classes: 2
+        average: macro
     model:
       model_name: mobilenet_v2
       pretrained: True
@@ -176,8 +177,8 @@ model:
             cfg_for_torch_onnx_export:
               export_params: true
               opset_version: 17
-              input_names: ["images"]
-              output_names: ["classification"]
+              input_names: ["input"]
+              output_names: ["output"]
           trt_cfg: {}
       pruner:
         class_path: lovely_deep_learning.pruning.image_classifier.ImageClassifierPruner
