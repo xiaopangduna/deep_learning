@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """原图 + CSV → ONNX 分类 dump CSV。
 
-板端 ``image_classifiter_from_detect_box_sigmastar`` 写 JSON。本脚本仍写 CSV。
+板端 ``classifier_dump_sigmastar`` 写 JSON。本脚本仍写 CSV。
 ``confusion_from_classifier_dump.py`` 两种都读。
 
 预处理对齐 ``ImageClassifierFromDetectBoxDataset`` / 训练 transform_val：

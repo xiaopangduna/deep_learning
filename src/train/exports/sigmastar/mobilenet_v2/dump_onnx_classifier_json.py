@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""按 CSV 跑分类 ONNX，写成与板端 image_classifiter_from_detect_box_sigmastar 相同的 JSON。
+"""按 CSV 跑分类 ONNX，写成与板端 classifier_dump_sigmastar 相同的 JSON。
 
 整图，不裁框。几何对齐板端 --prep：
 

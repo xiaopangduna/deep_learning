@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """用 Imagenette 的 10 类映射，从板端或 ONNX 的分类 JSON 算 top-1 / top-5。
 
-JSON 来自板端 image_classifiter_from_detect_box_sigmastar，或本目录
+JSON 来自板端 classifier_dump_sigmastar，或本目录
 dump_onnx_classifier_json.py。两边都读 samples 里的 class_id 和 logits。
 
 meta.acc1 / acc5 是未映射的 class_id 对 pred_id。本脚本另外把 Imagenette

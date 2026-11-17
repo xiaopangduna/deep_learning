@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """从分类 dump 计算混淆矩阵与准确率。
 
-板端 ``image_classifiter_from_detect_box_sigmastar`` 写 JSON，读 ``samples`` 里的
+板端 ``classifier_dump_sigmastar`` 写 JSON，读 ``samples`` 里的
 ``class_id,pred_id``。ONNX 脚本 ``eval_box_crop_classifier_onnx.py`` 仍写 CSV，用
 ``gt_id,pred_id``（含标签映射）。
 

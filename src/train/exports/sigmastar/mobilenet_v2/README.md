@@ -89,7 +89,7 @@ output_0 shape=(1, 1000) max_abs=0.98135 mean_abs=0.21693 rmse=0.279152 cosine=0
 
 ## 整表精度
 
-`dump_onnx_classifier_json.py` 按 CSV 跑 ONNX，写成和板端 `image_classifiter_from_detect_box_sigmastar` 相同的 JSON。`score_classifier_json.py` 读这份 JSON，也读板端拷回来的 JSON。
+`dump_onnx_classifier_json.py` 按 CSV 跑 ONNX，写成和板端 `classifier_dump_sigmastar` 相同的 JSON。`score_classifier_json.py` 读这份 JSON，也读板端拷回来的 JSON。
 
 板端 JSON 的 `meta.acc1` / `acc5` 直接拿 CSV 的 `class_id` 比 `pred_id`。Imagenette 的 `class_id` 是 0–9，模型输出是 ImageNet-1000，这两套编号对不上。打分脚本把 10 个类映到 ImageNet 下标后再算 top-1、top-5。
 
