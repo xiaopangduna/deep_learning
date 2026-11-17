@@ -142,6 +142,8 @@ python verify/multi_image_accuracy_dump_onnx_json.py \
 ### 精度计算和对比
 
 `class_id` 就是 ImageNet 下标，直接读两份 JSON 的 `meta.acc1` / `meta.acc5`。2026-11-17 的验证集 5 万张，top-1 差 0.46 个点，top-5 差 0.21 个点。
+官方：https://docs.pytorch.org/vision/stable/models.html#classification
+pt待验证
 
 | | top-1 | top-5 |
 |---|---:|---:|
