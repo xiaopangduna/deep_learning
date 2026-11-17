@@ -55,7 +55,7 @@ cd /customer/deploy_percept
 
 ### onnx 运行结果
 
-`dump_onnx_output_from_image.py` 用 ONNX 跑同一张图。不写 `--out` 时，输出文件是 ONNX 的主文件名，例如 `onnx/mobilenet_v2.onnx` 写成 `mobilenet_v2.npz`。
+`verify/single_image_similarity_dump_onnx_npz.py` 用 ONNX 跑同一张图。不写 `--out` 时，输出文件是 ONNX 的主文件名，例如 `onnx/mobilenet_v2.onnx` 写成 `mobilenet_v2.npz`。
 
 `--mean` 和 `--std` 成对使用，公式是 `(像素 - mean) / std`。两个都不写时用 RGB 的 `123.68,116.28,103.53` 和 `58.395,57.12,57.375`。灰度是 1 个通道，这组 3 个数对不上，要写成 `--mean 0 --std 255`。像素原值写 `--mean none --std none`。只写其中一个，或一边是数字、另一边是 `none`，脚本退出。
 
@@ -63,12 +63,12 @@ cd /customer/deploy_percept
 cd exports/sigmastar/mobilenet_v2
 
 # RGB：可省略 --mean 和 --std
-python dump_onnx_output_from_image.py \
+python verify/single_image_similarity_dump_onnx_npz.py \
   --model onnx/mobilenet_v2.onnx \
   --image dog.jpg
 
 # 灰度：(x - 0) / 255
-python dump_onnx_output_from_image.py \
+python verify/single_image_similarity_dump_onnx_npz.py \
   --model onnx/v013.onnx \
   --image path/to/input.png \
   --mean 0 \
@@ -77,10 +77,10 @@ python dump_onnx_output_from_image.py \
 
 ### 对比 onnx 和 img 结果
 
-`compare_img_and_onnx_dumps.py` 读这两份 NPZ：`--board` 是板端那份，`--onnx` 是 ONNX 那份。它先对文件哈希、是否 resize、模型宽高。输出 shape 不一致就停并打印两边 shape，不做转置。shape 一致时打印误差。退出码 0 只表示两份文件对得上，数值是否接近看打印结果。
+`verify/single_image_similarity_compare_board_onnx_npz.py` 读这两份 NPZ：`--board` 是板端那份，`--onnx` 是 ONNX 那份。它先对文件哈希、是否 resize、模型宽高。输出 shape 不一致就停并打印两边 shape，不做转置。shape 一致时打印误差。退出码 0 只表示两份文件对得上，数值是否接近看打印结果。
 
 ```bash
-python compare_img_and_onnx_dumps.py \
+python verify/single_image_similarity_compare_board_onnx_npz.py \
   --board dump_board.npz \
   --onnx mobilenet_v2.npz
 ```
@@ -127,12 +127,12 @@ JSON 拷回 `tmp/mobilenet_v2_iford.json`。
 
 ### onnx 运行结果
 
-`dump_onnx_classifier_json.py` 按 CSV 跑 ONNX，写成和板端相同的 JSON。`--limit N` 只跑 CSV 前 N 行。没有成功样本时退出码为 1。
+`verify/multi_image_accuracy_dump_onnx_json.py` 按 CSV 跑 ONNX，写成和板端相同的 JSON。`--limit N` 只跑 CSV 前 N 行。没有成功样本时退出码为 1。
 
 ```bash
 cd exports/sigmastar/mobilenet_v2
 
-python dump_onnx_classifier_json.py \
+python verify/multi_image_accuracy_dump_onnx_json.py \
   --model onnx/mobilenet_v2.onnx \
   --csv /home/huangwenhua/datasets/IMAGENET/val.csv \
   --prep imagenet \

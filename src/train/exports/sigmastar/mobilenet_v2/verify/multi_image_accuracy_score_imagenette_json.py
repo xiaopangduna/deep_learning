@@ -2,7 +2,7 @@
 """用 Imagenette 的 10 类映射，从板端或 ONNX 的分类 JSON 算 top-1 / top-5。
 
 JSON 来自板端 classifier_dump_sigmastar，或本目录
-dump_onnx_classifier_json.py。两边都读 samples 里的 class_id 和 logits。
+multi_image_accuracy_dump_onnx_json.py。两边都读 samples 里的 class_id 和 logits。
 
 meta.acc1 / acc5 是未映射的 class_id 对 pred_id。本脚本另外把 Imagenette
 class_id 映到 ImageNet-1k 下标再算一遍。类别顺序是文件夹名字典序。

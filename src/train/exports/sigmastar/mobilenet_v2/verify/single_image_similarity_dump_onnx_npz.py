@@ -3,7 +3,7 @@
 
 只服务本目录的分类模型。图应已是模型输入尺寸；尺寸不同时才 INTER_LINEAR。
 输出按 Runtime 的顺序存 float32，不做转置。
-和 compare_img_and_onnx_dumps.py 配合：本脚本写出 <模型名>.npz，比对脚本再读它。
+和 single_image_similarity_compare_board_onnx_npz.py 配合：本脚本写出 <模型名>.npz，比对脚本再读它。
 
 不传 --mean 和 --std 时按 RGB ImageNet 做 (x - mean) / std。
 两边都写 none 时保持像素原值。灰度要显式传入 --mean 0 --std 255。
@@ -19,8 +19,7 @@ from typing import Any
 
 import numpy as np
 
-DEFAULT_MEAN = (123.68, 116.28, 103.53)
-DEFAULT_STD = (58.395, 57.12, 57.375)
+from input_norm import resolve_norm
 
 
 def parse_args() -> argparse.Namespace:
@@ -45,60 +44,6 @@ def parse_args() -> argparse.Namespace:
         help="Per-channel std, comma-separated. Omit with --mean to use 58.395,57.12,57.375. 'none' keeps raw pixels",
     )
     return p.parse_args()
-
-
-def _parse_floats(text: str, flag: str) -> list[float]:
-    parts = [item.strip() for item in text.split(",") if item.strip()]
-    if not parts:
-        raise SystemExit(f"{flag} is empty")
-    values: list[float] = []
-    for item in parts:
-        try:
-            values.append(float(item))
-        except ValueError:
-            raise SystemExit(f"{flag} value {item!r} is not a number or none") from None
-    return values
-
-
-def _expand(values: list[float], channels: int, flag: str) -> list[float]:
-    if len(values) == 1:
-        return values * channels
-    if len(values) == channels:
-        return values
-    raise SystemExit(f"{flag} has {len(values)} values, model has {channels} channels")
-
-
-def resolve_norm(
-    mean_text: str | None,
-    std_text: str | None,
-    channels: int,
-) -> tuple[np.ndarray | None, np.ndarray | None]:
-    """Return mean and std vectors, or (None, None) when pixels stay raw."""
-    if mean_text is not None:
-        mean_text = mean_text.strip()
-    if std_text is not None:
-        std_text = std_text.strip()
-    if mean_text is None and std_text is None:
-        mean_vals = list(DEFAULT_MEAN)
-        std_vals = list(DEFAULT_STD)
-    elif mean_text is None or std_text is None:
-        raise SystemExit("--mean and --std must be passed together")
-    elif mean_text.lower() == "none" and std_text.lower() == "none":
-        return None, None
-    elif mean_text.lower() == "none" or std_text.lower() == "none":
-        raise SystemExit("--mean and --std must both be none, or both be numbers")
-    else:
-        mean_vals = _parse_floats(mean_text, "--mean")
-        std_vals = _parse_floats(std_text, "--std")
-
-    mean_vals = _expand(mean_vals, channels, "--mean")
-    std_vals = _expand(std_vals, channels, "--std")
-    if any(value == 0.0 for value in std_vals):
-        raise SystemExit("--std contains 0")
-    return (
-        np.asarray(mean_vals, dtype=np.float32),
-        np.asarray(std_vals, dtype=np.float32),
-    )
 
 
 def file_sha256(path: Path) -> str:
@@ -207,7 +152,9 @@ def main() -> int:
         return 1
     onnx_in = inputs[0]
     layout, channels, model_h, model_w = input_layout(list(onnx_in.shape))
-    mean, std = resolve_norm(args.mean, args.std, channels)
+    mean_list, std_list = resolve_norm(args.mean, args.std, channels)
+    mean = None if mean_list is None else np.asarray(mean_list, dtype=np.float32)
+    std = None if std_list is None else np.asarray(std_list, dtype=np.float32)
     if mean is None:
         print("norm: none")
     else:

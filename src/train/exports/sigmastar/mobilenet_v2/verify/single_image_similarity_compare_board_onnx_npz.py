@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """比对同一张图的板端 NPZ 与 ONNX NPZ。
 
-板端文件来自 dump_img_output_from_image，ONNX 文件来自 dump_onnx_output_from_image.py。
+板端文件来自 dump_img_output_from_image，ONNX 文件来自 single_image_similarity_dump_onnx_npz.py。
 shape 必须已经一致。脚本不做转置。
 """
 from __future__ import annotations
@@ -18,7 +18,7 @@ import numpy as np
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Compare one image's board NPZ with its ONNX NPZ")
     p.add_argument("--board", required=True, help="Board dump NPZ from dump_img_output_from_image")
-    p.add_argument("--onnx", required=True, help="ONNX dump NPZ from dump_onnx_output_from_image.py")
+    p.add_argument("--onnx", required=True, help="ONNX dump NPZ from single_image_similarity_dump_onnx_npz.py")
     return p.parse_args()
 
 
