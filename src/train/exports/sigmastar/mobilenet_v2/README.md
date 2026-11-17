@@ -148,17 +148,9 @@ python verify/multi_image_accuracy_dump_onnx_json.py \
 | ONNX | 70.722% | 89.822% |
 | 板端 | 70.260% | 89.616% |
 
-## 自己的 ONNX 与官方 ONNX
+## 官方 ONNX 与 SigmaStar ONNX
 
-对比结论待补充。
-
-官方 ONNX：
-
-```text
-exports/sigmastar/sdk/IPU_SDK_Release_25121210/OpenDLAModel_20250721/classification/mobilenet_v2/onnx/mobilenet_v2.onnx
-```
-
-本目录用于转换的是 `onnx/mobilenet_v2.onnx`。自己的 ONNX 用下面这条导出，张量名是 `input` / `output`：
+官方 ONNX 用 `configs/experiments/image_classifiter_IMAGE_NET_mobilenet_v2.yaml` 导出，对比文件是 `mobilenet_v2_office.onnx`。
 
 ```bash
 python scripts/train.py export \
@@ -166,4 +158,42 @@ python scripts/train.py export \
   --export_format onnx
 ```
 
-当前 `config/classification.cfg` 的 `Model_LIST` 是 `mobilenet_v2_my`，转换时读 `onnx/mobilenet_v2_my.onnx`。
+SigmaStar ONNX 是 SDK 自带的分类模型，对比文件是 `mobilenet_v2.onnx`。本目录转换也读这个文件：`config/classification.cfg` 的 `Model_LIST` 是 `mobilenet_v2`。
+
+```text
+exports/sigmastar/sdk/IPU_SDK_Release_25121210/OpenDLAModel_20250721/classification/mobilenet_v2/onnx/mobilenet_v2.onnx
+```
+
+两边都是 100 个节点，输入 `input` `[1, 3, 224, 224]`，输出 `output` `[1, 1000]`。前 98 个算子顺序相同。最后一步是 Flatten 对 Reshape，参数量 3,487,818 对 3,487,820，多出来的是 Reshape 的形状常量。这点差按简化器版本不同来看，不用管。2026-11-17 用 `scripts/compare_onnx_on_image.py` 喂同一张图：
+
+```bash
+python scripts/compare_onnx_on_image.py \
+  mobilenet_v2_office.onnx \
+  mobilenet_v2.onnx \
+  --image tmp/000000562557.jpg
+```
+
+```text
+out[0] output vs output  [1, 1000]  max_abs=0.000000e+00 mean_abs=0.000000e+00  PASS
+```
+
+1000 维 logit 逐元素相同。
+
+JSON 来自 ImageNette `datasets/IMAGENETTE/train.csv` 的 9469 张。`verify/multi_image_accuracy_dump_onnx_json.py` 分别跑两个 ONNX，得到 `mobilenet_v2_office.json` 和 `mobilenet_v2.json`。
+
+| | top-1 | top-5 |
+|---|---:|---:|
+| 官方 | 9.558%（905/9469） | 10.075%（954/9469） |
+| SigmaStar | 9.558%（905/9469） | 10.075%（954/9469） |
+
+数值低是因为 CSV 的 `class_id` 是 ImageNette 类别编号，脚本把它直接当成 ImageNet 1000 类下标去对 `pred_id`，没有做 ImageNette 到 ImageNet 的映射。9469 条样本的 `pred_id` 和 1000 维 logit 也逐项相同，logit 最大绝对差为 0。指标和内容都一致，可以认为这两个 ONNX 完全一致。
+
+```bash
+python exports/sigmastar/mobilenet_v2/verify/multi_image_accuracy_dump_onnx_json.py \
+  --model mobilenet_v2_office.onnx \
+  --csv datasets/IMAGENETTE/train.csv
+
+python exports/sigmastar/mobilenet_v2/verify/multi_image_accuracy_dump_onnx_json.py \
+  --model mobilenet_v2.onnx \
+  --csv datasets/IMAGENETTE/train.csv
+```

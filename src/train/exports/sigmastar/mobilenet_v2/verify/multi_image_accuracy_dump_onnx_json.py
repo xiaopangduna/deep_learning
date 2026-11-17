@@ -11,8 +11,6 @@
 123.68,116.28,103.53 和 58.395,57.12,57.375，与 input_config.ini 一致。
 两边都写 none 时保持像素原值。
 
-推理优先用 CUDA。先 preload uv 装进 site-packages 的 CUDA 12 / cuDNN 9，
-这样不必依赖 shell 里的 LD_LIBRARY_PATH。CUDA 建不起来就退回 CPU。
 
 meta.acc1 / acc5 只比较 CSV 的 class_id 和 pred_id，不做 Imagenette 到 ImageNet 的映射。
 映射后的精度用 multi_image_accuracy_score_imagenette_json.py。
