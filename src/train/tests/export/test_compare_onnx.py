@@ -1,13 +1,27 @@
 from __future__ import annotations
 
+import importlib.util
+import sys
+from pathlib import Path
+
 import numpy as np
+import pytest
 import torch.nn as nn
+from PIL import Image
 
 from lovely_deep_learning.export.base import BaseExporter
-from lovely_deep_learning.export.compare import check_io, compare_arrays, main, summarize_onnx
-from lovely_deep_learning.postprocess.yolov8 import YOLOv8Decode
+from lovely_deep_learning.export.compare import (
+    ImageInput,
+    OnnxInfo,
+    TensorSpec,
+    compare_arrays,
+    compare_onnx,
+    io_errors,
+    require_image_input,
+)
 
-from .test_export_graph import _FakeDAGNet
+ROOT = Path(__file__).resolve().parents[2]
+SCRIPT = ROOT / "scripts" / "compare_onnx_on_image.py"
 
 
 class _TinyNet(nn.Module):
@@ -17,6 +31,25 @@ class _TinyNet(nn.Module):
 
     def forward(self, x):
         return (self.conv(x[0]),)
+
+
+class _TwoOut(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.conv = nn.Conv2d(3, 4, 1)
+
+    def forward(self, x):
+        y = self.conv(x[0])
+        return y, y + 1
+
+
+def _load_script():
+    spec = importlib.util.spec_from_file_location("compare_onnx_on_image", SCRIPT)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 def _export(path, model, *, output_names: list[str] | None = None, export_head=None) -> None:
@@ -37,39 +70,117 @@ def _export(path, model, *, output_names: list[str] | None = None, export_head=N
     ).export_onnx(model)
 
 
-def test_check_io_detects_output_count(tmp_path):
-    a = tmp_path / "a.onnx"
-    b = tmp_path / "b.onnx"
-    _export(
-        a,
-        _FakeDAGNet(),
-        output_names=["output0"],
-        export_head=YOLOv8Decode(nc=80, reg_max=16, stride=[8, 16, 32]),
+def _info(path: str, *, channels: int = 3, height: int = 64, outputs: tuple[TensorSpec, ...] = ()) -> OnnxInfo:
+    return OnnxInfo(
+        path=path,
+        nodes=1,
+        opset=(13,),
+        input=TensorSpec("images", (1, channels, height, 64), "float32"),
+        outputs=outputs,
     )
-    _export(b, _FakeDAGNet())
-    errors = check_io(summarize_onnx(a), summarize_onnx(b))
-    assert any("输出个数" in e for e in errors)
+
+
+def test_require_image_input_rejects_dynamic_spatial():
+    info = OnnxInfo(
+        path="a.onnx",
+        nodes=1,
+        opset=(13,),
+        input=TensorSpec("images", (1, 3, None, 64), "float32"),
+        outputs=(),
+    )
+    with pytest.raises(ValueError, match="高宽"):
+        require_image_input(info)
+
+
+def test_io_errors_reports_shape_and_output_count():
+    left = _info("a.onnx", outputs=(TensorSpec("output0", (1, 4), "float32"),))
+    right = _info(
+        "b.onnx",
+        height=32,
+        outputs=(
+            TensorSpec("a", (1, 4), "float32"),
+            TensorSpec("b", (1, 4), "float32"),
+        ),
+    )
+    errors = io_errors(
+        left,
+        right,
+        ImageInput("images", (1, 3, 64, 64), "float32"),
+        ImageInput("images", (1, 3, 32, 64), "float32"),
+    )
+    assert any("输入形状" in item for item in errors)
+    assert any("输出个数" in item for item in errors)
 
 
 def test_compare_arrays_allclose():
-    ref = np.zeros((1, 84, 8), dtype=np.float32)
+    ref = np.zeros((1, 4, 8), dtype=np.float32)
     other = ref + 1e-6
-    stats = compare_arrays(ref, other, atol=1e-4, rtol=1e-4)
-    assert stats["ok"]
-    stats_fail = compare_arrays(ref, other + 1.0, atol=1e-4, rtol=1e-4)
-    assert not stats_fail["ok"]
+    assert compare_arrays(ref, other).ok
+    assert not compare_arrays(ref, other + 1.0).ok
 
 
-def test_compare_onnx_cli_same_graph_passes(tmp_path):
-    a = tmp_path / "a.onnx"
-    b = tmp_path / "b.onnx"
-    _export(a, _TinyNet(), output_names=["output0"])
-    b.write_bytes(a.read_bytes())
-    assert main([str(a), str(b), "--seed", "0"]) == 0
+def test_compare_onnx_same_graph_passes(tmp_path):
+    left = tmp_path / "a.onnx"
+    right = tmp_path / "b.onnx"
+    _export(left, _TinyNet(), output_names=["output0"])
+    right.write_bytes(left.read_bytes())
+    result = compare_onnx(left, right)
+    assert result.ok
+    assert result.image is None
+    assert result.feed is not None
+    assert result.feed.shape == (1, 3, 64, 64)
+    assert result.outputs[0].max_abs == 0.0
 
 
-def test_compare_onnx_cli_missing_file(tmp_path):
-    missing = tmp_path / "no.onnx"
+def test_compare_onnx_output_count(tmp_path):
+    left = tmp_path / "a.onnx"
+    right = tmp_path / "b.onnx"
+    _export(left, _TinyNet(), output_names=["output0"])
+    _export(right, _TwoOut(), output_names=["output0", "output1"])
+    result = compare_onnx(left, right)
+    assert not result.ok
+    assert result.feed is None
+    assert any("输出个数" in item for item in result.errors)
+
+
+def test_compare_onnx_missing_file(tmp_path):
     other = tmp_path / "b.onnx"
     _export(other, _TinyNet(), output_names=["output0"])
-    assert main([str(missing), str(other)]) == 2
+    with pytest.raises(FileNotFoundError, match="找不到参考模型"):
+        compare_onnx(tmp_path / "no.onnx", other)
+
+
+def test_compare_onnx_image_resize(tmp_path):
+    left = tmp_path / "a.onnx"
+    right = tmp_path / "b.onnx"
+    _export(left, _TinyNet(), output_names=["output0"])
+    right.write_bytes(left.read_bytes())
+    image = tmp_path / "tiny.png"
+    Image.new("RGB", (8, 8), (255, 0, 0)).save(image)
+    result = compare_onnx(left, right, image=image)
+    assert result.ok
+    assert result.image == str(image)
+    assert result.feed is not None and result.feed.shape == (1, 3, 64, 64)
+
+
+def test_script_prints_report(tmp_path, capsys):
+    left = tmp_path / "a.onnx"
+    right = tmp_path / "b.onnx"
+    _export(left, _TinyNet(), output_names=["output0"])
+    right.write_bytes(left.read_bytes())
+    code = _load_script().main([str(left), str(right)])
+    report = capsys.readouterr().out
+    assert code == 0
+    assert "feed  random" in report
+    assert "[1, 3, 64, 64] float32" in report
+    assert "PASS" in report
+
+
+def test_script_missing_file(tmp_path, capsys):
+    other = tmp_path / "b.onnx"
+    _export(other, _TinyNet(), output_names=["output0"])
+    code = _load_script().main([str(tmp_path / "no.onnx"), str(other)])
+    captured = capsys.readouterr()
+    assert code == 2
+    assert "找不到参考模型" in captured.err
+    assert captured.out == ""
