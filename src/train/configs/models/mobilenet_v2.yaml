@@ -4,10 +4,18 @@ weight:
   map_location: cpu
   strict: false
   stages:
+    # IMAGENET1K_V1，Acc@1 71.878，验证短边 256
+    # - format: official
+    #   path: pretrained_models/mobilenet_v2-b0353104.pth
+    #   opts:
+    #     url: https://download.pytorch.org/models/mobilenet_v2-b0353104.pth
+    #     src_key_prefix: layers.
+    #     src_key_slice_start: 0
+    # IMAGENET1K_V2，Acc@1 72.154，验证短边 232。实验配置的官方权重与这里保持一致。
     - format: official
-      path: pretrained_models/mobilenet_v2-b0353104.pth
+      path: pretrained_models/mobilenet_v2-7ebf99e0.pth
       opts:
-        url: https://download.pytorch.org/models/mobilenet_v2-b0353104.pth
+        url: https://download.pytorch.org/models/mobilenet_v2-7ebf99e0.pth
         src_key_prefix: layers.
         src_key_slice_start: 0
 
@@ -20,13 +28,13 @@ exporter:
       cfg_for_torch_onnx_export:
         export_params: true
         opset_version: 12
-        input_names: ["images"]
-        output_names: ["classification"]
+        input_names: ["input"]
+        output_names: ["output"]
     trt_cfg: {}
 
 structure:
   inputs: [{name: input, shape: [3, 224, 224]}]
-  outputs: [{name: classification, from: [classifier]}]
+  outputs: [{name: output, from: [classifier]}]
   layers:
     - name: features
       from: [input]

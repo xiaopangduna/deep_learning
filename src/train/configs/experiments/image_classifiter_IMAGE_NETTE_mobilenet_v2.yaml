@@ -145,10 +145,19 @@ model:
         map_location: cpu
         strict: false
         stages:
+          # 与 configs/models/mobilenet_v2.yaml 相同
+          # IMAGENET1K_V1，Acc@1 71.878，验证短边 256
+          # - format: official
+          #   path: pretrained_models/mobilenet_v2-b0353104.pth
+          #   opts:
+          #     url: https://download.pytorch.org/models/mobilenet_v2-b0353104.pth
+          #     src_key_prefix: layers.
+          #     src_key_slice_start: 0
+          # IMAGENET1K_V2，Acc@1 72.154，验证短边 232
           - format: official
-            path: pretrained_models/mobilenet_v2-b0353104.pth
+            path: pretrained_models/mobilenet_v2-7ebf99e0.pth
             opts:
-              url: https://download.pytorch.org/models/mobilenet_v2-b0353104.pth
+              url: https://download.pytorch.org/models/mobilenet_v2-7ebf99e0.pth
               src_key_prefix: layers.
               src_key_slice_start: 0
         # # 剪枝后微调：在 stages 中追加或替换，例如::

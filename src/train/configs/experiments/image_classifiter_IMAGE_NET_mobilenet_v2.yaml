@@ -1,7 +1,17 @@
+# 复现 MobileNet_V2_Weights.IMAGENET1K_V2（Acc@1 72.154）。两种用法只改 pretrained：
+#   验证官方权重：pretrained: true，然后 validate
+#   从零训练：pretrained: false，然后 fit
+# 配方对齐 torchvision New Recipe + Regularization tuning：
+# SGD lr 0.5、momentum 0.9、weight decay 1e-5、5 epoch 线性 warmup（从 0.01×lr 升到 lr）、
+# 余弦退火 595 epoch、共 600 epoch、label smoothing 0.1、TrivialAugmentWide、RandomErasing 0.1、
+# 验证短边 232。全局 batch 1024（8×128）；单卡用 batch 128、梯度累积 8。
+# 训练循环尚未实现：Mixup 0.2、CutMix 1.0、Repeated Augmentation×4、
+# 归一化层 weight decay 为 0、torchvision EMA（decay 0.99998，每 32 step）。
+# 微调用 image_classifiter_IMAGE_NET_mobilenet_v2_fintune.yaml。
 trainer:
-  max_epochs: 50 
+  max_epochs: 600
   accelerator: auto
-  accumulate_grad_batches: 32
+  accumulate_grad_batches: 8
   callbacks:
     - class_path: lovely_deep_learning.callback.image_classifier.LogImageClassifierTrainValVisualizationCallback
       init_args:
@@ -13,17 +23,9 @@ trainer:
         test_only_save_mistake: true  
     - class_path: lovely_deep_learning.callback.memory_monitor.MemoryMonitorCallback
       init_args:
-        save_dir: logs/image_classifiter_IMAGE_NET/memory
+        save_dir: logs/image_classifiter_IMAGE_NET_mobilenet_v2/memory
         filename: memory_usage.csv
         log_every_n_steps: 5000
-    - class_path: lightning.pytorch.callbacks.EarlyStopping
-      init_args:
-        monitor: "train_loss"
-        min_delta: 0.00
-        patience: 10
-        verbose: true
-        mode: min
-    # 新增一个功能单独保存模型，最优和最后一个模型
     - class_path: lightning.pytorch.callbacks.ModelCheckpoint
       init_args:
         monitor: "val_acc"
@@ -40,7 +42,7 @@ trainer:
     - class_path: lightning.pytorch.loggers.TensorBoardLogger
       init_args:
         save_dir: logs
-        name: image_classifiter_IMAGE_NET 
+        name: image_classifiter_IMAGE_NET_mobilenet_v2 
         version: null
   # profiler:
   #   class_path: lightning.pytorch.profilers.SimpleProfiler
@@ -61,7 +63,7 @@ data:
 
     norm_mean : [0.485, 0.456, 0.406]
     norm_std : [0.229, 0.224, 0.225]  
-    batch_size: 32
+    batch_size: 128
     # ImageNet train.csv 极大，每个 worker 会继承/映射父进程内存；num_workers 过高易 OOM（见 logs/.../memory_usage.csv）
     num_workers: 4
     transform_train:
@@ -75,9 +77,9 @@ data:
           - class_path: torchvision.transforms.v2.RandomHorizontalFlip
             init_args:
               p: 0.5
-          - class_path: torchvision.transforms.v2.AutoAugment
+          - class_path: torchvision.transforms.v2.TrivialAugmentWide
             init_args:
-              policy: IMAGENET
+              interpolation: 2 # bilinear，对齐 ta_wide
           - class_path: torchvision.transforms.v2.ToDtype
             init_args:
               dtype: torch.float
@@ -88,14 +90,14 @@ data:
               std: [0.229, 0.224, 0.225]
           - class_path: torchvision.transforms.v2.RandomErasing
             init_args:
-              p: 0.2
+              p: 0.1
     transform_val:
       class_path: torchvision.transforms.v2.Compose
       init_args:
         transforms:
           - class_path: torchvision.transforms.v2.Resize
             init_args:
-              size: 256 # 短边对齐，保持宽高比；[256,256] 会拉成正方形
+              size: 232 # IMAGENET1K_V2：短边 232，保持宽高比。V1 用 256
               interpolation: 2 # bilinear
           - class_path: torchvision.transforms.v2.CenterCrop
             init_args:
@@ -113,24 +115,29 @@ model:
   class_path: lovely_deep_learning.module.image_classifier.ImageClassifierModule
   init_args:
     optimizer:
-      class_path: torch.optim.RMSprop
+      class_path: torch.optim.SGD
       init_args:
-        # 0.064×0.9732600​=0.064×0.973300=0.00317
-        # 预训练微调：0.064 适合从零训 ImageNet，会迅速破坏预训练权重；0.001～1e-4 更稳妥，适合验证预训练模型
-        lr: 0.00001  # 0.064
+        lr: 0.5
         momentum: 0.9
         weight_decay: 0.00001
-        eps: 0.0316
-        alpha: 0.9
     lr_scheduler:
-      class_path: torch.optim.lr_scheduler.StepLR
+      class_path: torch.optim.lr_scheduler.SequentialLR
       init_args:
-        step_size: 2
-        gamma: 0.973
+        schedulers:
+          - class_path: torch.optim.lr_scheduler.LinearLR
+            init_args:
+              start_factor: 0.01
+              end_factor: 1.0
+              total_iters: 5
+          - class_path: torch.optim.lr_scheduler.CosineAnnealingLR
+            init_args:
+              T_max: 595
+              eta_min: 0.0
+        milestones: [5]
     criterion:
       class_path: lovely_deep_learning.loss.image_classifier.ImageClassifierCriterion
       init_args:
-        label_smoothing: 0.0
+        label_smoothing: 0.1
     postprocess:
       class_path: lovely_deep_learning.postprocess.image_classifier.ImageClassifierPostProcessor
       init_args:
@@ -141,6 +148,7 @@ model:
         num_classes: 1000
     model:
       model_name: mobilenet_v2
+      # 验证官方权重保持 true；从零训练改为 false。其余参数两种用法相同。
       pretrained: true
       exporter:
         class_path: lovely_deep_learning.export.base.BaseExporter
@@ -240,10 +248,19 @@ model:
         map_location: cpu
         strict: false
         stages:
+          # 与 configs/models/mobilenet_v2.yaml 相同
+          # IMAGENET1K_V1，Acc@1 71.878，验证短边 256
+          # - format: official
+          #   path: pretrained_models/mobilenet_v2-b0353104.pth
+          #   opts:
+          #     url: https://download.pytorch.org/models/mobilenet_v2-b0353104.pth
+          #     src_key_prefix: layers.
+          #     src_key_slice_start: 0
+          # IMAGENET1K_V2，Acc@1 72.154，验证短边 232
           - format: official
-            path: pretrained_models/mobilenet_v2-b0353104.pth
+            path: pretrained_models/mobilenet_v2-7ebf99e0.pth
             opts:
-              url: https://download.pytorch.org/models/mobilenet_v2-b0353104.pth
+              url: https://download.pytorch.org/models/mobilenet_v2-7ebf99e0.pth
               src_key_prefix: layers.
               src_key_slice_start: 0
 

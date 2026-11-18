@@ -71,7 +71,7 @@ def test_DAGWeightLoader_mobilenet_v2():
     config = mobilenet_v2_config
     net = DAGNet(config["structure"])
     net.load_weights(**config["weight"])
-    official = models.mobilenet_v2(weights=models.MobileNet_V2_Weights.IMAGENET1K_V1)
+    official = models.mobilenet_v2(weights=models.MobileNet_V2_Weights.IMAGENET1K_V2)
     x = torch.randn(1, 3, 224, 224)
     official.eval()
     net.eval()
