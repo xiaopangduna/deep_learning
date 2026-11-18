@@ -95,7 +95,7 @@ data:
         transforms:
           - class_path: torchvision.transforms.v2.Resize
             init_args:
-              size: [256,256]
+              size: 256 # 短边对齐，保持宽高比；[256,256] 会拉成正方形
               interpolation: 2 # bilinear
           - class_path: torchvision.transforms.v2.CenterCrop
             init_args:

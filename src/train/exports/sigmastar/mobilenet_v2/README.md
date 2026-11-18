@@ -134,19 +134,28 @@ cd exports/sigmastar/mobilenet_v2
 
 python verify/multi_image_accuracy_dump_onnx_json.py \
   --model onnx/mobilenet_v2.onnx \
-  --csv /home/huangwenhua/datasets/IMAGENET/val.csv \
+  --csv datasets/IMAGENET/imagenet/val.csv \
   --prep imagenet \
   --out ../../../tmp/mobilenet_v2.json
 ```
 
 ### 精度计算和对比
 
-`class_id` 就是 ImageNet 下标，直接读两份 JSON 的 `meta.acc1` / `meta.acc5`。2026-11-17 的验证集 5 万张，top-1 差 0.46 个点，top-5 差 0.21 个点。
-官方：https://docs.pytorch.org/vision/stable/models.html#classification
-pt待验证
+`class_id` 就是 ImageNet 下标，直接读两份 JSON 的 `meta.acc1` / `meta.acc5`。2026-11-17 的验证集 5 万张，ONNX 与板端 top-1 差 0.46 个点，top-5 差 0.21 个点。
+
+PyTorch 官方 `MobileNet_V2_Weights.IMAGENET1K_V1`（`mobilenet_v2-b0353104.pth`）在[分类权重表](https://docs.pytorch.org/vision/stable/models.html#table-of-all-available-classification-weights)的 Acc@1 是 **71.878**，Acc@5 是 90.286。
+
+2026-11-18 用这份权重和 `image_classifiter_IMAGE_NET_mobilenet_v2.yaml` 跑验证集 5 万张。`transform_val` 的 `Resize` 是短边 256、保持宽高比，再中心裁 224。`val_acc` 为 **71.850%**（0.71850），`val_loss` 为 1.148。比官方 Acc@1 低 0.028 个点。把 `Resize` 写成 `[256, 256]` 会拉成正方形，同一次对照只有 71.208%。
+
+```bash
+python scripts/train.py validate \
+  --config configs/experiments/image_classifiter_IMAGE_NET_mobilenet_v2.yaml
+```
 
 | | top-1 | top-5 |
 |---|---:|---:|
+| PyTorch 官方 | 71.878% | 90.286% |
+| 本仓库 validate | 71.850% | 未记录 |
 | ONNX | 70.722% | 89.822% |
 | 板端 | 70.260% | 89.616% |
 
