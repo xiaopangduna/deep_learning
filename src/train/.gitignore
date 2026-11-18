@@ -6,12 +6,8 @@ tmp/
 
 data/
 checkpoints/
-# 数据不进 Git。先放开目录，才能再放行其中的 README。
-datasets/*
-!datasets/*.md
-!datasets/*/
-datasets/*/*
-!datasets/*/README.md
+
+# 数据：跟踪规则见 datasets/.gitignore（默认忽略 + 白名单）
 
 pretrained_models/
 

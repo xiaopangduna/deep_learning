@@ -11,4 +11,4 @@
 | `COCO/` | `COCODataModule` | [README.md](COCO/README.md) |
 | `head_eye_open/`、`head_age/`、`COCO_class/`，或仓库外的绝对路径 | `ImageClassifierFromDetectBoxDataModule` | [box_crop.md](box_crop.md) |
 
-在 `src/train` 下首次 `fit` 时，MNIST、ImageNette、COCO8、COCO 会由对应 DataModule 准备文件并写 CSV。ImageNet 与框级分类要事先放好数据。
+在 `src/train` 下首次 `fit` 时，MNIST、ImageNette、COCO8、COCO 会由对应 DataModule 准备文件并写 CSV。ImageNet 把压缩包和解压结果放在 `datasets/IMAGENET/imagenet`（可以是软链接），再用 `datasets/IMAGENET/imagenet_to_csv.py` 或首次 `fit` 写 CSV。框级分类要事先放好 CSV。

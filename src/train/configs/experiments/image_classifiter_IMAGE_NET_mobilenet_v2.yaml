@@ -52,11 +52,11 @@ trainer:
 data:
   class_path: lovely_deep_learning.data_module.image_net.ImageNetDataModule
   init_args:
-    dataset_dir: datasets/IMAGENET
-    train_csv_paths: [datasets/IMAGENET/train.csv]  # datasets/IMAGENET/train.csv
-    val_csv_paths: [datasets/IMAGENET/val.csv]
-    test_csv_paths: [datasets/IMAGENET/val.csv]     # test 没有标签，只能预测
-    predict_csv_paths: [datasets/IMAGENET/predict.csv] # datasets/IMAGENET/test.csv
+    dataset_dir: datasets/IMAGENET/imagenet
+    train_csv_paths: [datasets/IMAGENET/imagenet/train.csv]
+    val_csv_paths: [datasets/IMAGENET/imagenet/val.csv]
+    test_csv_paths: [datasets/IMAGENET/imagenet/val.csv]     # test 没有标签，只能预测
+    predict_csv_paths: [datasets/IMAGENET/imagenet/val.csv]
     key_map : {"img_path": "path_img", "class_name": "class_name", "class_id": "class_id"}
 
     norm_mean : [0.485, 0.456, 0.406]
