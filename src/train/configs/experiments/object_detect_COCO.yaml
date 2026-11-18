@@ -71,7 +71,7 @@ data:
     train_csv_paths: [datasets/COCO/train.csv]
     val_csv_paths: [datasets/COCO/val.csv]
     test_csv_paths: [datasets/COCO/val.csv]
-    predict_csv_paths: [datasets/COCO/predict.csv]
+    predict_csv_paths: [datasets/COCO/val.csv]
     key_map:
       img_path: path_img
       object_label_path: path_label_detect_yolo
@@ -96,22 +96,19 @@ data:
         hsv_s: 0.7
         hsv_v: 0.4
         fliplr: 0.5
+    # 与 YOLO.val() 同一套：cv2 长边 ceil 到 640（含放大），再 LetterBox(scaleup=False)。
+    # rect 按原始宽高比排序，pad=0.5，batch 边长是 32 的倍数（常常是 672 而不是 640）。
+    # 分组用 Dataset.batch_size，已与上面的 batch_size 对齐；验证 DataLoader 不能 shuffle。
+    # 这对应官方 `yolo val` 默认 batch=16。训练过程里官方验证 batch 是训练 batch 的 2 倍，形状会略有差别。
+    # 复现官方 mAP 时 trainer.precision 用 32；16-mixed 是训练 AMP，和默认 FP32 的 yolo val 不是同一条数值路径。
     transform_val:
-      class_path: torchvision.transforms.v2.Compose
+      class_path: lovely_deep_learning.transforms.yolov8_val.YOLOv8ValAugment
       init_args:
-        transforms:
-          - class_path: lovely_deep_learning.transforms.letterbox.LetterBox
-            init_args:
-              size: [640, 640]
-              fill: 114
-              center: true
-              # True: match YOLO.val() (load_image upscales long side to 640, then pad)
-              scaleup: true
-              interpolation: 2
-          - class_path: torchvision.transforms.v2.ToDtype
-            init_args:
-              dtype: torch.float32
-              scale: true
+        imgsz: 640
+        rect: true
+        stride: 32
+        pad: 0.5
+        fill: 114
 
 model:
   class_path: lovely_deep_learning.module.object_detect.ObjectDetectModule
@@ -177,7 +174,7 @@ model:
         iou_type: bbox
     model:
       model_name: yolov8_n
-      pretrained: false
+      pretrained: true
       exporter:
         class_path: lovely_deep_learning.export.base.BaseExporter
         init_args:
@@ -197,17 +194,16 @@ model:
               input_names: ["images"]
               output_names: ["output0"]
           trt_cfg: {}
-      # pretrained: false 时不加载；需要微调官方权重时改回 true 并取消注释
-      # weight:
-      #   map_location: cpu
-      #   strict: false
-      #   stages:
-      #     - format: official
-      #       path: pretrained_models/yolov8n.pt
-      #       opts:
-      #         url: https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov8n.pt
-      #         src_key_prefix: layers.
-      #         src_key_slice_start: 12
+      weight:
+        map_location: cpu
+        strict: false
+        stages:
+          - format: official
+            path: pretrained_models/yolov8n.pt
+            opts:
+              url: https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov8n.pt
+              src_key_prefix: layers.
+              src_key_slice_start: 12
       structure:
         inputs: [{name: input, shape: [3, 640, 640]}]
         outputs: [{name: detect, from: ["22"]}]

@@ -283,12 +283,12 @@ class ObjectDetectDataset(BaseDataset):
         if self.transform is not None and getattr(self.transform, "reads_dataset", False):
             self.transform.bind(self)
 
-    def prepare_train_cache(self, imgsz: int) -> None:
-        """把标签读进内存，并准备长边为 ``imgsz`` 的缩放图缓冲。由训练变换的 ``bind`` 调用。"""
+    def prepare_label_cache(self) -> None:
+        """把图像路径和 YOLO 标签读进内存。训练、验证变换的 ``bind`` 都会调用。"""
         if not self._has_label:
             return
-        n = len(self)
-        self._cache_imgsz = int(imgsz)
+        if self._img_paths is not None and self._labels is not None:
+            return
         self._img_paths = self.sample_path_table["img_path"].astype(str).tolist()
         label_paths = self.sample_path_table["object_label_path"].astype(str).tolist()
         labels: list[tuple[np.ndarray, np.ndarray]] = []
@@ -303,10 +303,31 @@ class ObjectDetectDataset(BaseDataset):
                 continue
             labels.append(ObjectDetectDataset.read_yolo_detection_labels(path))
         self._labels = labels
+
+    def prepare_train_cache(self, imgsz: int) -> None:
+        """把标签读进内存，并准备长边为 ``imgsz`` 的缩放图缓冲。由训练变换的 ``bind`` 调用。"""
+        if not self._has_label:
+            return
+        self.prepare_label_cache()
+        n = len(self)
+        self._cache_imgsz = int(imgsz)
         self.ims = [None] * n
         self._im_hw = [None] * n
         self.buffer = []
         self.max_buffer = min(n, max(self.batch_size, 1) * 8, 1000)
+
+    def reorder_samples(self, order: Sequence[int]) -> None:
+        """按 ``order`` 重排样本。验证 ``rect`` 用宽高比排序后，同一 batch 才能堆成同一形状。"""
+        order_list = [int(i) for i in order]
+        self.sample_path_table = self.sample_path_table.iloc[order_list].reset_index(drop=True)
+        if self._img_paths is not None:
+            self._img_paths = [self._img_paths[i] for i in order_list]
+        if self._labels is not None:
+            self._labels = [self._labels[i] for i in order_list]
+        if self.ims is not None:
+            self.ims = [self.ims[i] for i in order_list]
+        if self._im_hw is not None:
+            self._im_hw = [self._im_hw[i] for i in order_list]
 
     def load_raw(self, index: int) -> tuple[np.ndarray, tuple[int, int], np.ndarray, np.ndarray]:
         """长边缩到缓存尺寸的 BGR 图、高宽、类别、像素 XYXY。命中缓冲时不再读盘。"""
@@ -354,7 +375,7 @@ class ObjectDetectDataset(BaseDataset):
 
         if self.transform is not None and getattr(self.transform, "reads_dataset", False):
             assert self._img_paths is not None and self._labels is not None
-            img_tv, cls_tensor, bboxes_tv = self.transform(index)
+            img_tv, cls_tensor, bboxes_tv = self.transform(index, self)
             cls0, rel0 = self._labels[index]
             out_h, out_w = int(img_tv.shape[-2]), int(img_tv.shape[-1])
             net_in = {

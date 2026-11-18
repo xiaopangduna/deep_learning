@@ -53,9 +53,9 @@ class YOLOv8TrainAugment:
         self._dataset = dataset
         dataset.prepare_train_cache(self.mosaic_size)
 
-    def __call__(self, index: int):
+    def __call__(self, index: int, dataset: Any = None):
         """返回 uint8 RGB 图、类别张量、像素 XYXY 框。"""
-        dataset = self._dataset
+        dataset = self._dataset if dataset is None else dataset
         if dataset is None:
             raise RuntimeError("YOLOv8TrainAugment 须先 bind 到 ObjectDetectDataset")
         n = max(len(dataset), 1)

@@ -1,12 +1,12 @@
 """YOLOv8 风格 LetterBox：保比例缩放后 pad 到固定 ``(H, W)``。
 
-几何与 ``ultralytics.data.augment.LetterBox``（``auto=False``, ``scale_fill=False``）一致：
-``r = min(dst_h/src_h, dst_w/src_w)``，``round`` 得到未 pad 尺寸，居中时用
+几何与 ``ultralytics.data.augment.LetterBox``（``auto=False``, ``scale_fill=False``）
+单步 ``round`` 一致：``r = min(dst_h/src_h, dst_w/src_w)``，居中时用
 ``round(d-0.1)`` / ``round(d+0.1)`` 拆分左右/上下，避免奇数 pad 对不齐。
 
-官方 ``YOLO.val()`` 的 ``LetterBox(scaleup=False)`` 只负责 pad；在那之前
-``load_image(rect_mode=True)`` 已经把长边缩放到 ``imgsz``（**含放大**）。要对齐官方
-val mAP，这里的 ``scaleup`` 应保持默认 ``True``。
+官方 ``YOLO.val()`` 不走这一步单独完成。它先 ``load_image`` 用 ``ceil`` 把长边缩到
+``imgsz``（含放大），再 ``LetterBox(scaleup=False)``，并且 ``rect=True`` 时每个 batch
+的目标边长不同。那条路径在 ``YOLOv8ValAugment``。
 
 设计为 :class:`torchvision.transforms.v2.Transform`，可放进 ``v2.Compose``：
 对 ``Image`` / ``BoundingBoxes`` 使用同一套 resize+pad（框随 pad 平移）。

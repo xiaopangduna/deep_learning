@@ -82,6 +82,7 @@ class ObjectDetectDataModule(BaseDataModule):
                 map_class_id_to_class_name=self.map_class_id_to_class_name,
                 norm_mean=self.norm_mean,
                 norm_std=self.norm_std,
+                batch_size=self.batch_size,
             )
         if stage == "validate" or stage is None:
             self.val_dataset = ObjectDetectDataset(
@@ -91,6 +92,7 @@ class ObjectDetectDataModule(BaseDataModule):
                 map_class_id_to_class_name=self.map_class_id_to_class_name,
                 norm_mean=self.norm_mean,
                 norm_std=self.norm_std,
+                batch_size=self.batch_size,
             )
         if stage == "test" or stage is None:
             self.test_dataset = ObjectDetectDataset(
@@ -100,6 +102,7 @@ class ObjectDetectDataModule(BaseDataModule):
                 map_class_id_to_class_name=self.map_class_id_to_class_name,
                 norm_mean=self.norm_mean,
                 norm_std=self.norm_std,
+                batch_size=self.batch_size,
             )
         if stage == "predict" or stage is None:
             self.pred_dataset = ObjectDetectDataset(

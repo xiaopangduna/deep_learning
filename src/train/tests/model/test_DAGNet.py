@@ -104,14 +104,19 @@ def test_DAGWeightLoader_yolov8_n():
     official_model.eval()
     net.eval()
     x = torch.randn(1, 3, 640, 640)
+    # rect 验证的 batch 边长是 stride 的倍数，常见不是正方形 640
+    x_rect = torch.randn(1, 3, 512, 672)
     with torch.no_grad():
         official_out = official_model.model(x)
         dag_out = net([x])[0]
+        official_rect = official_model.model(x_rect)
+        dag_rect = net([x_rect])[0]
 
     # 官方 eval 返回 (inference, raw_list)；DAG Detect.forward 仅返回 raw_list
     assert len(dag_out) == 3
     for i in range(3):
         assert torch.allclose(dag_out[i], official_out[1][i], atol=1e-6)
+        assert torch.allclose(dag_rect[i], official_rect[1][i], atol=1e-6)
 
 
 def test_DAGWeightLoader_yolov8_n_fused_matches_official():
