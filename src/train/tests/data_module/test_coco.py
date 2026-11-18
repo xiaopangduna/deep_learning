@@ -10,6 +10,7 @@ import pytest
 
 from lovely_deep_learning.data_module.coco import (
     COCODataModule,
+    _LiveLine,
     _download_zip,
     ensure_coco_files,
     generate_coco_csvs,
@@ -157,7 +158,7 @@ def test_ensure_extracts_labels_without_coco_prefix_and_images(tmp_path: Path):
     assert (root / "train2017.txt").read_text(encoding="utf-8").count("images/train2017/") == 2
 
 
-def test_ensure_skips_complete_files_and_fills_partial_images(tmp_path, monkeypatch):
+def test_ensure_leaves_a_split_that_already_has_a_file(tmp_path, monkeypatch):
     root = tmp_path / "coco"
     _write_fixture_zips(root)
     train_dir = root / "images" / "train2017"
@@ -172,11 +173,9 @@ def test_ensure_skips_complete_files_and_fills_partial_images(tmp_path, monkeypa
     )
     ensure_coco_files(root)
     assert (train_dir / "000000000009.jpg").read_bytes() == b"keep"
-    assert (train_dir / "000000000025.jpg").read_bytes() == b"train-b"
+    assert not (train_dir / "000000000025.jpg").exists()
     assert (root / "README.txt").is_file()
-
-    ensure_coco_files(root)
-    assert (train_dir / "000000000009.jpg").read_bytes() == b"keep"
+    assert (root / "images" / "val2017" / "000000000139.jpg").read_bytes() == b"val"
 
 
 def test_prepare_data_writes_csv_after_extract(tmp_path: Path):
@@ -203,6 +202,102 @@ def test_prepare_data_writes_csv_after_extract(tmp_path: Path):
     ]
     assert not (root / "labels" / "train2017" / "000000000025.txt").exists()
     assert (root / "map_class_id_to_class_name.csv").is_file()
+
+
+def test_prepare_data_is_silent_when_splits_exist(tmp_path, monkeypatch, capsys):
+    root = tmp_path / "coco"
+    for relative in (
+        "labels/train2017",
+        "labels/val2017",
+        "images/train2017",
+        "images/val2017",
+        "images/test2017",
+    ):
+        directory = root / relative
+        directory.mkdir(parents=True)
+        (directory / "000000000001.txt").write_text("x\n", encoding="utf-8")
+    train_csv = root / "train.csv"
+    val_csv = root / "val.csv"
+    predict_csv = root / "predict.csv"
+    train_csv.write_text(
+        "path_img,path_label_detect_yolo\na.jpg,a.txt\nb.jpg,b.txt\n",
+        encoding="utf-8",
+    )
+    val_csv.write_text(
+        "path_img,path_label_detect_yolo\nv.jpg,v.txt\n",
+        encoding="utf-8",
+    )
+    predict_csv.write_text("path_img\nv.jpg\n", encoding="utf-8")
+
+    def fail_download(url, dest):
+        raise AssertionError(f"unexpected download {url} -> {dest}")
+
+    monkeypatch.setattr(
+        "lovely_deep_learning.data_module.coco._download_zip", fail_download
+    )
+    module = COCODataModule(
+        train_csv_paths=[str(train_csv)],
+        val_csv_paths=[str(val_csv)],
+        test_csv_paths=[str(val_csv)],
+        predict_csv_paths=[str(predict_csv)],
+        transform_train=None,
+        transform_val=None,
+        dataset_dir=str(root),
+    )
+    module.prepare_data()
+    assert capsys.readouterr().out == ""
+    assert train_csv.read_text(encoding="utf-8").count("a.jpg") == 1
+
+
+def test_prepare_data_prints_root_once(tmp_path: Path, capsys):
+    root = tmp_path / "coco"
+    _write_fixture_zips(root)
+    module = COCODataModule(
+        train_csv_paths=[str(root / "train.csv")],
+        val_csv_paths=[str(root / "val.csv")],
+        test_csv_paths=[str(root / "val.csv")],
+        predict_csv_paths=[str(root / "predict.csv")],
+        transform_train=None,
+        transform_val=None,
+        dataset_dir=str(root),
+    )
+    module.prepare_data()
+    output = capsys.readouterr().out
+    assert "=" * 70 in output
+    assert output.count(f"COCO  {root.as_posix()}") == 1
+    assert "->" not in output
+    assert "压缩包" in output
+    assert "coco2017labels.zip" in output
+    assert "已有" in output
+    assert "解压，去掉 coco/ 前缀" in output
+    assert "images/train2017" in output
+    assert "解压中" in output
+    assert "个文件" in output
+    assert "\nCSV\n" in output
+    assert "train.csv" in output
+    assert "写入" in output
+
+
+def test_generate_prints_symlink_target(tmp_path: Path, capsys):
+    direct = tmp_path / "direct"
+    _write_labels(direct)
+    linked = tmp_path / "linked"
+    linked.symlink_to(direct, target_is_directory=True)
+    generate_coco_csvs(linked)
+    output = capsys.readouterr().out
+    assert f"COCO  {linked.as_posix()} -> {direct.resolve().as_posix()}" in output
+    assert "\nCSV\n" in output
+    assert "写入" in output
+
+
+def test_progress_lines_every_tenth_when_not_a_tty(capsys):
+    line = _LiveLine()
+    assert line._tty is False
+    for pct in range(1, 101):
+        line.show(f"zip {pct}", percent=pct)
+    line.show("zip done", final=True)
+    printed = [text for text in capsys.readouterr().out.splitlines() if text]
+    assert printed == [f"zip {pct}" for pct in range(10, 100, 10)] + ["zip done"]
 
 
 def test_missing_label_file_is_background(tmp_path: Path):

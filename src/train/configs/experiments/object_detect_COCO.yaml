@@ -2,8 +2,8 @@
 # 用法（在 src/train 下）：
 #   python scripts/train.py fit --config configs/experiments/object_detect_COCO.yaml
 # 压缩包和解压结果放在 datasets/COCO/coco（可以是软链接）。
-# 首次 fit / validate 时 prepare_data 下载缺失的标签、train2017、val2017、test2017 并解压，再生成 CSV。
-# 已有完整 zip 或已解压的划分会跳过。训练表包含没有 txt 的图，读作空标签。
+# 五个划分目录都有文件时，prepare_data 不再下载、解压或写 CSV，也不打印。
+# 缺任何一个划分则下载 zip、解压并生成 CSV，终端打印数据目录和这三步。训练表包含没有 txt 的图，读作空标签。
 # 手动解压后可只运行 python datasets/COCO/coco_to_csv.py。见 datasets/COCO/README.md。
 
 trainer:

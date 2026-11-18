@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import sys
+import time
 import urllib.error
 import urllib.request
 import zipfile
 from pathlib import Path
-from typing import List
+from typing import Callable, List
 
 import pandas as pd
 
@@ -122,6 +124,14 @@ _COCO_IMAGE_ZIPS = (
     (ZIP_TEST2017_IMAGES, "test2017", COCO_TEST2017_IMAGES_ZIP_URL),
 )
 _COCO_SPLIT_LISTS = {"train2017": "train2017.txt", "val2017": "val2017.txt"}
+_COCO_READY_DIRS = (
+    Path("labels/train2017"),
+    Path("labels/val2017"),
+    Path("images/train2017"),
+    Path("images/val2017"),
+    Path("images/test2017"),
+)
+_COCO_BAR = "=" * 70
 
 class COCO8DataModule(ObjectDetectDataModule):
     """Ultralytics COCO8：下载并解压数据、生成 CSV，并沿用目标检测 DataModule 的训练 / 验证 / 测试 / 预测流程。
@@ -322,16 +332,224 @@ class COCO8DataModule(ObjectDetectDataModule):
         )
 
 
-def ensure_coco_files(dataset_dir) -> None:
-    """保证 ``dataset_dir`` 里有标签和 train/val/test 图像。已有的完整 zip 与已解压目录会跳过。
+def coco_splits_ready(dataset_dir) -> bool:
+    """五个划分目录里各有至少一个文件时，数据视为已准备好。"""
+    root = Path(dataset_dir).expanduser()
+    if root.is_symlink() and not root.exists():
+        return False
+    return all(_dir_has_file(root / relative) for relative in _COCO_READY_DIRS)
 
-    标签包去掉顶层 ``coco/`` 后全部解压。图像包解压到 ``images/``，得到
-    ``images/train2017``、``images/val2017`` 和 ``images/test2017``。
+
+def ensure_coco_files(dataset_dir) -> None:
+    """下载缺失的 zip 并解压还没有文件的划分。标签包去掉顶层 ``coco/``。
+
+    某个划分目录里已经有文件就不再解压该划分。调用方在五个划分都有文件时不应进入这里。
+    终端先打 ``dataset_dir``，再打压缩包和解压两块；CSV 由 ``generate_coco_csvs`` 接着打。
     """
+    print(_COCO_BAR)
+    print(f"COCO  {_dataset_dir_label(dataset_dir)}")
+    print("压缩包")
     root = _coco_dataset_root(dataset_dir)
-    _ensure_labels(root)
-    for filename, split, url in _COCO_IMAGE_ZIPS:
-        _ensure_image_split(root, filename, split, url)
+    jobs = [(ZIP_COCO2017_LABELS, COCO2017_LABELS_ZIP_URL)]
+    jobs.extend((filename, url) for filename, _split, url in _COCO_IMAGE_ZIPS)
+    name_width = max(len(name) for name, _url in jobs)
+    zip_paths: dict[str, Path] = {}
+    for name, url in jobs:
+        zip_path, status = _zip_action(root, name)
+        if status == "已有":
+            size = _format_size(zip_path.stat().st_size)
+            print(f"{name:<{name_width}}  {status}  {size:>8}")
+        else:
+            prefix = f"{name:<{name_width}}  {status}"
+            _download_zip(url, zip_path, prefix=prefix)
+            if not zipfile.is_zipfile(zip_path):
+                raise RuntimeError(f"COCODataModule: 压缩包无效: {zip_path}")
+        zip_paths[name] = zip_path
+
+    extract_rows = [("labels", "解压，去掉 coco/ 前缀", True)]
+    for _filename, split, _url in _COCO_IMAGE_ZIPS:
+        needed = not _dir_has_file(root / "images" / split)
+        extract_rows.append((f"images/{split}", "解压" if needed else "跳过", needed))
+    if _labels_ready(root):
+        extract_rows[0] = ("labels", "跳过", False)
+    name_width = max(len(name) for name, _status, _needed in extract_rows)
+    print(_COCO_BAR)
+    print("解压")
+    label_name, label_status, extract_labels = extract_rows[0]
+    if extract_labels:
+        count, _size = _archive_file_stats(zip_paths[ZIP_COCO2017_LABELS])
+        _run_timed_row(
+            f"{label_name:<{name_width}}  {label_status}   {count} 个文件",
+            lambda: _extract_labels(root, zip_paths[ZIP_COCO2017_LABELS]),
+        )
+    else:
+        print(f"{label_name:<{name_width}}  {label_status}")
+    for name, status, needed in extract_rows[1:]:
+        if not needed:
+            print(f"{name:<{name_width}}  {status}")
+            continue
+        split = name.split("/", 1)[1]
+        count, size = _archive_file_stats(zip_paths[f"{split}.zip"])
+        (root / "images").mkdir(parents=True, exist_ok=True)
+
+        def extract_split(zip_name: str = f"{split}.zip", split_name: str = name) -> None:
+            _extract_image_archive(zip_paths[zip_name], root / "images")
+            if not _dir_has_file(root / "images" / split_name.split("/", 1)[1]):
+                raise RuntimeError(f"COCODataModule: {split_name} 解压后没有文件")
+
+        _run_timed_row(
+            f"{name:<{name_width}}  解压中   {count} 个文件   {_format_size(size)}",
+            extract_split,
+            done=f"{name:<{name_width}}  解压   {count} 个文件   {_format_size(size)}",
+        )
+
+
+def _dataset_dir_label(dataset_dir) -> str:
+    path = Path(dataset_dir).expanduser()
+    shown = path.as_posix()
+    if path.is_symlink() and path.exists():
+        return f"{shown} -> {path.resolve().as_posix()}"
+    return shown
+
+
+def _format_size(n: int) -> str:
+    if n >= 1024**3:
+        return f"{n / 1e9:.1f}GB"
+    if n >= 1024**2:
+        return f"{n / 1024**2:.0f}MB"
+    if n >= 1024:
+        return f"{n / 1024:.0f}KB"
+    return f"{n}B"
+
+
+def _format_speed(bytes_per_sec: float) -> str:
+    if bytes_per_sec >= 1e9:
+        return f"{bytes_per_sec / 1e9:.1f}GB/s"
+    if bytes_per_sec >= 1e6:
+        return f"{bytes_per_sec / 1e6:.0f}MB/s"
+    if bytes_per_sec >= 1e3:
+        return f"{bytes_per_sec / 1e3:.0f}KB/s"
+    return f"{bytes_per_sec:.0f}B/s"
+
+
+def _format_elapsed(seconds: float) -> str:
+    total = max(int(seconds), 0)
+    if total < 60:
+        return f"{total}s"
+    minutes, secs = divmod(total, 60)
+    if minutes < 60:
+        return f"{minutes}m{secs:02d}s"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}h{minutes:02d}m"
+
+
+def _percent(done: int, total: int | None) -> int | None:
+    if not total:
+        return None
+    return min(int(done * 100 / total), 100)
+
+
+def _transfer_text(
+    label: str,
+    done: int,
+    total: int | None,
+    written: int,
+    started: float,
+    *,
+    final: bool,
+) -> str:
+    elapsed = time.monotonic() - started
+    speed = written / elapsed if elapsed > 0 else 0.0
+    speed_text = _format_speed(speed)
+    if final and total:
+        return (
+            f"{label}  {_format_size(done):>8}   {'100%':>4}   {speed_text:>7}"
+            f"   {_format_elapsed(elapsed)}"
+        )
+    if total:
+        percent = min(int(done * 100 / total), 100)
+        return (
+            f"{label}  {_format_size(done):>8} / {_format_size(total):<8}  {percent:>3}%"
+            f"   {speed_text}"
+        )
+    text = f"{label}  {_format_size(done):>8}   {speed_text}"
+    if final:
+        text += f"   {_format_elapsed(elapsed)}"
+    return text
+
+
+class _LiveLine:
+    """终端上原地改一行。重定向到文件时，下载每过 10% 另起一行，结束再打定稿。"""
+
+    def __init__(self) -> None:
+        self._tty = sys.stdout.isatty()
+        self._last = ""
+        self._next_tenth = 10
+        self._last_emit = time.monotonic()
+
+    def show(
+        self,
+        text: str,
+        *,
+        final: bool = False,
+        percent: int | None = None,
+        force: bool = False,
+    ) -> None:
+        if self._tty:
+            pad = " " * max(len(self._last) - len(text), 0)
+            print(f"\r{text}{pad}", end="\n" if final else "", flush=True)
+            self._last = "" if final else text
+            return
+        if final or force:
+            print(text)
+            return
+        now = time.monotonic()
+        emit = False
+        if percent is None:
+            emit = now - self._last_emit >= 10
+        else:
+            tenth = percent // 10 * 10
+            emit = tenth >= self._next_tenth and tenth < 100
+            if emit:
+                self._next_tenth = tenth + 10
+        if emit:
+            print(text)
+            self._last_emit = now
+
+
+def _run_timed_row(working: str, action: Callable[[], None], *, done: str | None = None) -> None:
+    line = _LiveLine()
+    line.show(working, force=True)
+    started = time.monotonic()
+    action()
+    elapsed = _format_elapsed(time.monotonic() - started)
+    line.show(f"{done or working}   {elapsed}", final=True)
+
+
+def _archive_file_stats(zip_path: Path) -> tuple[int, int]:
+    count = 0
+    size = 0
+    with zipfile.ZipFile(zip_path) as archive:
+        for info in archive.infolist():
+            if info.is_dir() or info.filename.endswith("/"):
+                continue
+            count += 1
+            size += info.file_size
+    return count, size
+
+
+def _content_total(response, already: int) -> int | None:
+    headers = getattr(response, "headers", None)
+    if headers is None:
+        return None
+    raw = headers.get("Content-Length")
+    if raw is None:
+        return None
+    try:
+        length = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return already + length
 
 
 def _coco_dataset_root(dataset_dir) -> Path:
@@ -346,87 +564,109 @@ def _coco_dataset_root(dataset_dir) -> Path:
     return root
 
 
-def _ensure_zip(root: Path, filename: str, url: str) -> Path:
+def _dir_has_file(directory: Path) -> bool:
+    if not directory.is_dir():
+        return False
+    return any(path.is_file() for path in directory.iterdir())
+
+
+def _labels_ready(root: Path) -> bool:
+    return _dir_has_file(root / "labels" / "train2017") and _dir_has_file(
+        root / "labels" / "val2017"
+    )
+
+
+def _zip_action(root: Path, filename: str) -> tuple[Path, str]:
     zip_path = root / filename
     if zip_path.is_file() and zipfile.is_zipfile(zip_path):
-        print(f"COCODataModule: 使用已有压缩包（不重新下载）: {zip_path}")
-        return zip_path
-    print(f"COCODataModule: 下载 {filename} -> {zip_path}")
-    _download_zip(url, zip_path)
-    if not zipfile.is_zipfile(zip_path):
-        raise RuntimeError(f"COCODataModule: 压缩包无效: {zip_path}")
-    return zip_path
+        return zip_path, "已有"
+    if zip_path.is_file() and zip_path.stat().st_size > 0:
+        return zip_path, "续传"
+    return zip_path, "下载"
 
 
-def _download_zip(url: str, dest: Path) -> None:
-    """下载到 ``dest``。已有不完整文件时带 Range 续传；服务端忽略 Range 则整包重下。"""
+def _download_zip(url: str, dest: Path, *, prefix: str | None = None) -> None:
+    """下载到 ``dest``。已有不完整文件时带 Range 续传；服务端忽略 Range 则整包重下。
+
+    ``prefix`` 是进度行左侧的文件名和状态。同一行在终端里刷新；输出不是终端时每过 10% 另起一行。
+    """
     dest.parent.mkdir(parents=True, exist_ok=True)
+    label = prefix or f"{dest.name}  下载"
+    line = _LiveLine()
+    started = time.monotonic()
+    state = {"written": 0, "total": None}
+
+    def on_chunk(done: int, total: int | None, written: int) -> None:
+        state["written"] = written
+        state["total"] = total
+        line.show(
+            _transfer_text(label, done, total, state["written"], started, final=False),
+            percent=_percent(done, total),
+        )
+
     resume = dest.is_file() and dest.stat().st_size > 0
     try:
-        _stream_download(url, dest, resume=resume)
+        _stream_download(url, dest, resume=resume, on_chunk=on_chunk)
     except urllib.error.HTTPError as exc:
         if exc.code != 416 or not dest.is_file():
             raise
         dest.unlink()
-        _stream_download(url, dest, resume=False)
+        state["written"] = 0
+        state["total"] = None
+        _stream_download(url, dest, resume=False, on_chunk=on_chunk)
+    done = dest.stat().st_size if dest.is_file() else 0
+    line.show(
+        _transfer_text(label, done, state["total"], state["written"], started, final=True),
+        final=True,
+    )
 
 
-def _stream_download(url: str, dest: Path, *, resume: bool) -> None:
+def _stream_download(
+    url: str,
+    dest: Path,
+    *,
+    resume: bool,
+    on_chunk: Callable[[int, int | None, int], None] | None = None,
+) -> None:
     existing = dest.stat().st_size if resume and dest.is_file() else 0
     headers = {"Range": f"bytes={existing}-"} if existing else {}
     request = urllib.request.Request(url, headers=headers)
     with urllib.request.urlopen(request) as response:
         status = getattr(response, "status", None) or response.getcode()
-        mode = "ab" if existing and status == 206 else "wb"
+        appending = bool(existing and status == 206)
+        mode = "ab" if appending else "wb"
+        base = existing if appending else 0
+        total = _content_total(response, base)
+        done = base
+        written = 0
+        if on_chunk is not None:
+            on_chunk(done, total, written)
         with dest.open(mode) as handle:
-            shutil.copyfileobj(response, handle, length=1024 * 1024)
+            while True:
+                chunk = response.read(1024 * 1024)
+                if not chunk:
+                    break
+                handle.write(chunk)
+                done += len(chunk)
+                written += len(chunk)
+                if on_chunk is not None:
+                    on_chunk(done, total, written)
 
 
-def _ensure_labels(root: Path) -> None:
-    zip_path = _ensure_zip(root, ZIP_COCO2017_LABELS, COCO2017_LABELS_ZIP_URL)
+def _extract_labels(root: Path, zip_path: Path) -> None:
     with zipfile.ZipFile(zip_path) as archive:
-        expected = {
-            split: _zip_label_txt_count(archive, split)
-            for split in ("train2017", "val2017")
-        }
-        if any(count == 0 for count in expected.values()):
+        names = {info.filename for info in archive.infolist()}
+        if not any(name.startswith("coco/labels/train2017/") and name.endswith(".txt") for name in names):
             raise RuntimeError(
-                f"COCODataModule: {zip_path} 中没有 coco/labels/train2017 与 "
-                "coco/labels/val2017"
+                f"COCODataModule: {zip_path} 中没有 coco/labels/train2017"
             )
-        if all(
-            _count_named(root / "labels" / split, ".txt") >= expected[split]
-            for split in expected
-        ):
-            print("COCO YOLO 标签已齐全，跳过解压。")
-            return
-        print(f"Extracting {zip_path} -> {root}（去掉 coco/ 前缀）")
+        if not any(name.startswith("coco/labels/val2017/") and name.endswith(".txt") for name in names):
+            raise RuntimeError(
+                f"COCODataModule: {zip_path} 中没有 coco/labels/val2017"
+            )
         _extract_zip_strip_prefix(archive, root, _COCO_LABEL_PREFIX)
-
-
-def _zip_label_txt_count(archive: zipfile.ZipFile, split: str) -> int:
-    prefix = f"coco/labels/{split}/"
-    return sum(
-        1
-        for info in archive.infolist()
-        if not info.is_dir()
-        and info.filename.startswith(prefix)
-        and info.filename.endswith(".txt")
-    )
-
-
-def _count_named(directory: Path, suffix: str) -> int:
-    if not directory.is_dir():
-        return 0
-    return sum(
-        1 for path in directory.iterdir() if path.is_file() and path.name.endswith(suffix)
-    )
-
-
-def _count_files(directory: Path) -> int:
-    if not directory.is_dir():
-        return 0
-    return sum(1 for path in directory.iterdir() if path.is_file())
+    if not _labels_ready(root):
+        raise RuntimeError(f"COCODataModule: 标签解压后划分目录里没有文件: {zip_path}")
 
 
 def _extract_zip_strip_prefix(archive: zipfile.ZipFile, root: Path, prefix: str) -> None:
@@ -454,26 +694,6 @@ def _safe_dest(root: Path, relative: str) -> Path:
     if not dest.is_relative_to(root):
         raise RuntimeError(f"COCODataModule: 非法压缩包路径: {relative}")
     return dest
-
-
-def _ensure_image_split(root: Path, filename: str, split: str, url: str) -> None:
-    zip_path = _ensure_zip(root, filename, url)
-    images_root = root / "images"
-    dest = images_root / split
-    with zipfile.ZipFile(zip_path) as archive:
-        expected = sum(1 for info in archive.infolist() if not info.is_dir())
-    got = _count_files(dest)
-    if expected and got >= expected:
-        print(f"COCO {split} 图像已齐全，跳过解压。")
-        return
-    images_root.mkdir(parents=True, exist_ok=True)
-    print(f"Extracting {zip_path} -> {images_root}")
-    _extract_image_archive(zip_path, images_root)
-    got = _count_files(dest)
-    if got < expected:
-        raise RuntimeError(
-            f"COCODataModule: {split} 解压后有 {got} 个文件，压缩包内有 {expected} 个"
-        )
 
 
 def _extract_image_archive(zip_path: Path, images_root: Path) -> None:
@@ -505,13 +725,14 @@ def _extract_image_archive(zip_path: Path, images_root: Path) -> None:
                 shutil.copyfileobj(src, out)
 
 
-def generate_coco_csvs(dataset_dir, *, overwrite: bool = False) -> None:
+def generate_coco_csvs(dataset_dir, *, overwrite: bool = False, with_header: bool = True) -> None:
     """按 ``train2017.txt`` / ``val2017.txt`` 在 ``dataset_dir`` 下写 train/val/predict CSV 和类别映射。
 
     列表里的每张图都写入，包括没有 txt 的图。那些图的标签路径仍写成
     ``labels/{split}/{stem}.txt``，文件不存在时读作空标签（背景）。不读取 JPEG。
     ``dataset_dir`` 可以是软链接。路径列仍相对 ``dataset_dir``，不把链接展开进 CSV。
     四个文件都在且 ``overwrite`` 为 False 时跳过写入，但仍检查两个图像列表。
+    ``with_header`` 为 True 时先打数据目录；``prepare_data`` 已打过目录时传 False。
     """
     root = Path(dataset_dir).expanduser().resolve()
     if not root.is_dir():
@@ -522,20 +743,18 @@ def generate_coco_csvs(dataset_dir, *, overwrite: bool = False) -> None:
     val_csv_path = root / "val.csv"
     predict_csv_path = root / "predict.csv"
     map_csv_path = root / "map_class_id_to_class_name.csv"
-    if (
-        not overwrite
-        and train_csv_path.is_file()
-        and val_csv_path.is_file()
-        and predict_csv_path.is_file()
-        and map_csv_path.is_file()
-    ):
-        print("============================================================================")
-        print("COCODataModule: CSV files already exist, skipping generation:")
-        print(f"  - {train_csv_path}")
-        print(f"  - {val_csv_path}")
-        print(f"  - {predict_csv_path}")
-        print(f"  - {map_csv_path}")
-        print("============================================================================")
+    outputs = (
+        (train_csv_path, None),
+        (val_csv_path, None),
+        (predict_csv_path, None),
+        (map_csv_path, None),
+    )
+    if not overwrite and all(path.is_file() for path, _count in outputs):
+        _print_csv_block(
+            [(path.name, None, "跳过") for path, _count in outputs],
+            dataset_dir,
+            with_header=with_header,
+        )
         return
 
     train_rows = _collect_coco_split_rows(root, "train2017")
@@ -552,12 +771,37 @@ def generate_coco_csvs(dataset_dir, *, overwrite: bool = False) -> None:
     pd.DataFrame(predict_rows, columns=["path_img"]).to_csv(predict_csv_path, index=False)
     ObjectDetectDataModule._write_map_class_id_to_class_name_csv(map_csv_path, class_to_idx)
 
-    print("============================================================================")
-    print(f"Generated {train_csv_path} with {len(train_rows)} entries")
-    print(f"Generated {val_csv_path} with {len(val_rows)} entries")
-    print(f"Generated {predict_csv_path} with {len(predict_rows)} entries")
-    print(f"Generated {map_csv_path} with {len(class_to_idx)} classes")
-    print("============================================================================")
+    _print_csv_block(
+        [
+            (train_csv_path.name, len(train_rows), "写入"),
+            (val_csv_path.name, len(val_rows), "写入"),
+            (predict_csv_path.name, len(predict_rows), "写入"),
+            (map_csv_path.name, len(class_to_idx), "写入"),
+        ],
+        dataset_dir,
+        with_header=with_header,
+    )
+
+
+def _print_csv_block(
+    rows: list[tuple[str, int | None, str]],
+    dataset_dir,
+    *,
+    with_header: bool,
+) -> None:
+    print(_COCO_BAR)
+    if with_header:
+        print(f"COCO  {_dataset_dir_label(dataset_dir)}")
+    print("CSV")
+    name_width = max(len(name) for name, _count, _action in rows)
+    counts = [count for _name, count, _action in rows if count is not None]
+    count_width = max((len(str(count)) for count in counts), default=0)
+    for name, count, action in rows:
+        if count is None:
+            print(f"{name:<{name_width}}  {action}")
+        else:
+            print(f"{name:<{name_width}}  {count:>{count_width}}  {action}")
+    print(_COCO_BAR)
 
 
 def _require_coco_image_lists(root: Path) -> None:
@@ -598,9 +842,9 @@ class COCODataModule(ObjectDetectDataModule):
     --------
     1. 构造时传入 ``dataset_dir`` 以及各阶段 CSV 路径、``transform_*``、``key_map`` 等（见下方参数）。
     2. Lightning 在 ``fit`` / ``validate`` / ``test`` / ``predict`` 之前调用 ``prepare_data``：
-       缺少 ``coco2017labels.zip``、``train2017.zip``、``val2017.zip``、``test2017.zip`` 时下载到 ``dataset_dir``。
-       标签包去掉顶层 ``coco/`` 后全部解压；图像包解压到 ``images/``。已完整的 zip 和已解压的划分会跳过。
-       然后按 ``train2017.txt`` / ``val2017.txt`` 生成 CSV，没有 txt 的图也写入。四个 CSV 文件已存在则跳过生成。也可先按 README 手动解压，
+       ``labels/train2017``、``labels/val2017``、``images/train2017``、``images/val2017``、
+       ``images/test2017`` 里都已有文件时，不再下载、解压或写 CSV，也不打印。缺任何一个则下载四个 zip、
+       解压并生成 CSV，终端打印 ``dataset_dir`` 以及压缩包、解压、CSV 三块。也可先按 README 手动解压，
        再运行 ``datasets/COCO/coco_to_csv.py``，它只调用 ``generate_coco_csvs``。
     3. ``setup`` 由父类完成，按 CSV 构建 ``ObjectDetectDataset``。
 
@@ -673,8 +917,12 @@ class COCODataModule(ObjectDetectDataModule):
         self.dataset_dir = Path(dataset_dir)
 
     def prepare_data(self) -> None:
-        """下载并解压缺失的 COCO 2017 文件，再生成 CSV。Lightning 顺序：``prepare_data`` → ``setup``。
-        CSV 与 ``datasets/COCO/coco_to_csv.py`` 共用 ``generate_coco_csvs``。
+        """五个划分目录都有文件时什么都不打印。否则下载、解压并生成 CSV。
+
+        Lightning 顺序：``prepare_data`` → ``setup``。写 CSV 与 ``datasets/COCO/coco_to_csv.py``
+        共用 ``generate_coco_csvs``。
         """
+        if coco_splits_ready(self.dataset_dir):
+            return
         ensure_coco_files(self.dataset_dir)
-        generate_coco_csvs(self.dataset_dir)
+        generate_coco_csvs(self.dataset_dir, overwrite=True, with_header=False)

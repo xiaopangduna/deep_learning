@@ -9,14 +9,15 @@
 
 ## 自动准备
 
-`fit`、`validate`、`test`、`predict` 都会调用 `prepare_data`。它在 `dataset_dir`（默认 `datasets/COCO/coco`）里一次准备标签、train2017、val2017 和 test2017：
+`fit`、`validate`、`test`、`predict` 都会调用 `prepare_data`。下面五个目录里各有至少一个文件时，不再下载、解压或写 CSV，终端也不打印：
 
-1. 缺少 `coco2017labels.zip`、`train2017.zip`、`val2017.zip`、`test2017.zip` 时下载。已有且是完整 zip 则直接用。下到一半的文件从已有字节续传。
-2. 标签包去掉顶层 `coco/` 后全部解压（`labels/`、`LICENSE`、`README.txt`、`train2017.txt`、`val2017.txt` 等）。`labels/train2017` 与 `labels/val2017` 的 txt 数量已和压缩包一致时跳过。
-3. 图像包解压到 `images/`，得到 `images/train2017`、`images/val2017`、`images/test2017`。本地文件数不少于压缩包内文件数时跳过；不足则补齐，已有文件不覆盖。
-4. 调用 `generate_coco_csvs`。
+- `labels/train2017`
+- `labels/val2017`
+- `images/train2017`
+- `images/val2017`
+- `images/test2017`
 
-解压后保留 zip。
+缺任何一个就整套进行：四个 zip 缺了就下载（半截文件续传），标签包去掉 `coco/` 后全部解压，图像包解压到 `images/`，然后生成 CSV。这一轮终端先打 `dataset_dir`（软链接会带上实际目录），再分三块打印压缩包、解压和 CSV。下载和解压在同一行刷新进度；输出被重定向时，下载每过 10% 另起一行。已经有文件的划分不再解压。解压后保留 zip。半套目录不会自动补齐，删掉对应划分目录后再运行。
 
 ## 手动下载
 
