@@ -51,7 +51,7 @@ src/train/
 │   ├── models/                 # 可复用的 DAGNet 结构
 │   ├── callbacks/ optim/ pruner/ transforms/
 ├── tests/
-├── datasets/                   # 数据（不进 Git）
+├── datasets/                   # 数据不进 Git；各目录 README.md 说明下载与布局
 ├── logs/                       # TensorBoard 与 checkpoint
 └── exports/                    # 板端转换脚本与本地 SDK
 ```
@@ -147,11 +147,20 @@ Lightning CLI 参数可覆盖 YAML，例如 `--trainer.max_epochs 5`、`--traine
 | `object_detect_COCO8.yaml` | 检测 | COCO8（YOLOv8n） |
 | `object_detect_COCO.yaml` | 检测 | COCO 2017（YOLOv8n） |
 
-公开数据集首次 `fit` 会由 DataModule 的 `prepare_data` 下载并写 CSV。COCO 2017 可将 `coco2017labels.zip`、`train2017.zip`、`val2017.zip` 预先放到 `datasets/COCO/`，存在则跳过下载。
+各数据集的下载、目录和 CSV 位置见 [数据集](#数据集)。
 
 ## 数据集
 
-数据加载一律走 CSV。CSV 中的路径相对 **CSV 所在目录** 解析，并与 YAML 里的 `key_map` 对齐。
+MNIST 由 torchvision 直接读。其余数据加载走 CSV，路径相对 **CSV 所在目录** 解析，并与 YAML 里的 `key_map` 对齐。下载、解压布局和 `prepare_data` 写表的位置写在 `datasets/` 各目录的 `README.md`，总索引是 [datasets/README.md](datasets/README.md)。布局以对应类的 docstring 为准。
+
+| 数据 | 类 | 说明 |
+|------|----|------|
+| MNIST | `MNISTDataModule` | [datasets/MNIST/README.md](datasets/MNIST/README.md) |
+| ImageNette | `ImageNetteDataModule` | [datasets/IMAGENETTE/README.md](datasets/IMAGENETTE/README.md) |
+| ImageNet | `ImageNetDataModule` | [datasets/IMAGENET/README.md](datasets/IMAGENET/README.md) |
+| COCO8 | `COCO8DataModule` | [datasets/COCO8/README.md](datasets/COCO8/README.md) |
+| COCO 2017 | `COCODataModule` | [datasets/COCO/README.md](datasets/COCO/README.md) |
+| 框级分类 | `ImageClassifierFromDetectBoxDataModule` | [datasets/box_crop.md](datasets/box_crop.md) |
 
 ### 图像分类
 
@@ -167,7 +176,7 @@ path_img,class_name,class_id
 path_img
 ```
 
-训练哪些 id 由 `data.init_args.class_groups` 决定（`{训练 id: [原始 class_id, ...]}`）。不写则 CSV 里出现的 `class_id` 全部训练。绘图用的名称由数据集按筛选结果生成；某个 id 没有名字时，图上写这个 id。`map_class_id_to_class_name` 只在生成 ImageNet 等样本 CSV 时指定类别顺序，不筛样本。
+训练哪些 id 由 `data.init_args.class_groups` 决定（`{训练 id: [原始 class_id, ...]}`）。不写则 CSV 里出现的 `class_id` 全部训练。绘图用的名称由数据集按筛选结果生成；某个 id 没有名字时，图上写这个 id。检测任务的类别名在 `map_class_id_to_class_name.csv`，由 COCO / COCO8 的 `prepare_data` 写出，YAML 把该路径传给 `map_class_id_to_class_name`。
 
 自定义分类数据可分三步生成表：
 
@@ -219,7 +228,11 @@ python scripts/create_dataset_table_from_multi_folders_for_train_predict.py \
   --verbose
 ```
 
-`--split-ratio 0.7,0.3` 且 `--output-names train.csv,val.csv` 可一次拆成训练 / 验证集。
+`--split-ratio 0.7,0.3` 且 `--output-names train.csv,val.csv` 可一次拆成训练 / 验证集。COCO8 / COCO 2017 的检测 CSV 由对应 DataModule 生成，不必再跑这个脚本。
+
+### 框级分类
+
+`ImageClassifierFromDetectBoxDataModule` 不下载、也不生成 CSV。先用 `scripts/yolo_dir_to_box_crop_csv.py` 把 YOLO 目录展开成表，列和实验配置见 [datasets/box_crop.md](datasets/box_crop.md)。
 
 ## 导出与剪枝
 

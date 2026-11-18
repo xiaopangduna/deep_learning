@@ -6,7 +6,12 @@ tmp/
 
 data/
 checkpoints/
-datasets/
+# 数据不进 Git。先放开目录，才能再放行其中的 README。
+datasets/*
+!datasets/*.md
+!datasets/*/
+datasets/*/*
+!datasets/*/README.md
 
 pretrained_models/
 
