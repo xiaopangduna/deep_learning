@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import shutil
+import subprocess
+import urllib.error
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -100,14 +102,11 @@ COCO8_DOWNLOAD_URL = (
     "https://github.com/ultralytics/assets/releases/download/v0.0.0/coco8.zip"
 )
 
-# 与 ultralytics/cfg/datasets/coco.yaml 中 download 脚本一致
 COCO2017_LABELS_ZIP_URL = (
     "https://github.com/ultralytics/assets/releases/download/v0.0.0/"
     "coco2017labels.zip"
 )
-COCO_TRAIN2017_IMAGES_ZIP_URL = (
-    "http://images.cocodataset.org/zips/train2017.zip"
-)
+COCO_TRAIN2017_IMAGES_ZIP_URL = "http://images.cocodataset.org/zips/train2017.zip"
 COCO_VAL2017_IMAGES_ZIP_URL = "http://images.cocodataset.org/zips/val2017.zip"
 COCO_TEST2017_IMAGES_ZIP_URL = "http://images.cocodataset.org/zips/test2017.zip"
 
@@ -116,162 +115,13 @@ ZIP_TRAIN2017_IMAGES = "train2017.zip"
 ZIP_VAL2017_IMAGES = "val2017.zip"
 ZIP_TEST2017_IMAGES = "test2017.zip"
 
-
-def _has_txt_labels(d: Path) -> bool:
-    return d.is_dir() and any(d.glob("*.txt"))
-
-
-def _has_rgb_images(d: Path) -> bool:
-    if not d.is_dir():
-        return False
-    for ext in (".jpg", ".jpeg", ".png", ".bmp", ".JPG", ".JPEG"):
-        if any(d.glob(f"*{ext}")):
-            return True
-    return False
-
-
-def _ensure_zip(parent_dir: Path, filename: str, url: str) -> Path:
-    """
-    保证 ``parent_dir / filename`` 存在：若已有则直接使用（支持提前放入目录），否则从 ``url`` 下载。
-
-    解压后 **不删除** 压缩包，便于离线复用与校验。
-    """
-    parent_dir.mkdir(parents=True, exist_ok=True)
-    zip_path = parent_dir / filename
-    if zip_path.is_file():
-        print(f"COCODataModule: 使用已有压缩包（不重新下载）: {zip_path}")
-        return zip_path
-    print(f"COCODataModule: 下载 {filename} -> {zip_path}")
-    urllib.request.urlretrieve(url, str(zip_path))
-    return zip_path
-
-
-def _extract_zip(zip_path: Path, dest: Path) -> None:
-    dest.mkdir(parents=True, exist_ok=True)
-    print(f"Extracting {zip_path} -> {dest}")
-    with zipfile.ZipFile(zip_path, "r") as zf:
-        zf.extractall(dest)
-
-
-def _find_yolo_label_split_dir(extract_root: Path, split: str) -> Path | None:
-    """
-    官方 ``coco2017labels.zip`` 内为 ``coco/labels/{train2017,val2017}/*.txt``；
-    其它版本也可能为顶层 ``labels/...`` 等，此处按优先级探测。
-    """
-    candidates = [
-        extract_root / "coco" / "labels" / split,
-        extract_root / "labels" / split,
-        extract_root / split,
-        extract_root / "coco2017labels" / "labels" / split,
-        extract_root / "coco2017labels" / split,
-    ]
-    for src in candidates:
-        if _has_txt_labels(src):
-            return src
-    for src in extract_root.glob(f"**/labels/{split}"):
-        if src.is_dir() and _has_txt_labels(src):
-            return src
-    for src in extract_root.glob(f"**/{split}"):
-        if (
-            src.is_dir()
-            and src.name == split
-            and _has_txt_labels(src)
-            and "labels" in src.parts
-        ):
-            return src
-    return None
-
-
-def _normalize_coco2017_labels_layout(extract_root: Path, dataset_dir: Path) -> None:
-    labels_root = dataset_dir / "labels"
-    for split in ("train2017", "val2017"):
-        dest = labels_root / split
-        if _has_txt_labels(dest):
-            continue
-        src = _find_yolo_label_split_dir(extract_root, split)
-        if src is None:
-            raise RuntimeError(
-                f"COCODataModule: 未在 {extract_root} 中找到 {split} 的 YOLO txt 标签，"
-                "请检查 coco2017labels.zip 是否与 Ultralytics 官方一致。"
-            )
-        labels_root.mkdir(parents=True, exist_ok=True)
-        if dest.exists():
-            shutil.rmtree(dest)
-        shutil.move(str(src), str(dest))
-
-
-def _ensure_val_images(dataset_dir: Path, parent_dir: Path) -> None:
-    img_val = dataset_dir / "images" / "val2017"
-    if _has_rgb_images(img_val):
-        print("COCO val2017 图像目录已存在，跳过解压。")
-        return
-    zip_path = _ensure_zip(parent_dir, ZIP_VAL2017_IMAGES, COCO_VAL2017_IMAGES_ZIP_URL)
-    images_root = dataset_dir / "images"
-    images_root.mkdir(parents=True, exist_ok=True)
-    _extract_zip(zip_path, images_root)
-    print("val2017 图像解压完成（压缩包已保留）。")
-
-
-def _ensure_train_images(dataset_dir: Path, parent_dir: Path) -> None:
-    img_train = dataset_dir / "images" / "train2017"
-    if _has_rgb_images(img_train):
-        print("COCO train2017 图像目录已存在，跳过解压。")
-        return
-    zip_path = _ensure_zip(
-        parent_dir, ZIP_TRAIN2017_IMAGES, COCO_TRAIN2017_IMAGES_ZIP_URL
-    )
-    images_root = dataset_dir / "images"
-    images_root.mkdir(parents=True, exist_ok=True)
-    _extract_zip(zip_path, images_root)
-    print("train2017 图像解压完成（体量较大；压缩包已保留）。")
-
-
-def _ensure_test_images(
-    dataset_dir: Path, parent_dir: Path, *, auto_download: bool
-) -> None:
-    img_test = dataset_dir / "images" / "test2017"
-    if _has_rgb_images(img_test):
-        print("COCO test2017 图像目录已存在，跳过解压。")
-        return
-    zip_path = parent_dir / ZIP_TEST2017_IMAGES
-    if not zip_path.is_file():
-        if auto_download:
-            zip_path = _ensure_zip(
-                parent_dir, ZIP_TEST2017_IMAGES, COCO_TEST2017_IMAGES_ZIP_URL
-            )
-        else:
-            print(
-                "COCODataModule: 未放置 test2017.zip 且未开启 test2017 自动下载，跳过 test2017。"
-            )
-            return
-    else:
-        print(f"COCODataModule: 使用已有压缩包: {zip_path}")
-    images_root = dataset_dir / "images"
-    images_root.mkdir(parents=True, exist_ok=True)
-    _extract_zip(zip_path, images_root)
-    print("test2017 图像解压完成（压缩包已保留）。")
-
-
-def _ensure_yolo_labels(dataset_dir: Path, parent_dir: Path) -> None:
-    lbl_train = dataset_dir / "labels" / "train2017"
-    lbl_val = dataset_dir / "labels" / "val2017"
-    if _has_txt_labels(lbl_train) and _has_txt_labels(lbl_val):
-        print("COCO YOLO 标签目录已存在，跳过解压。")
-        return
-    zip_path = _ensure_zip(
-        parent_dir, ZIP_COCO2017_LABELS, COCO2017_LABELS_ZIP_URL
-    )
-    tmp = parent_dir / "_tmp_coco2017labels"
-    if tmp.exists():
-        shutil.rmtree(tmp)
-    tmp.mkdir(parents=True)
-    try:
-        _extract_zip(zip_path, tmp)
-        _normalize_coco2017_labels_layout(tmp, dataset_dir)
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
-    print("coco2017labels 解压完成（压缩包已保留）。")
-
+_COCO_LABEL_PREFIX = "coco/"
+_COCO_IMAGE_ZIPS = (
+    (ZIP_TRAIN2017_IMAGES, "train2017", COCO_TRAIN2017_IMAGES_ZIP_URL),
+    (ZIP_VAL2017_IMAGES, "val2017", COCO_VAL2017_IMAGES_ZIP_URL),
+    (ZIP_TEST2017_IMAGES, "test2017", COCO_TEST2017_IMAGES_ZIP_URL),
+)
+_COCO_SPLIT_LISTS = {"train2017": "train2017.txt", "val2017": "val2017.txt"}
 
 class COCO8DataModule(ObjectDetectDataModule):
     """Ultralytics COCO8：下载并解压数据、生成 CSV，并沿用目标检测 DataModule 的训练 / 验证 / 测试 / 预测流程。
@@ -472,33 +322,300 @@ class COCO8DataModule(ObjectDetectDataModule):
         )
 
 
-class COCODataModule(ObjectDetectDataModule):
+def ensure_coco_files(dataset_dir) -> None:
+    """保证 ``dataset_dir`` 里有标签和 train/val/test 图像。已有的完整 zip 与已解压目录会跳过。
+
+    标签包去掉顶层 ``coco/`` 后全部解压。图像包解压到 ``images/``，得到
+    ``images/train2017``、``images/val2017`` 和 ``images/test2017``。
     """
-    COCO 2017 检测（80 类）：``prepare_data`` 解压标签与图像并生成 CSV。
+    root = _coco_dataset_root(dataset_dir)
+    _ensure_labels(root)
+    for filename, split, url in _COCO_IMAGE_ZIPS:
+        _ensure_image_split(root, filename, split, url)
 
-    **压缩包位置（``dataset_dir`` 父目录，默认 ``datasets/COCO/``）**
 
-    可将官方文件 **提前放入** 该目录，文件名与下表一致，则 **不会重新下载**：
+def _coco_dataset_root(dataset_dir) -> Path:
+    path = Path(dataset_dir).expanduser()
+    if path.is_symlink() and not path.exists():
+        raise FileNotFoundError(f"COCO dataset_dir not found: {path}")
+    if not path.exists():
+        path.mkdir(parents=True)
+    root = path.resolve()
+    if not root.is_dir():
+        raise FileNotFoundError(f"COCO dataset_dir not found: {root}")
+    return root
 
-    - ``coco2017labels.zip`` — Ultralytics YOLO 标签
-    - ``train2017.zip`` / ``val2017.zip`` — COCO 图像
-    - ``test2017.zip``（可选）— 仅 test 图像；放入则解压；未放入且未设 ``download_test2017`` 则跳过
 
-    若某 zip 不存在，则从与 Ultralytics ``coco.yaml`` 一致的 URL **自动下载**（``test2017`` 默认不自动下，
-    见 ``download_test2017``）。解压后 **保留** 所有压缩包，便于断点续传与离线复用。
+def _ensure_zip(root: Path, filename: str, url: str) -> Path:
+    zip_path = root / filename
+    if zip_path.is_file() and zipfile.is_zipfile(zip_path):
+        print(f"COCODataModule: 使用已有压缩包（不重新下载）: {zip_path}")
+        return zip_path
+    print(f"COCODataModule: 下载 {filename} -> {zip_path}")
+    _download_zip(url, zip_path)
+    if not zipfile.is_zipfile(zip_path):
+        raise RuntimeError(f"COCODataModule: 压缩包无效: {zip_path}")
+    return zip_path
 
-    **解压后目录**（``dataset_dir`` 例如 ``datasets/COCO/coco``）::
 
-        {dataset_dir}/images/train2017/*.jpg
-        {dataset_dir}/images/val2017/*.jpg
-        {dataset_dir}/images/test2017/*.jpg   # 仅当提供 test2017.zip 并已解压
-        {dataset_dir}/labels/train2017/*.txt
-        {dataset_dir}/labels/val2017/*.txt
+def _download_zip(url: str, dest: Path) -> None:
+    """下载到 ``dest``。已有不完整文件时带 Range 续传；服务端忽略 Range 则整包重下。"""
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    resume = dest.is_file() and dest.stat().st_size > 0
+    try:
+        _stream_download(url, dest, resume=resume)
+    except urllib.error.HTTPError as exc:
+        if exc.code != 416 or not dest.is_file():
+            raise
+        dest.unlink()
+        _stream_download(url, dest, resume=False)
 
-    CSV 与映射写在 ``dataset_dir`` 父目录：``train.csv``、``val.csv``、``predict.csv``、
-    ``map_class_id_to_class_name.csv``。
 
-    体量参考：标签 zip 较小；``val2017`` 约 1GB；``train2017`` 约 19GB；``test2017`` 约 6GB。
+def _stream_download(url: str, dest: Path, *, resume: bool) -> None:
+    existing = dest.stat().st_size if resume and dest.is_file() else 0
+    headers = {"Range": f"bytes={existing}-"} if existing else {}
+    request = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(request) as response:
+        status = getattr(response, "status", None) or response.getcode()
+        mode = "ab" if existing and status == 206 else "wb"
+        with dest.open(mode) as handle:
+            shutil.copyfileobj(response, handle, length=1024 * 1024)
+
+
+def _ensure_labels(root: Path) -> None:
+    zip_path = _ensure_zip(root, ZIP_COCO2017_LABELS, COCO2017_LABELS_ZIP_URL)
+    with zipfile.ZipFile(zip_path) as archive:
+        expected = {
+            split: _zip_label_txt_count(archive, split)
+            for split in ("train2017", "val2017")
+        }
+        if any(count == 0 for count in expected.values()):
+            raise RuntimeError(
+                f"COCODataModule: {zip_path} 中没有 coco/labels/train2017 与 "
+                "coco/labels/val2017"
+            )
+        if all(
+            _count_named(root / "labels" / split, ".txt") >= expected[split]
+            for split in expected
+        ):
+            print("COCO YOLO 标签已齐全，跳过解压。")
+            return
+        print(f"Extracting {zip_path} -> {root}（去掉 coco/ 前缀）")
+        _extract_zip_strip_prefix(archive, root, _COCO_LABEL_PREFIX)
+
+
+def _zip_label_txt_count(archive: zipfile.ZipFile, split: str) -> int:
+    prefix = f"coco/labels/{split}/"
+    return sum(
+        1
+        for info in archive.infolist()
+        if not info.is_dir()
+        and info.filename.startswith(prefix)
+        and info.filename.endswith(".txt")
+    )
+
+
+def _count_named(directory: Path, suffix: str) -> int:
+    if not directory.is_dir():
+        return 0
+    return sum(
+        1 for path in directory.iterdir() if path.is_file() and path.name.endswith(suffix)
+    )
+
+
+def _count_files(directory: Path) -> int:
+    if not directory.is_dir():
+        return 0
+    return sum(1 for path in directory.iterdir() if path.is_file())
+
+
+def _extract_zip_strip_prefix(archive: zipfile.ZipFile, root: Path, prefix: str) -> None:
+    root = root.resolve()
+    for info in archive.infolist():
+        name = info.filename
+        relative = name[len(prefix) :] if name.startswith(prefix) else name
+        relative = relative.rstrip("/")
+        if relative in ("", "."):
+            continue
+        dest = _safe_dest(root, relative)
+        if info.is_dir() or name.endswith("/"):
+            dest.mkdir(parents=True, exist_ok=True)
+            continue
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        with archive.open(info) as src, dest.open("wb") as out:
+            shutil.copyfileobj(src, out)
+
+
+def _safe_dest(root: Path, relative: str) -> Path:
+    relative_path = Path(relative)
+    if relative_path.is_absolute() or ".." in relative_path.parts:
+        raise RuntimeError(f"COCODataModule: 非法压缩包路径: {relative}")
+    dest = (root / relative_path).resolve()
+    if not dest.is_relative_to(root):
+        raise RuntimeError(f"COCODataModule: 非法压缩包路径: {relative}")
+    return dest
+
+
+def _ensure_image_split(root: Path, filename: str, split: str, url: str) -> None:
+    zip_path = _ensure_zip(root, filename, url)
+    images_root = root / "images"
+    dest = images_root / split
+    with zipfile.ZipFile(zip_path) as archive:
+        expected = sum(1 for info in archive.infolist() if not info.is_dir())
+    got = _count_files(dest)
+    if expected and got >= expected:
+        print(f"COCO {split} 图像已齐全，跳过解压。")
+        return
+    images_root.mkdir(parents=True, exist_ok=True)
+    print(f"Extracting {zip_path} -> {images_root}")
+    _extract_image_archive(zip_path, images_root)
+    got = _count_files(dest)
+    if got < expected:
+        raise RuntimeError(
+            f"COCODataModule: {split} 解压后有 {got} 个文件，压缩包内有 {expected} 个"
+        )
+
+
+def _extract_image_archive(zip_path: Path, images_root: Path) -> None:
+    unzip = shutil.which("unzip")
+    if unzip:
+        completed = subprocess.run(
+            [unzip, "-n", "-q", str(zip_path), "-d", str(images_root)],
+            check=False,
+        )
+        if completed.returncode > 1:
+            raise RuntimeError(
+                f"COCODataModule: unzip 失败（退出码 {completed.returncode}）: {zip_path}"
+            )
+        return
+    with zipfile.ZipFile(zip_path) as archive:
+        images_root = images_root.resolve()
+        for info in archive.infolist():
+            relative = info.filename.rstrip("/")
+            if not relative:
+                continue
+            dest = _safe_dest(images_root, relative)
+            if info.is_dir() or info.filename.endswith("/"):
+                dest.mkdir(parents=True, exist_ok=True)
+                continue
+            if dest.is_file():
+                continue
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            with archive.open(info) as src, dest.open("wb") as out:
+                shutil.copyfileobj(src, out)
+
+
+def generate_coco_csvs(dataset_dir, *, overwrite: bool = False) -> None:
+    """按 ``train2017.txt`` / ``val2017.txt`` 在 ``dataset_dir`` 下写 train/val/predict CSV 和类别映射。
+
+    列表里的每张图都写入，包括没有 txt 的图。那些图的标签路径仍写成
+    ``labels/{split}/{stem}.txt``，文件不存在时读作空标签（背景）。不读取 JPEG。
+    ``dataset_dir`` 可以是软链接。路径列仍相对 ``dataset_dir``，不把链接展开进 CSV。
+    四个文件都在且 ``overwrite`` 为 False 时跳过写入，但仍检查两个图像列表。
+    """
+    root = Path(dataset_dir).expanduser().resolve()
+    if not root.is_dir():
+        raise FileNotFoundError(f"COCO dataset_dir not found: {root}")
+    _require_coco_image_lists(root)
+
+    train_csv_path = root / "train.csv"
+    val_csv_path = root / "val.csv"
+    predict_csv_path = root / "predict.csv"
+    map_csv_path = root / "map_class_id_to_class_name.csv"
+    if (
+        not overwrite
+        and train_csv_path.is_file()
+        and val_csv_path.is_file()
+        and predict_csv_path.is_file()
+        and map_csv_path.is_file()
+    ):
+        print("============================================================================")
+        print("COCODataModule: CSV files already exist, skipping generation:")
+        print(f"  - {train_csv_path}")
+        print(f"  - {val_csv_path}")
+        print(f"  - {predict_csv_path}")
+        print(f"  - {map_csv_path}")
+        print("============================================================================")
+        return
+
+    train_rows = _collect_coco_split_rows(root, "train2017")
+    val_rows = _collect_coco_split_rows(root, "val2017")
+    predict_rows = [{"path_img": row["path_img"]} for row in val_rows]
+    class_to_idx = {name: index for index, name in enumerate(COCO80_CLASS_NAMES)}
+
+    pd.DataFrame(train_rows, columns=["path_img", "path_label_detect_yolo"]).to_csv(
+        train_csv_path, index=False
+    )
+    pd.DataFrame(val_rows, columns=["path_img", "path_label_detect_yolo"]).to_csv(
+        val_csv_path, index=False
+    )
+    pd.DataFrame(predict_rows, columns=["path_img"]).to_csv(predict_csv_path, index=False)
+    ObjectDetectDataModule._write_map_class_id_to_class_name_csv(map_csv_path, class_to_idx)
+
+    print("============================================================================")
+    print(f"Generated {train_csv_path} with {len(train_rows)} entries")
+    print(f"Generated {val_csv_path} with {len(val_rows)} entries")
+    print(f"Generated {predict_csv_path} with {len(predict_rows)} entries")
+    print(f"Generated {map_csv_path} with {len(class_to_idx)} classes")
+    print("============================================================================")
+
+
+def _require_coco_image_lists(root: Path) -> None:
+    for name in _COCO_SPLIT_LISTS.values():
+        path = root / name
+        if not path.is_file():
+            raise FileNotFoundError(f"COCO image list not found: {path}")
+
+
+def _collect_coco_split_rows(root: Path, split: str) -> list[dict]:
+    """按官方图像列表写行，不打开图像。没有 txt 的图也保留，标签路径按同名 txt 书写。"""
+    rows: list[dict] = []
+    list_path = root / _COCO_SPLIT_LISTS[split]
+    for line in list_path.read_text(encoding="utf-8").splitlines():
+        rel = line.strip()
+        if not rel:
+            continue
+        if rel.startswith("./"):
+            rel = rel[2:]
+        img = Path(rel)
+        if not img.parts or img.parts[0] != "images":
+            raise ValueError(f"COCO image list entry must start with images/: {line}")
+        label = Path("labels", *img.parts[1:]).with_suffix(".txt")
+        rows.append(
+            {
+                "path_img": img.as_posix(),
+                "path_label_detect_yolo": label.as_posix(),
+            }
+        )
+    return rows
+
+
+class COCODataModule(ObjectDetectDataModule):
+    """COCO 2017 检测（80 类）：``prepare_data`` 下载并解压标签与 train/val 图像，再生成 CSV，
+    并沿用目标检测 DataModule 的训练 / 验证 / 测试 / 预测流程。
+
+    使用顺序
+    --------
+    1. 构造时传入 ``dataset_dir`` 以及各阶段 CSV 路径、``transform_*``、``key_map`` 等（见下方参数）。
+    2. Lightning 在 ``fit`` / ``validate`` / ``test`` / ``predict`` 之前调用 ``prepare_data``：
+       缺少 ``coco2017labels.zip``、``train2017.zip``、``val2017.zip``、``test2017.zip`` 时下载到 ``dataset_dir``。
+       标签包去掉顶层 ``coco/`` 后全部解压；图像包解压到 ``images/``。已完整的 zip 和已解压的划分会跳过。
+       然后按 ``train2017.txt`` / ``val2017.txt`` 生成 CSV，没有 txt 的图也写入。四个 CSV 文件已存在则跳过生成。也可先按 README 手动解压，
+       再运行 ``datasets/COCO/coco_to_csv.py``，它只调用 ``generate_coco_csvs``。
+    3. ``setup`` 由父类完成，按 CSV 构建 ``ObjectDetectDataset``。
+
+    路径约定
+    --------
+    - ``dataset_dir`` 默认为 ``datasets/COCO/coco``。压缩包、解压结果和 CSV 都在这一层；
+      ``datasets/COCO/`` 本身只放 README 和生成脚本。``coco`` 可以是软链接。
+      解压后为 ``images/train2017/*.jpg``、``images/val2017/*.jpg``、
+      ``labels/train2017/*.txt``、``labels/val2017/*.txt``。
+    - 生成的 CSV 写在 ``dataset_dir`` 下；路径列为相对 ``dataset_dir`` 的路径，与 ``BaseDataset`` 按 CSV 目录解析一致。
+    - ``train.csv`` / ``val.csv`` 含 ``path_img`` 与 ``path_label_detect_yolo``。
+      ``predict.csv`` 仅 ``path_img``，来自验证集标签。``map_class_id_to_class_name.csv`` 为 COCO 80 类。
+
+    构造参数见 ``__init__``（显式列出 ``BaseDataModule`` / ``ObjectDetectDataModule`` 的全部字段，
+    便于类型检查与 IDE 补全）。
     """
 
     def __init__(
@@ -519,14 +636,22 @@ class COCODataModule(ObjectDetectDataModule):
         norm_mean=None,
         norm_std=None,
         dataset_dir: str = "datasets/COCO/coco",
-        download_test2017: bool = False,
     ):
         """
         Parameters
         ----------
-        download_test2017
-            若为 True，当 ``{dataset_dir 父目录}/test2017.zip`` 不存在时从官网下载（约 6GB）。
-            默认 False：仅当该 zip 已手动放入父目录时才解压 test2017。
+        train_csv_paths, val_csv_paths, test_csv_paths, predict_csv_paths
+            各阶段 CSV 路径列表；须与 ``prepare_data`` 生成文件位置一致。详见 ``BaseDataModule``。
+        transform_train, transform_val
+            训练、验证集变换。详见 ``BaseDataModule``。
+        transform_test, transform_predict
+            测试、预测变换；默认 ``None`` 时父类回退为 ``transform_val``。
+        batch_size, num_workers
+            各 ``DataLoader`` 批量与 worker 数。
+        key_map, predict_key_map, map_class_id_to_class_name, norm_mean, norm_std
+            目标检测 DataModule 与 Dataset 共用配置；语义见 ``ObjectDetectDataModule``。
+        dataset_dir : str or pathlib.Path
+            含压缩包、``images/``、``labels/`` 和 CSV 的目录，默认 ``datasets/COCO/coco``。
         """
         super().__init__(
             key_map=key_map,
@@ -546,100 +671,10 @@ class COCODataModule(ObjectDetectDataModule):
             num_workers=num_workers,
         )
         self.dataset_dir = Path(dataset_dir)
-        self.download_test2017 = bool(download_test2017)
-
-    @staticmethod
-    def _coco_class_name_to_idx() -> dict[str, int]:
-        return {name: i for i, name in enumerate(COCO80_CLASS_NAMES)}
 
     def prepare_data(self) -> None:
-        parent_dir = self.dataset_dir.parent
-        parent_dir.mkdir(parents=True, exist_ok=True)
-
-        _ensure_yolo_labels(self.dataset_dir, parent_dir)
-        _ensure_val_images(self.dataset_dir, parent_dir)
-        _ensure_train_images(self.dataset_dir, parent_dir)
-        _ensure_test_images(
-            self.dataset_dir, parent_dir, auto_download=self.download_test2017
-        )
-
-        self._generate_csv_files(self.dataset_dir)
-
-    def _collect_split_rows(self, dataset_dir: Path, split: str) -> list[dict]:
-        """``split`` 为 ``train2017`` 或 ``val2017``。"""
-        prefix = dataset_dir.name
-        img_dir = dataset_dir / "images" / split
-        lbl_dir = dataset_dir / "labels" / split
-        rows: list[dict] = []
-        if not img_dir.is_dir():
-            return rows
-        for img_path in sorted(img_dir.iterdir()):
-            if img_path.suffix.lower() not in {".jpg", ".jpeg", ".png", ".bmp"}:
-                continue
-            stem = img_path.stem
-            lbl_path = lbl_dir / f"{stem}.txt"
-            if not lbl_path.is_file():
-                continue
-            rows.append(
-                {
-                    "path_img": f"{prefix}/images/{split}/{img_path.name}",
-                    "path_label_detect_yolo": (
-                        f"{prefix}/labels/{split}/{stem}.txt"
-                    ),
-                }
-            )
-        return rows
-
-    def _generate_csv_files(self, dataset_dir: Path) -> None:
-        dataset_dir = Path(dataset_dir)
-        output_dir = dataset_dir.parent
-        output_dir.mkdir(exist_ok=True)
-
-        train_csv_path = output_dir / "train.csv"
-        val_csv_path = output_dir / "val.csv"
-        predict_csv_path = output_dir / "predict.csv"
-        map_csv_path = output_dir / "map_class_id_to_class_name.csv"
-        train_split_dir = dataset_dir / "images" / "train2017"
-
-        if (
-            train_csv_path.exists()
-            and val_csv_path.exists()
-            and predict_csv_path.exists()
-        ):
-            if train_split_dir.is_dir() and not map_csv_path.exists():
-                class_to_idx = self._coco_class_name_to_idx()
-                self._write_map_class_id_to_class_name_csv(
-                    map_csv_path, class_to_idx
-                )
-                print(f"COCODataModule: wrote missing {map_csv_path}")
-            print("=" * 76)
-            print("COCODataModule: CSV files already exist, skipping generation")
-            print(f"  - {train_csv_path}")
-            print(f"  - {val_csv_path}")
-            print(f"  - {predict_csv_path}")
-            print(f"  - {map_csv_path}")
-            print("=" * 76)
-            return
-
-        class_to_idx = self._coco_class_name_to_idx()
-        train_rows = self._collect_split_rows(dataset_dir, "train2017")
-        val_rows = self._collect_split_rows(dataset_dir, "val2017")
-        predict_rows = [{"path_img": r["path_img"]} for r in val_rows]
-
-        pd.DataFrame(
-            train_rows, columns=["path_img", "path_label_detect_yolo"]
-        ).to_csv(train_csv_path, index=False)
-        pd.DataFrame(
-            val_rows, columns=["path_img", "path_label_detect_yolo"]
-        ).to_csv(val_csv_path, index=False)
-        pd.DataFrame(predict_rows, columns=["path_img"]).to_csv(
-            predict_csv_path, index=False
-        )
-        self._write_map_class_id_to_class_name_csv(map_csv_path, class_to_idx)
-
-        print("=" * 76)
-        print(f"Generated {train_csv_path} with {len(train_rows)} entries")
-        print(f"Generated {val_csv_path} with {len(val_rows)} entries")
-        print(f"Generated {predict_csv_path} with {len(predict_rows)} entries")
-        print(f"Generated {map_csv_path} with {len(class_to_idx)} classes")
-        print("=" * 76)
+        """下载并解压缺失的 COCO 2017 文件，再生成 CSV。Lightning 顺序：``prepare_data`` → ``setup``。
+        CSV 与 ``datasets/COCO/coco_to_csv.py`` 共用 ``generate_coco_csvs``。
+        """
+        ensure_coco_files(self.dataset_dir)
+        generate_coco_csvs(self.dataset_dir)

@@ -1,9 +1,10 @@
 # COCO 2017 目标检测实验：DAGNet(YOLOv8n) + DetectionLossYOLOv8（内部为 Ultralytics v8DetectionLoss）
 # 用法（在 src/train 下）：
 #   python scripts/train.py fit --config configs/experiments/object_detect_COCO.yaml
-# 首次 fit 时 COCODataModule.prepare_data 解压数据并生成 CSV。
-# 可将 coco2017labels.zip、train2017.zip、val2017.zip（及可选 test2017.zip）提前放入 datasets/COCO/，则跳过对应下载；解压后不删 zip。
-# test2017 默认不自动下载，需手动放入 zip 或设 data.init_args.download_test2017: true
+# 压缩包和解压结果放在 datasets/COCO/coco（可以是软链接）。
+# 首次 fit / validate 时 prepare_data 下载缺失的标签、train2017、val2017、test2017 并解压，再生成 CSV。
+# 已有完整 zip 或已解压的划分会跳过。训练表包含没有 txt 的图，读作空标签。
+# 手动解压后可只运行 python datasets/COCO/coco_to_csv.py。见 datasets/COCO/README.md。
 
 trainer:
   max_epochs: 500
@@ -68,16 +69,16 @@ data:
   class_path: lovely_deep_learning.data_module.coco.COCODataModule
   init_args:
     dataset_dir: datasets/COCO/coco
-    train_csv_paths: [datasets/COCO/train.csv]
-    val_csv_paths: [datasets/COCO/val.csv]
-    test_csv_paths: [datasets/COCO/val.csv]
-    predict_csv_paths: [datasets/COCO/val.csv]
+    train_csv_paths: [datasets/COCO/coco/train.csv]
+    val_csv_paths: [datasets/COCO/coco/val.csv]
+    test_csv_paths: [datasets/COCO/coco/val.csv]
+    predict_csv_paths: [datasets/COCO/coco/predict.csv]
     key_map:
       img_path: path_img
       object_label_path: path_label_detect_yolo
     predict_key_map:
       img_path: path_img
-    map_class_id_to_class_name: datasets/COCO/map_class_id_to_class_name.csv
+    map_class_id_to_class_name: datasets/COCO/coco/map_class_id_to_class_name.csv
     norm_mean: null
     norm_std: null
     batch_size: 16

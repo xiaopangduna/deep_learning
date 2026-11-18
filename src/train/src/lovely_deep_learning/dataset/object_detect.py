@@ -692,7 +692,8 @@ class ObjectDetectDataset(BaseDataset):
         """
         从YOLO格式的.txt文件中读取目标检测标签，并转换为NumPy数组。
 
-        此函数假设标签文件格式正确，不包含任何校验。
+        此函数假设标签文件格式正确，不包含任何校验。路径为空、文件不存在或文件为空时返回空数组，
+        与 Ultralytics ``verify_image_label`` 把 missing / empty 标签当作背景一致。
 
         Args:
             file_path (str): YOLO标签文件的路径。
@@ -701,17 +702,19 @@ class ObjectDetectDataset(BaseDataset):
             cls: ``(N,)`` int32，类别 id。
             bbox: ``(N, 4)`` float32，YOLO txt 原始归一化 **CXCYWH**（相对宽高）。
         """
-        if not file_path:
+        text = ""
+        if file_path:
+            try:
+                with open(file_path, "r", encoding="utf-8") as f:
+                    text = f.read()
+            except FileNotFoundError:
+                text = ""
+        labels = [x.split() for x in text.strip().splitlines() if len(x)]
+        labels = np.array(labels, dtype=np.float32)
+        if labels.size == 0:
             labels = np.empty((0, 5), dtype=np.float32)
-        else:
-            with open(file_path, "r", encoding="utf-8") as f:
-                labels = [x.split()
-                          for x in f.read().strip().splitlines() if len(x)]
-                labels = np.array(labels, dtype=np.float32)
-                if labels.size == 0:
-                    labels = np.empty((0, 5), dtype=np.float32)
-                elif labels.ndim == 1:
-                    labels = labels.reshape(1, -1)
+        elif labels.ndim == 1:
+            labels = labels.reshape(1, -1)
 
         cls = labels[:, 0].astype(np.int32)
         bbox = labels[:, 1:5].astype(np.float32)
