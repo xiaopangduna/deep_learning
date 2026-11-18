@@ -30,7 +30,24 @@
 | `train2017.zip` | `http://images.cocodataset.org/zips/train2017.zip` | 19GB |
 | `test2017.zip` | `http://images.cocodataset.org/zips/test2017.zip` | 6GB |
 
-压缩包放到 `datasets/COCO/coco/`（见下一节；该目录可以是软链接）。文件名与上表一致时，`prepare_data` 不再下载。
+压缩包放到 `datasets/COCO/coco/`。该目录可以是软链接，见下方。文件名与上表一致时，`prepare_data` 不再下载。
+
+## 压缩包内容
+
+三个图像包里只有该划分的 JPEG，没有标注：
+
+- `train2017.zip`：`train2017/*.jpg`，118287 张
+- `val2017.zip`：`val2017/*.jpg`，5000 张
+- `test2017.zip`：`test2017/*.jpg`，40670 张
+
+`coco2017labels.zip` 的成员都在顶层 `coco/` 下。去掉这一层后：
+
+- `labels/train2017/*.txt`、`labels/val2017/*.txt`：YOLO 检测框，读图时用。包里的 txt 都非空。
+- `train2017.txt`、`val2017.txt`：官方图像列表，118287 和 5000 行，生成 CSV 时用。
+- `annotations/instances_val2017.json`：验证集的官方 COCO JSON，给 pycocotools 算 mAP 用。包里没有训练集 JSON。训练不读。
+- `test-dev2017.txt`：COCO test-dev 的 20288 张图。test2017 没有检测标签，实验也不用这份列表。
+- `images/train2017/`、`images/val2017/`：空目录，里面没有图片。
+- `LICENSE`、`README.txt`：这套 YOLO 标签的 GPL-3.0 说明。`.DS_Store` 是打包时带上的 macOS 文件。训练不读。
 
 ## 手动解压
 
@@ -43,7 +60,7 @@ unzip -n -q val2017.zip -d images
 unzip -n -q test2017.zip -d images
 ```
 
-标签 zip 的成员在 `coco/` 下。去掉这一层后全部放进数据目录，包含 `labels/`、说明文件和图像列表：
+标签 zip 的成员在 `coco/` 下。去掉这一层后全部放进数据目录。训练用到的是 `labels/` 和 `train2017.txt`、`val2017.txt`，其余文件见上一节：
 
 ```bash
 unzip -q coco2017labels.zip -d /tmp/coco2017labels
@@ -51,7 +68,7 @@ cp -a /tmp/coco2017labels/coco/. .
 rm -rf /tmp/coco2017labels
 ```
 
-解压后是 `labels/train2017/*.txt` 与 `labels/val2017/*.txt`。
+解压后，检测框在 `labels/train2017/*.txt` 与 `labels/val2017/*.txt`，图像列表在数据目录根上。
 
 ## 软链接
 
@@ -95,9 +112,15 @@ datasets/COCO/
     ├── test2017.zip
     ├── images/train2017/*.jpg
     ├── images/val2017/*.jpg
-    ├── images/test2017/*.jpg         # 仅解压了 test2017 时有
+    ├── images/test2017/*.jpg
     ├── labels/train2017/*.txt
     ├── labels/val2017/*.txt
+    ├── train2017.txt                     # 标签包，生成 CSV
+    ├── val2017.txt
+    ├── test-dev2017.txt                  # 标签包，训练不读
+    ├── annotations/instances_val2017.json
+    ├── LICENSE
+    ├── README.txt
     ├── train.csv
     ├── val.csv
     ├── predict.csv
