@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """按 CSV 跑分类 ONNX，写成与板端 classifier_dump_sigmastar 相同的 JSON。
 
-整图，不裁框。几何对齐板端 --prep：
+不写 --box-scale，或值 <= 0：整图。大于 0 且 CSV 有 cx,cy,w,h：先按归一化框外扩裁切，
+再做下面的几何。框列不全时退回整图。裁切用 float32，与板端 crop_cxcywh 一致。
+
+几何对齐板端 --prep：
 
   imagenet（默认）  短边缩到 floor(min(H,W)/0.875)，再中心裁到模型尺寸。224 就是短边 256、中心裁 224
   letterbox         保持宽高比，不足处填 114
@@ -11,9 +14,7 @@
 123.68,116.28,103.53 和 58.395,57.12,57.375，与 input_config.ini 一致。
 两边都写 none 时保持像素原值。
 
-
-meta.acc1 / acc5 只比较 CSV 的 class_id 和 pred_id，不做 Imagenette 到 ImageNet 的映射。
-映射后的精度用 multi_image_accuracy_score_imagenette_json.py。
+summary.acc1 / acc5 只比较 CSV 的 class_id 和 pred_id。原始 id 到训练 id 的对应不在这里做。
 """
 from __future__ import annotations
 
@@ -55,6 +56,12 @@ def parse_args() -> argparse.Namespace:
         help="Per-channel std, comma-separated. Omit with --mean to use 58.395,57.12,57.375. 'none' keeps raw pixels",
     )
     p.add_argument("--limit", type=int, default=None, help="Only the first N CSV rows")
+    p.add_argument(
+        "--box-scale",
+        type=float,
+        default=None,
+        help="Crop expand factor. >0 and CSV has cx,cy,w,h: crop before --prep. Omit or <=0: whole image",
+    )
     return p.parse_args()
 
 
@@ -157,12 +164,18 @@ def fit_model_canvas(src: np.ndarray, model_w: int, model_h: int, prep: str) -> 
     return letterbox(src, model_w, model_h, LETTERBOX_FILL)
 
 
-def load_rows(csv_path: Path) -> list[tuple[str, int]]:
-    rows: list[tuple[str, int]] = []
+def load_rows(csv_path: Path) -> tuple[list[tuple[str, int, tuple[float, float, float, float] | None]], bool]:
+    rows: list[tuple[str, int, tuple[float, float, float, float] | None]] = []
     with csv_path.open(newline="") as handle:
         reader = csv.DictReader(handle)
         if reader.fieldnames is None or not {"path_img", "class_id"}.issubset(set(reader.fieldnames)):
             raise SystemExit(f"csv missing required columns (path_img,class_id): {csv_path}")
+        names = set(reader.fieldnames)
+        box_names = {"cx", "cy", "w", "h"}
+        present = box_names & names
+        has_box = present == box_names
+        if present and not has_box:
+            print(f"csv missing some of cx,cy,w,h, using the whole image: {csv_path}", file=sys.stderr)
         for line_no, row in enumerate(reader, start=2):
             path_img = (row.get("path_img") or "").strip()
             class_text = (row.get("class_id") or "").strip()
@@ -176,8 +189,49 @@ def load_rows(csv_path: Path) -> list[tuple[str, int]]:
             except ValueError:
                 print(f"csv line {line_no}: class_id {class_text!r} is not an int, skip", file=sys.stderr)
                 continue
-            rows.append((path_img, class_id))
-    return rows
+            box: tuple[float, float, float, float] | None = None
+            if has_box:
+                try:
+                    box = (
+                        float(np.float32((row.get("cx") or "").strip())),
+                        float(np.float32((row.get("cy") or "").strip())),
+                        float(np.float32((row.get("w") or "").strip())),
+                        float(np.float32((row.get("h") or "").strip())),
+                    )
+                except ValueError:
+                    print(f"csv line {line_no}: box is not numeric, skip", file=sys.stderr)
+                    continue
+            rows.append((path_img, class_id, box))
+    return rows, has_box
+
+
+def crop_cxcywh(
+    src: np.ndarray,
+    cx: float,
+    cy: float,
+    w: float,
+    h: float,
+    box_scale: float,
+) -> np.ndarray:
+    """归一化 cxcywh 外扩后裁切，至少 1 像素。运算用 float32，对齐板端 crop_cxcywh。"""
+    height, width = src.shape[:2]
+    width_f = np.float32(width)
+    height_f = np.float32(height)
+    scale = np.float32(box_scale)
+    abs_w = np.maximum(np.float32(w) * width_f * scale, np.float32(1.0))
+    abs_h = np.maximum(np.float32(h) * height_f * scale, np.float32(1.0))
+    abs_cx = np.float32(cx) * width_f
+    abs_cy = np.float32(cy) * height_f
+    half = np.float32(2.0)
+    x1 = int(math.floor(float(abs_cx - abs_w / half)))
+    y1 = int(math.floor(float(abs_cy - abs_h / half)))
+    x2 = int(math.ceil(float(abs_cx + abs_w / half)))
+    y2 = int(math.ceil(float(abs_cy + abs_h / half)))
+    x1 = max(0, min(x1, width - 1))
+    y1 = max(0, min(y1, height - 1))
+    x2 = max(x1 + 1, min(x2, width))
+    y2 = max(y1 + 1, min(y2, height))
+    return np.ascontiguousarray(src[y1:y2, x1:x2])
 
 
 def in_top_k(logits: np.ndarray, class_id: int, top_k: int) -> bool:
@@ -244,31 +298,78 @@ def make_session(model_path: Path):
     return session, used[0] if used else providers[0]
 
 
-def write_dump(out_path: Path, meta: dict[str, Any], sample_path: Path, ok_count: int) -> None:
-    staging = Path(str(out_path) + ".writing")
-    with staging.open("w", encoding="utf-8") as handle, sample_path.open(encoding="utf-8") as samples:
-        handle.write('{\n  "meta": ')
-        meta_text = json.dumps(meta, indent=2, ensure_ascii=False)
-        handle.write(meta_text.replace("\n", "\n  "))
-        handle.write(',\n  "samples": [')
-        if ok_count == 0:
-            handle.write("]\n}\n")
+def static_output(shape: list[Any]) -> tuple[int, list[int]] | None:
+    dims: list[int] = []
+    numel = 1
+    for dim in shape:
+        if not isinstance(dim, (int, np.integer)) or int(dim) <= 0:
+            return None
+        dims.append(int(dim))
+        numel *= int(dim)
+    if numel <= 0:
+        return None
+    return numel, dims
+
+
+def indented(value: Any) -> str:
+    return json.dumps(value, indent=2, ensure_ascii=False).replace("\n", "\n  ")
+
+
+class DumpWriter:
+    """先写 meta，每条成功样本追加，最后写 summary。"""
+
+    def __init__(self, out_path: Path) -> None:
+        self.out_path = out_path
+        self.staging = Path(str(out_path) + ".writing")
+        self.handle = None
+        self.written = 0
+
+    def start(self, meta: dict[str, Any]) -> None:
+        if self.handle is not None:
             return
-        handle.write("\n")
-        written = 0
-        for line in samples:
-            if not line.strip():
-                continue
-            written += 1
-            handle.write("    ")
-            handle.write(line.rstrip("\n"))
-            if written < ok_count:
-                handle.write(",")
-            handle.write("\n")
-        handle.write("  ]\n}\n")
-        if written != ok_count:
-            raise SystemExit(f"sample count {written} != ok {ok_count}")
-    staging.replace(out_path)
+        self.handle = self.staging.open("w", encoding="utf-8")
+        self.handle.write('{\n  "meta": ')
+        self.handle.write(indented(meta))
+        self.handle.write(',\n  "samples": [')
+        self.handle.flush()
+
+    def append(self, sample: dict[str, Any]) -> None:
+        if self.handle is None:
+            raise RuntimeError("dump header was not started")
+        if self.written:
+            self.handle.write(",")
+        self.handle.write("\n    ")
+        self.handle.write(json.dumps(sample, ensure_ascii=False))
+        self.written += 1
+        self.handle.flush()
+
+    def finish(self, summary: dict[str, Any]) -> None:
+        if self.handle is None:
+            raise RuntimeError("dump header was not started")
+        try:
+            if self.written == 0:
+                self.handle.write('],\n  "summary": ')
+            else:
+                self.handle.write('\n  ],\n  "summary": ')
+            self.handle.write(indented(summary))
+            self.handle.write("\n}\n")
+            self.handle.flush()
+        except Exception:
+            self.handle.close()
+            self.handle = None
+            print(f"partial dump kept at {self.staging}", file=sys.stderr)
+            raise
+        self.handle.close()
+        self.handle = None
+        try:
+            self.staging.replace(self.out_path)
+        except OSError as exc:
+            raise SystemExit(f"failed to rename {self.staging} -> {self.out_path}: {exc}") from exc
+
+    def close_partial(self) -> None:
+        if self.handle is not None:
+            self.handle.close()
+            self.handle = None
 
 
 def main() -> int:
@@ -311,13 +412,15 @@ def main() -> int:
     mean_list, std_list = resolve_norm(args.mean, args.std, channels)
     mean = None if mean_list is None else np.asarray(mean_list, dtype=np.float32)
     std = None if std_list is None else np.asarray(std_list, dtype=np.float32)
-    rows = load_rows(csv_path)
+    rows, has_box = load_rows(csv_path)
     if args.limit is not None:
         rows = rows[: args.limit]
+    crop = args.box_scale is not None and args.box_scale > 0.0 and has_box
+    if args.box_scale is not None and args.box_scale > 0.0 and not has_box:
+        print("--box-scale > 0 but csv has no cx,cy,w,h, using the whole image", file=sys.stderr)
 
     out_path = Path(args.out) if args.out else Path(model_path.stem + ".json")
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    sample_path = Path(str(out_path) + ".samples.tmp")
     csv_dir = csv_path.parent
     read_flag = cv2.IMREAD_GRAYSCALE if channels == 1 else cv2.IMREAD_COLOR
 
@@ -327,9 +430,38 @@ def main() -> int:
     correct5 = 0
     num_classes = 0
     output_shape: list[int] = []
-    top_k = 1
+    top_k = 0
+    spec = static_output(list(onnx_out.shape))
+    if spec is not None:
+        num_classes, output_shape = spec
+        top_k = min(TOP_K_MAX, num_classes)
+
+    def build_meta() -> dict[str, Any]:
+        meta: dict[str, Any] = {
+            "format_version": 2,
+            "source": "onnx",
+            "model": args.model,
+            "csv": args.csv,
+            "mode": "box" if crop else "image",
+        }
+        if crop:
+            meta["box_scale"] = float(args.box_scale)
+        meta["num_classes"] = num_classes
+        meta["output_shape"] = output_shape
+        meta["model_h"] = model_h
+        meta["model_w"] = model_w
+        meta["prep"] = args.prep
+        if args.prep == "letterbox":
+            meta["letterbox_fill"] = LETTERBOX_FILL
+        meta["mean"] = mean_list
+        meta["std"] = std_list
+        meta["top_k"] = top_k
+        return meta
 
     print(f"provider: {provider}")
+    print(f"mode: {'box' if crop else 'image'}")
+    if crop:
+        print(f"box-scale: {args.box_scale}")
     print(f"prep: {args.prep}  input: {layout} {channels}x{model_h}x{model_w}")
     if mean is None:
         print("norm: none")
@@ -337,89 +469,90 @@ def main() -> int:
         print(f"norm: mean={mean_list} std={std_list}")
     print(f"rows: {len(rows)}")
 
+    writer = DumpWriter(out_path)
     try:
-        with sample_path.open("w", encoding="utf-8") as sample_file:
-            for index, (path_img, class_id) in enumerate(rows):
-                image_path = Path(path_img)
-                if not image_path.is_absolute():
-                    image_path = csv_dir / path_img
-                image = cv2.imread(str(image_path), read_flag)
-                if image is None:
-                    print(f"[{index}] failed to read: {image_path}", file=sys.stderr)
-                    skip_count += 1
-                    continue
-                fitted = fit_model_canvas(image, model_w, model_h, args.prep)
-                if fitted.shape[0] != model_h or fitted.shape[1] != model_w:
-                    print(f"[{index}] prep size {fitted.shape} != {model_h}x{model_w}", file=sys.stderr)
-                    skip_count += 1
-                    continue
-                tensor = to_model_input(fitted, layout, channels, mean, std)
-                value = session.run([onnx_out.name], {onnx_in.name: tensor})[0]
-                logits = np.asarray(value, dtype=np.float32).reshape(-1)
-                if logits.size == 0 or not np.isfinite(logits).all():
-                    print(f"[{index}] non-finite logits: {path_img}", file=sys.stderr)
-                    skip_count += 1
-                    continue
-                if num_classes == 0:
-                    num_classes = int(logits.size)
-                    output_shape = [int(dim) for dim in np.asarray(value).shape]
-                    top_k = min(TOP_K_MAX, num_classes)
-                elif int(logits.size) != num_classes:
-                    print(f"[{index}] logit length {logits.size} != {num_classes}", file=sys.stderr)
-                    skip_count += 1
-                    continue
-                pred_id = int(np.argmax(logits))
-                sample = {
-                    "row": index,
-                    "path_img": path_img,
-                    "class_id": class_id,
-                    "logits": [float(item) for item in logits],
-                    "pred_id": pred_id,
-                }
-                sample_file.write(json.dumps(sample, ensure_ascii=False))
-                sample_file.write("\n")
-                if pred_id == class_id:
-                    correct1 += 1
-                if in_top_k(logits, class_id, top_k):
-                    correct5 += 1
-                ok_count += 1
-                if (index + 1) % 100 == 0 or index + 1 == len(rows):
-                    print(f"  progress: {index + 1} / {len(rows)} (ok={ok_count} skip={skip_count})")
+        if num_classes > 0:
+            writer.start(build_meta())
+        for index, (path_img, class_id, box) in enumerate(rows):
+            if crop and box is not None and not all(math.isfinite(value) for value in box):
+                print(f"[{index}] skip non-finite box path={path_img}", file=sys.stderr)
+                skip_count += 1
+                continue
+            image_path = Path(path_img)
+            if not image_path.is_absolute():
+                image_path = csv_dir / path_img
+            image = cv2.imread(str(image_path), read_flag)
+            if image is None:
+                print(f"[{index}] failed to read: {image_path}", file=sys.stderr)
+                skip_count += 1
+                continue
+            region = image
+            if crop and box is not None:
+                region = crop_cxcywh(image, box[0], box[1], box[2], box[3], args.box_scale)
+            fitted = fit_model_canvas(region, model_w, model_h, args.prep)
+            if fitted.shape[0] != model_h or fitted.shape[1] != model_w:
+                print(f"[{index}] prep size {fitted.shape} != {model_h}x{model_w}", file=sys.stderr)
+                skip_count += 1
+                continue
+            tensor = to_model_input(fitted, layout, channels, mean, std)
+            value = session.run([onnx_out.name], {onnx_in.name: tensor})[0]
+            logits = np.asarray(value, dtype=np.float32).reshape(-1)
+            if logits.size == 0 or not np.isfinite(logits).all():
+                print(f"[{index}] non-finite logits: {path_img}", file=sys.stderr)
+                skip_count += 1
+                continue
+            if num_classes == 0:
+                num_classes = int(logits.size)
+                output_shape = [int(dim) for dim in np.asarray(value).shape]
+                top_k = min(TOP_K_MAX, num_classes)
+                writer.start(build_meta())
+            elif int(logits.size) != num_classes:
+                print(f"[{index}] logit length {logits.size} != {num_classes}", file=sys.stderr)
+                skip_count += 1
+                continue
+            pred_id = int(np.argmax(logits))
+            sample: dict[str, Any] = {
+                "row": index,
+                "path_img": path_img,
+                "class_id": class_id,
+            }
+            if crop and box is not None:
+                sample["cx"] = box[0]
+                sample["cy"] = box[1]
+                sample["w"] = box[2]
+                sample["h"] = box[3]
+            sample["logits"] = [float(item) for item in logits]
+            sample["pred_id"] = pred_id
+            writer.append(sample)
+            if pred_id == class_id:
+                correct1 += 1
+            if in_top_k(logits, class_id, top_k):
+                correct5 += 1
+            ok_count += 1
+            if (index + 1) % 100 == 0 or index + 1 == len(rows):
+                print(f"  progress: {index + 1} / {len(rows)} (ok={ok_count} skip={skip_count})")
     except Exception:
-        sample_path.unlink(missing_ok=True)
+        writer.close_partial()
+        if writer.staging.is_file():
+            print(f"partial dump kept at {writer.staging}", file=sys.stderr)
         raise
 
+    if writer.handle is None:
+        writer.start(build_meta())
     if ok_count == 0:
         acc1: float | None = None
         acc5: float | None = None
     else:
         acc1 = correct1 / ok_count
         acc5 = correct5 / ok_count
-    meta: dict[str, Any] = {
-        "format_version": 1,
-        "source": "onnx",
-        "model": args.model,
-        "csv": args.csv,
-        "mode": "image",
-        "num_classes": num_classes,
-        "output_shape": output_shape,
-        "model_h": model_h,
-        "model_w": model_w,
-        "prep": args.prep,
-        "mean": mean_list,
-        "std": std_list,
-        "ok": ok_count,
-        "skip": skip_count,
-        "top_k": top_k if ok_count else min(TOP_K_MAX, num_classes),
-        "acc1": acc1,
-        "acc5": acc5,
-    }
-    if args.prep == "letterbox":
-        meta["letterbox_fill"] = LETTERBOX_FILL
-    try:
-        write_dump(out_path, meta, sample_path, ok_count)
-    finally:
-        sample_path.unlink(missing_ok=True)
+    writer.finish(
+        {
+            "ok": ok_count,
+            "skip": skip_count,
+            "acc1": acc1,
+            "acc5": acc5,
+        }
+    )
 
     if ok_count == 0:
         print("acc1: n/a")

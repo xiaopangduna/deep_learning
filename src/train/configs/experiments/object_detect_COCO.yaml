@@ -29,13 +29,6 @@ trainer:
         max_images: 4
         nrow: 2
         match_iou_thres: 0.5
-    # - class_path: lightning.pytorch.callbacks.EarlyStopping
-    #   init_args:
-    #     monitor: "val_loss"
-    #     min_delta: 0.0
-    #     patience: 15
-    #     verbose: true
-    #     mode: min
     - class_path: lightning.pytorch.callbacks.ModelCheckpoint
       init_args:
         monitor: "val_loss"
@@ -72,8 +65,6 @@ data:
     dataset_dir: datasets/COCO/coco
     train_csv_paths: [datasets/COCO/coco/train.csv]
     val_csv_paths: [datasets/COCO/coco/val.csv]
-    # test 与 validate 都算 loss 和 mAP，必须有检测框。test-dev 没有公开标签，所以仍用 val.csv。
-    # datasets/COCO/coco/test.csv 只有 test-dev 的 path_img。
     test_csv_paths: [datasets/COCO/coco/val.csv]
     predict_csv_paths: [datasets/COCO/coco/predict.csv]
     key_map:

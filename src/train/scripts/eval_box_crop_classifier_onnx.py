@@ -13,7 +13,7 @@
 默认标签映射 A（与 ``image_classifiter_from_detect_box_head_eye_open`` 的 class_groups 一致）：
   CSV class_id 0/1 → gt_id=1，2 → gt_id=2。不合成 background。
 
-板端 JSON 的 meta 里已有 acc1、acc5。混淆矩阵仍用 ``confusion_from_classifier_dump.py``。
+板端 JSON 的 summary 里已有 acc1、acc5。混淆矩阵仍用 ``confusion_from_classifier_dump.py``。
 
 示例::
 

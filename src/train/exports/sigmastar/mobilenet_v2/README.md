@@ -104,9 +104,9 @@ output_0 shape=(1, 1000) max_abs=0.98135 mean_abs=0.21693 rmse=0.279152 cosine=0
 
 ## 多图 ACC 精度验证：ONNX 与 img
 
-两边 JSON 的 `meta.acc1` / `meta.acc5` 都是 CSV 的 `class_id` 对 `pred_id`。top-1、top-5 各相差小于 1 个点，认为这批评测对齐。
+两边 JSON 的 `summary.acc1` / `summary.acc5` 都是 CSV 的 `class_id` 对 `pred_id`。top-1、top-5 各相差小于 1 个点，认为这批评测对齐。
 
-几何用 `--prep`，名字和板端相同。板端默认是 `letterbox`，ImageNet 验证要显式写成 `imagenet`。`imagenet`：短边缩到 `floor(224/0.875)=256`，再中心裁 224。`letterbox` 保持宽高比，空处填 114。`resize` 直接拉到 224。像素是 `(像素 - mean) / std`。不写 `--mean` 和 `--std` 时用 `input_config.ini` 的 `123.68,116.28,103.53` 和 `58.395,57.12,57.375`。`.img` 里这步已经做了，ONNX 要在脚本里做。板端那份如果是 NV12 打包，logit 不会和 ONNX 逐元素相同；精度两边各自看 `meta.acc1` / `meta.acc5`。
+几何用 `--prep`，名字和板端相同。板端默认是 `letterbox`，ImageNet 验证要显式写成 `imagenet`。`imagenet`：短边缩到 `floor(224/0.875)=256`，再中心裁 224。`letterbox` 保持宽高比，空处填 114。`resize` 直接拉到 224。像素是 `(像素 - mean) / std`。不写 `--mean` 和 `--std` 时用 `input_config.ini` 的 `123.68,116.28,103.53` 和 `58.395,57.12,57.375`。`.img` 里这步已经做了，ONNX 要在脚本里做。板端那份如果是 NV12 打包，logit 不会和 ONNX 逐元素相同；精度两边各自看 `summary.acc1` / `summary.acc5`。
 
 推理优先 CUDA。脚本会先加载 uv 环境里 `nvidia-*` 包的 CUDA 12 / cuDNN 9，不看 shell 的 `LD_LIBRARY_PATH`（那边如果还是 CUDA 11.8，对不上 onnxruntime-gpu 1.23）。CUDA 不可用时退回 CPU。启动时打印 `provider:`。
 
@@ -137,11 +137,21 @@ python verify/multi_image_accuracy_dump_onnx_json.py \
   --csv datasets/IMAGENET/imagenet/val.csv \
   --prep imagenet \
   --out ../../../tmp/mobilenet_v2.json
+
+# 裁框。--box-scale 与板端相同；不写或 <=0 仍是整图。样本里的 class_id 保持 CSV 原值。
+python verify/multi_image_accuracy_dump_onnx_json.py \
+  --model onnx/v013.onnx \
+  --csv /path/to/test_v302.csv \
+  --prep letterbox \
+  --box-scale 1.0 \
+  --mean 0 \
+  --std 255 \
+  --out ../../../tmp/v013_onnx.json
 ```
 
 ### 精度计算和对比
 
-`class_id` 就是 ImageNet 下标，直接读两份 JSON 的 `meta.acc1` / `meta.acc5`。2026-11-17 的验证集 5 万张，ONNX 与板端 top-1 差 0.46 个点，top-5 差 0.21 个点。
+ImageNet 的 `class_id` 就是类别下标，直接读两份 JSON 的 `summary.acc1` / `summary.acc5`。裁框 JSON 里的 `acc1` / `acc5` 同样是 CSV 原 `class_id` 对 `pred_id`，不把原始 id 改写成训练 id。2026-11-17 的验证集 5 万张，ONNX 与板端 top-1 差 0.46 个点，top-5 差 0.21 个点。
 
 PyTorch 官方 `MobileNet_V2_Weights.IMAGENET1K_V1`（`mobilenet_v2-b0353104.pth`）在[分类权重表](https://docs.pytorch.org/vision/stable/models.html#table-of-all-available-classification-weights)的 Acc@1 是 **71.878**，Acc@5 是 90.286。
 
