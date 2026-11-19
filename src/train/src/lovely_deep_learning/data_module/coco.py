@@ -124,6 +124,7 @@ _COCO_IMAGE_ZIPS = (
     (ZIP_TEST2017_IMAGES, "test2017", COCO_TEST2017_IMAGES_ZIP_URL),
 )
 _COCO_SPLIT_LISTS = {"train2017": "train2017.txt", "val2017": "val2017.txt"}
+_COCO_TEST_LIST = "test-dev2017.txt"
 _COCO_READY_DIRS = (
     Path("labels/train2017"),
     Path("labels/val2017"),
@@ -726,12 +727,13 @@ def _extract_image_archive(zip_path: Path, images_root: Path) -> None:
 
 
 def generate_coco_csvs(dataset_dir, *, overwrite: bool = False, with_header: bool = True) -> None:
-    """按 ``train2017.txt`` / ``val2017.txt`` 在 ``dataset_dir`` 下写 train/val/predict CSV 和类别映射。
+    """按图像列表在 ``dataset_dir`` 下写 train/val/test/predict CSV 和类别映射。
 
-    列表里的每张图都写入，包括没有 txt 的图。那些图的标签路径仍写成
-    ``labels/{split}/{stem}.txt``，文件不存在时读作空标签（背景）。不读取 JPEG。
+    ``train2017.txt`` / ``val2017.txt`` 里的每张图都写入，包括没有 txt 的图。那些图的标签路径仍写成
+    ``labels/{split}/{stem}.txt``，文件不存在时读作空标签（背景）。``test.csv`` 来自
+    ``test-dev2017.txt``，只有 ``path_img``。不读取 JPEG。
     ``dataset_dir`` 可以是软链接。路径列仍相对 ``dataset_dir``，不把链接展开进 CSV。
-    四个文件都在且 ``overwrite`` 为 False 时跳过写入，但仍检查两个图像列表。
+    五个文件都在且 ``overwrite`` 为 False 时跳过写入，但仍检查三份图像列表。
     ``with_header`` 为 True 时先打数据目录；``prepare_data`` 已打过目录时传 False。
     """
     root = Path(dataset_dir).expanduser().resolve()
@@ -741,11 +743,13 @@ def generate_coco_csvs(dataset_dir, *, overwrite: bool = False, with_header: boo
 
     train_csv_path = root / "train.csv"
     val_csv_path = root / "val.csv"
+    test_csv_path = root / "test.csv"
     predict_csv_path = root / "predict.csv"
     map_csv_path = root / "map_class_id_to_class_name.csv"
     outputs = (
         (train_csv_path, None),
         (val_csv_path, None),
+        (test_csv_path, None),
         (predict_csv_path, None),
         (map_csv_path, None),
     )
@@ -759,6 +763,7 @@ def generate_coco_csvs(dataset_dir, *, overwrite: bool = False, with_header: boo
 
     train_rows = _collect_coco_split_rows(root, "train2017")
     val_rows = _collect_coco_split_rows(root, "val2017")
+    test_rows = _collect_coco_image_rows(root, _COCO_TEST_LIST)
     predict_rows = [{"path_img": row["path_img"]} for row in val_rows]
     class_to_idx = {name: index for index, name in enumerate(COCO80_CLASS_NAMES)}
 
@@ -768,6 +773,7 @@ def generate_coco_csvs(dataset_dir, *, overwrite: bool = False, with_header: boo
     pd.DataFrame(val_rows, columns=["path_img", "path_label_detect_yolo"]).to_csv(
         val_csv_path, index=False
     )
+    pd.DataFrame(test_rows, columns=["path_img"]).to_csv(test_csv_path, index=False)
     pd.DataFrame(predict_rows, columns=["path_img"]).to_csv(predict_csv_path, index=False)
     ObjectDetectDataModule._write_map_class_id_to_class_name_csv(map_csv_path, class_to_idx)
 
@@ -775,6 +781,7 @@ def generate_coco_csvs(dataset_dir, *, overwrite: bool = False, with_header: boo
         [
             (train_csv_path.name, len(train_rows), "写入"),
             (val_csv_path.name, len(val_rows), "写入"),
+            (test_csv_path.name, len(test_rows), "写入"),
             (predict_csv_path.name, len(predict_rows), "写入"),
             (map_csv_path.name, len(class_to_idx), "写入"),
         ],
@@ -805,16 +812,15 @@ def _print_csv_block(
 
 
 def _require_coco_image_lists(root: Path) -> None:
-    for name in _COCO_SPLIT_LISTS.values():
+    names = (*_COCO_SPLIT_LISTS.values(), _COCO_TEST_LIST)
+    for name in names:
         path = root / name
         if not path.is_file():
             raise FileNotFoundError(f"COCO image list not found: {path}")
 
 
-def _collect_coco_split_rows(root: Path, split: str) -> list[dict]:
-    """按官方图像列表写行，不打开图像。没有 txt 的图也保留，标签路径按同名 txt 书写。"""
-    rows: list[dict] = []
-    list_path = root / _COCO_SPLIT_LISTS[split]
+def _iter_coco_list_images(root: Path, list_name: str):
+    list_path = root / list_name
     for line in list_path.read_text(encoding="utf-8").splitlines():
         rel = line.strip()
         if not rel:
@@ -824,6 +830,18 @@ def _collect_coco_split_rows(root: Path, split: str) -> list[dict]:
         img = Path(rel)
         if not img.parts or img.parts[0] != "images":
             raise ValueError(f"COCO image list entry must start with images/: {line}")
+        yield img
+
+
+def _collect_coco_image_rows(root: Path, list_name: str) -> list[dict]:
+    """只写 ``path_img``。``test-dev2017.txt`` 没有检测框。"""
+    return [{"path_img": img.as_posix()} for img in _iter_coco_list_images(root, list_name)]
+
+
+def _collect_coco_split_rows(root: Path, split: str) -> list[dict]:
+    """按官方图像列表写行，不打开图像。没有 txt 的图也保留，标签路径按同名 txt 书写。"""
+    rows: list[dict] = []
+    for img in _iter_coco_list_images(root, _COCO_SPLIT_LISTS[split]):
         label = Path("labels", *img.parts[1:]).with_suffix(".txt")
         rows.append(
             {
@@ -856,7 +874,9 @@ class COCODataModule(ObjectDetectDataModule):
       ``labels/train2017/*.txt``、``labels/val2017/*.txt``。
     - 生成的 CSV 写在 ``dataset_dir`` 下；路径列为相对 ``dataset_dir`` 的路径，与 ``BaseDataset`` 按 CSV 目录解析一致。
     - ``train.csv`` / ``val.csv`` 含 ``path_img`` 与 ``path_label_detect_yolo``。
-      ``predict.csv`` 仅 ``path_img``，来自验证集标签。``map_class_id_to_class_name.csv`` 为 COCO 80 类。
+      ``test.csv`` 仅 ``path_img``，来自 ``test-dev2017.txt``。test-dev 没有公开检测框，
+      ``trainer.test`` 与 ``validate`` 一样要算 loss 和 mAP，实验里的 ``test_csv_paths`` 仍指向 ``val.csv``。
+      ``predict.csv`` 仅 ``path_img``，来自验证集。``map_class_id_to_class_name.csv`` 为 COCO 80 类。
 
     构造参数见 ``__init__``（显式列出 ``BaseDataModule`` / ``ObjectDetectDataModule`` 的全部字段，
     便于类型检查与 IDE 补全）。

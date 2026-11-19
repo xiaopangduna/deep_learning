@@ -7,7 +7,11 @@
 - 类：`lovely_deep_learning.data_module.coco.COCODataModule`
 - 实验：`configs/experiments/object_detect_COCO.yaml`
 
-## 自动准备
+## 自动下载
+
+```bash
+uv run scripts/train.py fit --config configs/experiments/object_detect_COCO.yaml --trainer.fast_dev_run true
+```
 
 `fit`、`validate`、`test`、`predict` 都会调用 `prepare_data`。下面五个目录里各有至少一个文件时，不再下载、解压或写 CSV，终端也不打印：
 
@@ -45,7 +49,7 @@
 - `labels/train2017/*.txt`、`labels/val2017/*.txt`：YOLO 检测框，读图时用。包里的 txt 都非空。
 - `train2017.txt`、`val2017.txt`：官方图像列表，118287 和 5000 行，生成 CSV 时用。
 - `annotations/instances_val2017.json`：验证集的官方 COCO JSON，给 pycocotools 算 mAP 用。包里没有训练集 JSON。训练不读。
-- `test-dev2017.txt`：COCO test-dev 的 20288 张图。test2017 没有检测标签，实验也不用这份列表。
+- `test-dev2017.txt`：COCO test-dev 的 20288 张图。没有检测标签，生成 `test.csv` 时用。
 - `images/train2017/`、`images/val2017/`：空目录，里面没有图片。
 - `LICENSE`、`README.txt`：这套 YOLO 标签的 GPL-3.0 说明。`.DS_Store` 是打包时带上的 macOS 文件。训练不读。
 
@@ -60,7 +64,7 @@ unzip -n -q val2017.zip -d images
 unzip -n -q test2017.zip -d images
 ```
 
-标签 zip 的成员在 `coco/` 下。去掉这一层后全部放进数据目录。训练用到的是 `labels/` 和 `train2017.txt`、`val2017.txt`，其余文件见上一节：
+标签 zip 的成员在 `coco/` 下。去掉这一层后全部放进数据目录。训练用到的是 `labels/` 和 `train2017.txt`、`val2017.txt`，`test.csv` 用 `test-dev2017.txt`，其余文件见上一节：
 
 ```bash
 unzip -q coco2017labels.zip -d /tmp/coco2017labels
@@ -82,20 +86,20 @@ ln -s /data/coco datasets/COCO/coco
 
 ## 生成 CSV
 
-`train2017.txt` 与 `val2017.txt` 就位后即可生成。这两份列表来自标签包，分别是 118287 和 5000 张图，和 Ultralytics `coco.yaml` 用的图像列表相同。脚本不打开 JPEG，图片可以还在压缩包里。
+`train2017.txt`、`val2017.txt` 与 `test-dev2017.txt` 就位后即可生成。前两份列表来自标签包，分别是 118287 和 5000 张图，和 Ultralytics `coco.yaml` 用的图像列表相同。`test-dev2017.txt` 是 20288 张。脚本不打开 JPEG，图片可以还在压缩包里。
 
-列表里的每一行都写入。有 txt 的图带上 `labels/{split}/{stem}.txt`。没有 txt 的图也写入，标签路径仍按这个规则书写；读的时候文件不存在，标签是空的。Ultralytics `verify_image_label` 同样把缺失的标签文件和空文件都当成没有目标，并算进 background。标签包里的 txt 都非空，背景就是这 1021 张训练图和 48 张验证图。
+训练和验证列表里的每一行都写入。有 txt 的图带上 `labels/{split}/{stem}.txt`。没有 txt 的图也写入，标签路径仍按这个规则书写；读的时候文件不存在，标签是空的。Ultralytics `verify_image_label` 同样把缺失的标签文件和空文件都当成没有目标，并算进 background。标签包里的 txt 都非空，背景就是这 1021 张训练图和 48 张验证图。
 
-`predict.csv` 只有验证集的 `path_img`，包含没有标签的验证图。`map_class_id_to_class_name.csv` 是 COCO 80 类，`0,person` 起。test2017 没有检测标签，实验 YAML 的 `test_csv_paths` 指向 `val.csv`。
+`test.csv` 只有 test-dev 的 `path_img`。`predict.csv` 只有验证集的 `path_img`，包含没有标签的验证图。`map_class_id_to_class_name.csv` 是 COCO 80 类，`0,person` 起。`validate` 和 `test` 都算 loss 和 mAP，必须有检测框。test-dev 没有公开标签，实验 YAML 的 `test_csv_paths` 指向 `val.csv`。
 
 ```bash
 python datasets/COCO/coco_to_csv.py
 python datasets/COCO/coco_to_csv.py --overwrite
 ```
 
-四个文件都已存在时跳过写入，但每次仍检查 `train2017.txt` 和 `val2017.txt`。`prepare_data` 在解压之后做同样的事，不必为了训练再跑一遍脚本。`--overwrite` 用于标签变了之后重写。没有对应 JPEG 的行也会写进表，读图时才会失败。
+五个文件都已存在时跳过写入，但每次仍检查 `train2017.txt`、`val2017.txt` 和 `test-dev2017.txt`。`prepare_data` 在解压之后做同样的事，不必为了训练再跑一遍脚本。`--overwrite` 用于标签变了之后重写。没有对应 JPEG 的行也会写进表，读图时才会失败。
 
-缺 `train2017.txt` 或 `val2017.txt` 会在生成时抛 `FileNotFoundError`。`coco` 若是断掉的软链接，会报 `dataset_dir` 不存在。
+缺这三份列表的任一份会在生成时抛 `FileNotFoundError`。`coco` 若是断掉的软链接，会报 `dataset_dir` 不存在。
 
 ## 目录
 
@@ -117,12 +121,13 @@ datasets/COCO/
     ├── labels/val2017/*.txt
     ├── train2017.txt                     # 标签包，生成 CSV
     ├── val2017.txt
-    ├── test-dev2017.txt                  # 标签包，训练不读
+    ├── test-dev2017.txt                  # 标签包，生成 test.csv
     ├── annotations/instances_val2017.json
     ├── LICENSE
     ├── README.txt
     ├── train.csv
     ├── val.csv
+    ├── test.csv
     ├── predict.csv
     └── map_class_id_to_class_name.csv
 ```
@@ -137,6 +142,13 @@ images/train2017/000000000009.jpg,labels/train2017/000000000009.txt
 ```
 
 标签是 YOLO 检测格式，每行 `class_id cx cy w h`。
+
+`test.csv`：
+
+```text
+path_img
+images/test2017/000000000001.jpg
+```
 
 `predict.csv`：
 
@@ -161,7 +173,7 @@ data:
     dataset_dir: datasets/COCO/coco
     train_csv_paths: [datasets/COCO/coco/train.csv]
     val_csv_paths: [datasets/COCO/coco/val.csv]
-    test_csv_paths: [datasets/COCO/coco/val.csv]
+    test_csv_paths: [datasets/COCO/coco/val.csv]  # test 要标签；test.csv 没有框
     predict_csv_paths: [datasets/COCO/coco/predict.csv]
     map_class_id_to_class_name: datasets/COCO/coco/map_class_id_to_class_name.csv
 ```

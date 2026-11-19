@@ -34,6 +34,10 @@ def _write_labels(root: Path) -> None:
         "./images/val2017/000000000139.jpg\n",
         encoding="utf-8",
     )
+    (root / "test-dev2017.txt").write_text(
+        "./images/test2017/000000000001.jpg\n",
+        encoding="utf-8",
+    )
 
 
 def test_generate_csv_from_directory_and_symlink(tmp_path: Path):
@@ -55,6 +59,10 @@ def test_generate_csv_from_directory_and_symlink(tmp_path: Path):
     assert val.iloc[0]["path_img"] == "images/val2017/000000000139.jpg"
     assert val.iloc[0]["path_label_detect_yolo"] == "labels/val2017/000000000139.txt"
 
+    test = pd.read_csv(direct / "test.csv")
+    assert list(test.columns) == ["path_img"]
+    assert list(test["path_img"]) == ["images/test2017/000000000001.jpg"]
+
     predict = pd.read_csv(direct / "predict.csv")
     assert list(predict.columns) == ["path_img"]
     assert list(predict["path_img"]) == list(val["path_img"])
@@ -68,6 +76,7 @@ def test_generate_csv_from_directory_and_symlink(tmp_path: Path):
     linked.symlink_to(direct, target_is_directory=True)
     (direct / "train.csv").unlink()
     (direct / "val.csv").unlink()
+    (direct / "test.csv").unlink()
     (direct / "predict.csv").unlink()
     (direct / "map_class_id_to_class_name.csv").unlink()
     generate_coco_csvs(linked)
@@ -127,6 +136,7 @@ def _write_fixture_zips(root: Path) -> None:
                 b"./images/train2017/000000000025.jpg\n"
             ),
             "coco/val2017.txt": b"./images/val2017/000000000139.jpg\n",
+            "coco/test-dev2017.txt": b"./images/test2017/000000000001.jpg\n",
             "coco/images/train2017/": b"",
         },
     )
@@ -150,6 +160,7 @@ def test_ensure_extracts_labels_without_coco_prefix_and_images(tmp_path: Path):
     assert (root / "labels" / "val2017" / "000000000139.txt").is_file()
     assert (root / "README.txt").read_text(encoding="utf-8") == "readme\n"
     assert (root / "train2017.txt").is_file()
+    assert (root / "test-dev2017.txt").is_file()
     assert not (root / "coco").exists()
     assert (root / "images" / "train2017" / "000000000009.jpg").read_bytes() == b"train-a"
     assert (root / "images" / "train2017" / "000000000025.jpg").read_bytes() == b"train-b"
@@ -201,6 +212,9 @@ def test_prepare_data_writes_csv_after_extract(tmp_path: Path):
         "labels/train2017/000000000025.txt",
     ]
     assert not (root / "labels" / "train2017" / "000000000025.txt").exists()
+    test = pd.read_csv(root / "test.csv")
+    assert list(test.columns) == ["path_img"]
+    assert list(test["path_img"]) == ["images/test2017/000000000001.jpg"]
     assert (root / "map_class_id_to_class_name.csv").is_file()
 
 

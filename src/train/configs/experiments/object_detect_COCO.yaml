@@ -4,6 +4,7 @@
 # 压缩包和解压结果放在 datasets/COCO/coco（可以是软链接）。
 # 五个划分目录都有文件时，prepare_data 不再下载、解压或写 CSV，也不打印。
 # 缺任何一个划分则下载 zip、解压并生成 CSV，终端打印数据目录和这三步。训练表包含没有 txt 的图，读作空标签。
+# test.csv 只有 test-dev 的图像路径。test 子命令要检测框，所以 test_csv_paths 仍指向 val.csv。
 # 手动解压后可只运行 python datasets/COCO/coco_to_csv.py。见 datasets/COCO/README.md。
 
 trainer:
@@ -71,6 +72,8 @@ data:
     dataset_dir: datasets/COCO/coco
     train_csv_paths: [datasets/COCO/coco/train.csv]
     val_csv_paths: [datasets/COCO/coco/val.csv]
+    # test 与 validate 都算 loss 和 mAP，必须有检测框。test-dev 没有公开标签，所以仍用 val.csv。
+    # datasets/COCO/coco/test.csv 只有 test-dev 的 path_img。
     test_csv_paths: [datasets/COCO/coco/val.csv]
     predict_csv_paths: [datasets/COCO/coco/predict.csv]
     key_map:
