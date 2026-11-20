@@ -32,8 +32,10 @@ bash convert.sh \
 
 几何和标准化分开：
 
-- resize、letterbox、ImageNet 中心裁切在跑图程序里做（板端 `--prep`，ONNX 脚本用同一个 `--prep`），不写进 `.img`。
+- resize、letterbox、ImageNet 中心裁切在跑图程序里做（板端 `--prep`，ONNX 脚本用同一个 `--prep`），不写进 `.img`。裁框在这之前：`--box-scale > 0` 且 CSV 有 `cx,cy,w,h` 时，先按归一化框外扩再做 `--prep`。
 - `(像素 - mean) / std` 写进 `.img`。灰度 `input_config_gray.ini` 是 `mean=0`、`std_value=255`，对应训练验证的 LetterBox 224、单通道。RGB `input_config.ini` 是 `123.68,116.28,103.53` 和 `58.395:57.12:57.375`。ONNX 侧用同一组数。
+
+灰度裁框模型的校准图放在 `quant_data/`。每张是裁框后再 LetterBox 到 224、填充 114 的 uint8，不做 `/255`。`mobilenet_gray_pre.py` 在校准里再做一次 LetterBox、灰度和 `/255`。图已经是 224×224 时第二次 LetterBox 的比例是 1，内容不变。不要把还没 letterbox 的原框，或直接拉成正方形的图放进这个目录。
 
 ## 单张图精度验证：ONNX 与 img
 
@@ -104,13 +106,15 @@ output_0 shape=(1, 1000) max_abs=0.98135 mean_abs=0.21693 rmse=0.279152 cosine=0
 
 ## 多图 ACC 精度验证：ONNX 与 img
 
-两边 JSON 的 `summary.acc1` / `summary.acc5` 都是 CSV 的 `class_id` 对 `pred_id`。top-1、top-5 各相差小于 1 个点，认为这批评测对齐。
+两边各写一份 JSON。样本里的 `class_id` 是 CSV 原值，`pred_id` 是模型输出下标。板端的 `acc1` / `acc5` 在 `meta`，ONNX 的在 `summary`，都是这两个数直接比较，不做训练标签映射。
 
-几何用 `--prep`，名字和板端相同。板端默认是 `letterbox`，ImageNet 验证要显式写成 `imagenet`。`imagenet`：短边缩到 `floor(224/0.875)=256`，再中心裁 224。`letterbox` 保持宽高比，空处填 114。`resize` 直接拉到 224。像素是 `(像素 - mean) / std`。不写 `--mean` 和 `--std` 时用 `input_config.ini` 的 `123.68,116.28,103.53` 和 `58.395,57.12,57.375`。`.img` 里这步已经做了，ONNX 要在脚本里做。板端那份如果是 NV12 打包，logit 不会和 ONNX 逐元素相同；精度两边各自看 `summary.acc1` / `summary.acc5`。
+整图且 `class_id` 就是模型类别下标时，直接读这两处。裁框实验的原始 id 和训练 id 往往不一致，用 [`scripts/score_classifier_dump.py`](../../../scripts/score_classifier_dump.py) 按 `class_groups` 重算。指标含义、映射写法和哪些样本计入 `skip` 都写在该脚本开头。top-1 相差小于 1 个点，认为这批评测对齐。
+
+几何用 `--prep`，名字和板端相同。板端默认是 `letterbox`。`imagenet`：短边缩到 `floor(224/0.875)=256`，再中心裁 224。`letterbox` 保持宽高比，空处填 114。`resize` 直接拉到 224。像素是 `(像素 - mean) / std`。不写 `--mean` 和 `--std` 时用 `input_config.ini` 的 `123.68,116.28,103.53` 和 `58.395,57.12,57.375`。`.img` 里这步已经做了，ONNX 要在脚本里做。灰度必须写成 `--mean 0 --std 255`。板端那份如果是 NV12 打包，logit 不会和 ONNX 逐元素相同。
 
 推理优先 CUDA。脚本会先加载 uv 环境里 `nvidia-*` 包的 CUDA 12 / cuDNN 9，不看 shell 的 `LD_LIBRARY_PATH`（那边如果还是 CUDA 11.8，对不上 onnxruntime-gpu 1.23）。CUDA 不可用时退回 CPU。启动时打印 `provider:`。
 
-### 板端 img 运行结果
+### 整图
 
 `classifier_dump_sigmastar` 在板子上跑。源码在 `deploy_percept/apps/classifier_dump_sigmastar`，构建和参数见该目录 README。ImageNet 用 `--prep imagenet`，不要加 `--box-scale`。
 
@@ -125,9 +129,7 @@ cd /customer/deploy_percept
 
 JSON 拷回 `tmp/mobilenet_v2_iford.json`。
 
-### onnx 运行结果
-
-`verify/multi_image_accuracy_dump_onnx_json.py` 按 CSV 跑 ONNX，写成和板端相同的 JSON。`--limit N` 只跑 CSV 前 N 行。没有成功样本时退出码为 1。
+`verify/multi_image_accuracy_dump_onnx_json.py` 按 CSV 跑 ONNX，写成和板端相同的 JSON。`--limit N` 只跑 CSV 前 N 行。没有成功样本时退出码为 1。不写 `--box-scale`，或值 `<= 0`，就是整图。
 
 ```bash
 cd exports/sigmastar/mobilenet_v2
@@ -137,21 +139,9 @@ python verify/multi_image_accuracy_dump_onnx_json.py \
   --csv datasets/IMAGENET/imagenet/val.csv \
   --prep imagenet \
   --out ../../../tmp/mobilenet_v2.json
-
-# 裁框。--box-scale 与板端相同；不写或 <=0 仍是整图。样本里的 class_id 保持 CSV 原值。
-python verify/multi_image_accuracy_dump_onnx_json.py \
-  --model onnx/v013.onnx \
-  --csv /path/to/test_v302.csv \
-  --prep letterbox \
-  --box-scale 1.0 \
-  --mean 0 \
-  --std 255 \
-  --out ../../../tmp/v013_onnx.json
 ```
 
-### 精度计算和对比
-
-ImageNet 的 `class_id` 就是类别下标，直接读两份 JSON 的 `summary.acc1` / `summary.acc5`。裁框 JSON 里的 `acc1` / `acc5` 同样是 CSV 原 `class_id` 对 `pred_id`，不把原始 id 改写成训练 id。2026-11-17 的验证集 5 万张，ONNX 与板端 top-1 差 0.46 个点，top-5 差 0.21 个点。
+ImageNet 的 `class_id` 就是类别下标，直接读两份 JSON 的 `acc1` / `acc5`。2026-11-17 的验证集 5 万张，ONNX 与板端 top-1 差 0.46 个点，top-5 差 0.21 个点。
 
 PyTorch 官方 `MobileNet_V2_Weights.IMAGENET1K_V1`（`mobilenet_v2-b0353104.pth`）在[分类权重表](https://docs.pytorch.org/vision/stable/models.html#table-of-all-available-classification-weights)的 Acc@1 是 **71.878**，Acc@5 是 90.286。
 
@@ -168,6 +158,48 @@ python scripts/train.py validate \
 | 本仓库 validate | 71.850% | 未记录 |
 | ONNX | 70.722% | 89.822% |
 | 板端 | 70.260% | 89.616% |
+
+### 裁框
+
+CSV 除了 `path_img,class_id`，还要有归一化的 `cx,cy,w,h`。`--box-scale` 与训练 YAML 的 `box_scale` 相同；v002 是 `1.0`。板端和 ONNX 都是先外扩裁切，再 `--prep letterbox`。不写 `--box-scale` 会把整张图送进模型，和训练对不上。样本里仍保存 CSV 的原始 `class_id` 和还没乘 `box_scale` 的框。
+
+```bash
+cd /customer/deploy_percept
+./bin/classifier_dump_sigmastar \
+  --model ./v013_gray.img \
+  --csv ./test_v302.csv \
+  --box-scale 1.0 \
+  --prep letterbox \
+  --out ./v013_gray.json
+```
+
+```bash
+cd exports/sigmastar/mobilenet_v2
+
+python verify/multi_image_accuracy_dump_onnx_json.py \
+  --model onnx/v013.onnx \
+  --csv /path/to/test_v302.csv \
+  --prep letterbox \
+  --box-scale 1.0 \
+  --mean 0 \
+  --std 255 \
+  --out ../../../tmp/v013_onnx.json
+```
+
+`--csv` 用板端那份表。JSON 里的 `acc1` / `acc5` 仍是原始 `class_id` 对 `pred_id`。v002 的 `class_groups` 是 `0: [0]`、`1: [2]`，原始 `class_id` 2 对应 `pred_id` 1，原始 `1` 不在组里。这个对应不在 dump 里做。
+
+### 评估
+
+在 `train` 仓库根目录跑 `scripts/score_classifier_dump.py`。`--class-groups` 写成和 YAML 一样的组，训练 id 在冒号左边。`--dump` 可重复，同一条映射打在板端和 ONNX 两份 JSON 上。脚本开头写了映射语法、`skip`、`acc`、`acc_macro`、混淆矩阵、recall 和 precision。
+
+```bash
+python scripts/score_classifier_dump.py \
+  --dump tmp/v013_gray.json \
+  --dump tmp/v013_onnx.json \
+  --class-groups '0:0;1:2'
+```
+
+2026-11-20，`test_v302` 映射后留下 5553 条，`skip` 67 条原始 `class_id` 1。全体准确率两边都是 **0.965964**（5364/5553）。`acc_macro` 板端 **0.961427**，ONNX **0.959327**。类 0 recall 是 4461/4607 对 4466/4607，类 1 recall 是 903/946 对 898/946。正确总数相同。
 
 ## 官方 ONNX 与 SigmaStar ONNX
 

@@ -2,19 +2,73 @@
 # -*- coding: utf-8 -*-
 """按 class_groups 把分类 dump 的原始 class_id 映成训练 id，再算准确率。
 
-只读 JSON ``samples`` 里的 ``class_id`` 和 ``pred_id``。不使用 ``meta`` / ``summary``
-里已经写好的 acc。未出现在映射里的 ``class_id`` 计入 skip。
+板端 ``classifier_dump_sigmastar`` 和
+``exports/sigmastar/mobilenet_v2/verify/multi_image_accuracy_dump_onnx_json.py``
+都把 CSV 的原始 ``class_id`` 和模型 ``pred_id`` 写进 JSON。两边的
+``meta.acc1`` / ``summary.acc1`` 是这两个数直接比较，没有做训练标签映射。
+裁框实验的 YAML 通常把若干原始 id 合成训练 id，这份脚本做的就是那一步。
 
-``--class-groups`` 与 YAML 的 ``class_groups`` 同向：训练 id 在冒号左边，原始
-``class_id`` 在右边。组与组用分号分开，一组里多个原始 id 用逗号。训练 id 必须是
-连续的 ``0 .. n-1``，原始 id 不能重复。
-
-示例::
+在 ``train`` 仓库根目录执行::
 
     python scripts/score_classifier_dump.py \\
         --dump tmp/v013_gray.json \\
         --dump tmp/v013_onnx.json \\
         --class-groups '0:0;1:2'
+
+参数
+----
+
+``--dump``
+    分类 dump JSON，可重复。同一条映射依次打在每份文件上，方便把板端和 ONNX
+    放在一次命令里。只读 ``samples`` 里的 ``class_id`` 和 ``pred_id``。
+    不读 ``logits``，也不采用 ``meta`` / ``summary`` 里已经写好的 acc。
+    样本缺这两列、JSON 没有 ``samples``、或文件打不开时，该份记为失败。
+
+``--class-groups``
+    与实验 YAML 的 ``class_groups`` 同向：训练 id 在冒号左边，原始 ``class_id``
+    在右边。组与组用分号分开，一组里多个原始 id 用逗号::
+
+        0:0;1:2          对应 YAML 的 0: [0]、1: [2]
+        0:0,1;1:2       训练 0 合并原始 0 和 1，训练 1 来自原始 2
+
+    训练 id 必须正好是 ``0 .. n-1``，不能跳号，也不能重复。原始 id 不能出现在
+    两组里。空串、缺冒号、非整数都会退出，退出码为 1。
+
+哪些样本进入指标
+----------------
+
+原始 ``class_id`` 不在任何组里的样本计入 ``skip``，并按原始 id 分行打印条数。
+v013 的 ``1`` 不在 ``0: [0]、1: [2]`` 里，所以这 67 条不进准确率。
+
+留下的样本用映射后的训练 id 当真值，和 ``pred_id`` 比较。``pred_id`` 不在
+``0 .. n-1`` 时这条算错：recall 的分母仍算它，混淆矩阵没有这一列，另外打印
+``pred out of range``。2 类模型的 argmax 不会走出这个范围。
+
+映射之后一个训练类都没有样本时，该份退出码为 1。多份 dump 里只要有一份失败，
+进程退出码就是 1；已经打出来的报告仍然有效。
+
+打印什么
+--------
+
+``samples``
+    映射后留下的条数，括号里是 ``skip`` 总数。
+``confusion matrix``
+    行是映射后的真值，列是 ``pred_id``，下标都是训练 id。
+``acc``
+    全体准确率，对上的条数 / 留下的条数。对应训练侧
+    ``ImageClassifierMetric(average="micro")`` 的 ``acc``。
+``acc_macro``
+    各类 recall 的平均。某个训练 id 没有真值时该类不参与平均，并在 recall 里
+    打印 ``n/a``。对应 ``average="macro"`` 的 ``acc_macro``，也是框级实验
+    checkpoint 监控的 ``val_acc_macro``。
+``per-class recall``
+    该类对上的条数 / 该类留下的条数。分母含 ``pred_id`` 越界的样本。
+``per-class precision``
+    混淆矩阵对角线 / 该列之和。列和只统计 ``pred_id`` 落在 ``0 .. n-1`` 的样本。
+    该列没有预测时打印 ``n/a``。
+
+不计算 top-5。那需要 ``logits``，框级 2 类实验也不看它。整图 ImageNet 的
+``class_id`` 已经是模型类别下标，直接读 JSON 里的 ``acc1`` / ``acc5`` 即可，不必跑这份脚本。
 """
 
 from __future__ import annotations
