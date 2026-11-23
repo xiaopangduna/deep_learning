@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for care-classes ERR rules in val_classifier_with_fiftyone."""
+"""Unit tests for class-map evaluation in val_classifier_with_fiftyone."""
 
 from __future__ import annotations
 
@@ -27,132 +27,132 @@ def vc():
     return _load_script()
 
 
-def test_resolve_care_by_id_name_and_suffix(vc):
-    id_to_name = {
-        0: "head-eye_open_0",
-        1: "head-eye_open_1",
-        2: "head-eye_open_2",
+def test_parse_class_map_is_one_to_one(vc):
+    parsed = vc.parse_class_map("0:face_frontal,1:face_side,2:face_head")
+    assert parsed.name_to_id == {
+        "face_frontal": 0,
+        "face_side": 1,
+        "face_head": 2,
     }
-    assert vc.resolve_care_classes("2", id_to_name) == {2}
-    assert vc.resolve_care_classes("head-eye_open_2", id_to_name) == {2}
-    assert vc.resolve_care_classes("eye_open_2", id_to_name) == {2}
-    assert vc.resolve_care_classes("0,2", id_to_name) == {0, 2}
-    assert vc.resolve_care_classes(None, id_to_name) is None
-    with pytest.raises(ValueError, match="unknown"):
-        vc.resolve_care_classes("eye_open_9", id_to_name)
+    assert parsed.first_name(0) == "face_frontal"
+    assert vc.parse_class_map("0:eye_open_0，1:eye_open_2").ids() == {0, 1}
+    with pytest.raises(ValueError, match="id 重复"):
+        vc.parse_class_map("0:eye_open_0,0:eye_open_1")
+    with pytest.raises(ValueError, match="类名重复"):
+        vc.parse_class_map("0:eye_open_0,1:eye_open_0")
+    with pytest.raises(ValueError, match="id:类名"):
+        vc.parse_class_map("face_frontal")
 
 
-def test_care_xor_ignores_0_vs_1(vc):
-    groups = {0: [0, 1], 1: [2]}
-    original_to_group = {0: 0, 1: 0, 2: 1}
-    care = {2}
-
-    # 0↔1 via pred group 0: both not in care → OK
-    assert not vc.is_error(
-        gt_original_id=0,
-        pred_group_id=0,
-        care_ids=care,
-        groups=groups,
-        background_id=None,
-        original_to_group=original_to_group,
-    )
-    assert not vc.is_error(
-        gt_original_id=1,
-        pred_group_id=0,
-        care_ids=care,
-        groups=groups,
-        background_id=None,
-        original_to_group=original_to_group,
-    )
-
-    # gt=2 pred=group0 → ERR
-    assert vc.is_error(
-        gt_original_id=2,
-        pred_group_id=0,
-        care_ids=care,
-        groups=groups,
-        background_id=None,
-        original_to_group=original_to_group,
-    )
-    # gt=0 pred=group1 (open) → ERR
-    assert vc.is_error(
-        gt_original_id=0,
-        pred_group_id=1,
-        care_ids=care,
-        groups=groups,
-        background_id=None,
-        original_to_group=original_to_group,
-    )
-    # gt=2 pred=group1 → OK
-    assert not vc.is_error(
-        gt_original_id=2,
-        pred_group_id=1,
-        care_ids=care,
-        groups=groups,
-        background_id=None,
-        original_to_group=original_to_group,
-    )
+def test_validate_class_map_rejects_unknown_background_and_collisions(vc):
+    class_map = vc.parse_class_map("0:eye_open_0,1:eye_open_2")
+    groups = {0: [0], 1: [2]}
+    vc.validate_class_map(class_map, groups, None, ["head"])
+    with pytest.raises(ValueError, match="不在 class_groups"):
+        vc.validate_class_map(class_map, {0: [0]}, None, ["head"])
+    background = vc.parse_class_map("0:eye_open_0")
+    with pytest.raises(ValueError, match="background"):
+        vc.validate_class_map(background, {1: [0]}, 0, ["head"])
+    prefixed = vc.parse_class_map("0:head-eye_open_0,1:eye_open_0")
+    with pytest.raises(ValueError, match="不要带框标签前缀"):
+        vc.validate_class_map(prefixed, {0: [0], 1: [1]}, None, ["head"])
 
 
-def test_exact_group_match_without_care(vc):
-    groups = {0: [0, 1], 1: [2]}
-    original_to_group = {0: 0, 1: 0, 2: 1}
-
-    # 0 and 1 share group 0 — pred group 0 is OK for both
-    assert not vc.is_error(
-        gt_original_id=0,
-        pred_group_id=0,
-        care_ids=None,
-        groups=groups,
-        background_id=None,
-        original_to_group=original_to_group,
-    )
-    assert not vc.is_error(
-        gt_original_id=1,
-        pred_group_id=0,
-        care_ids=None,
-        groups=groups,
-        background_id=None,
-        original_to_group=original_to_group,
-    )
-    assert vc.is_error(
-        gt_original_id=2,
-        pred_group_id=0,
-        care_ids=None,
-        groups=groups,
-        background_id=None,
-        original_to_group=original_to_group,
-    )
+def test_matched_names_are_exact_box_tags(vc):
+    class_map = vc.parse_class_map("0:eye_open_0,1:eye_open_1,2:eye_open_2")
+    assert vc.matched_class_names("head", ["eye_open_0", "changed"], class_map) == [
+        "eye_open_0"
+    ]
+    assert vc.matched_class_names("head", ["changed", "eval_err"], class_map) == []
+    assert vc.matched_class_names(
+        "head",
+        ["eye_open_0", "eye_open_1"],
+        class_map,
+    ) == ["eye_open_0", "eye_open_1"]
+    prefixed = vc.parse_class_map("0:head-face_frontal,1:head-face_side")
+    assert vc.matched_class_names("head", ["face_side"], prefixed) == []
+    assert vc.matched_class_names("head", ["head-face_frontal"], prefixed) == [
+        "head-face_frontal"
+    ]
 
 
-def test_pred_tag_for_closed_open_and_background(vc):
-    groups = {1: [0, 1], 2: [2]}
-    assert vc.pred_tag_for_group(0, groups, 0) == "pred_background"
-    assert vc.pred_tag_for_group(1, groups, 0) == "pred_eye_open_0"
-    assert vc.pred_tag_for_group(2, groups, 0) == "pred_eye_open_2"
+def test_pred_tag_uses_mapped_name_or_raw_id(vc):
+    class_map = vc.parse_class_map("0:eye_open_0,1:eye_open_2")
+    assert vc.pred_tag_for_id(0, class_map) == "pred_eye_open_0"
+    assert vc.pred_tag_for_id(1, class_map) == "pred_eye_open_2"
+    assert vc.pred_tag_for_id(2, class_map) == "pred_2"
 
 
 def test_apply_eval_tags_keeps_ground_truth_tags(vc):
     tags = vc.apply_eval_tags(
         ["eye_open_0", "changed", "eval_ok", "pred_eye_open_2"],
-        is_err=True,
+        status=vc.STATUS_ERR,
         pred_tag="pred_eye_open_0",
     )
     assert tags == ["eye_open_0", "changed", "eval_err", "pred_eye_open_0"]
     correct = vc.apply_eval_tags(
         ["eye_open_2", "eval_ok", "pred_eye_open_0"],
-        is_err=False,
+        status=vc.STATUS_OK,
         pred_tag="pred_eye_open_2",
     )
     assert correct == ["eye_open_2", "pred_eye_open_2"]
-    assert vc.strip_eval_tags(["eye_open_1", "eval_err", "pred_background", "ignore"]) == [
-        "eye_open_1",
-        "ignore",
-    ]
+    unlabeled = vc.apply_eval_tags(
+        ["changed", "eval_err", "pred_eye_open_2"],
+        status=vc.STATUS_BAD,
+        pred_tag="pred_eye_open_0",
+    )
+    assert unlabeled == ["changed", "eval_bad_tag", "pred_eye_open_0"]
+    multi = vc.apply_eval_tags(
+        ["eye_open_0", "eye_open_2", "eval_err", "pred_eye_open_0"],
+        status=vc.STATUS_BAD,
+        pred_tag="",
+    )
+    assert multi == ["eye_open_0", "eye_open_2", "eval_bad_tag"]
 
 
-def test_eye_open_code_uses_highest_and_defaults_to_zero(vc):
-    assert vc.eye_open_code(None) == 0
-    assert vc.eye_open_code(["ignore"]) == 0
-    assert vc.eye_open_code(["eye_open_1", "eye_open_2"]) == 2
-    assert vc.eye_class_name("head", 0) == "head-eye_open_0"
+def test_eval_class_groups_is_identity_over_model_ids(vc):
+    synthetic = vc.eval_class_groups({0: [0, 1], 1: [2]}, 2)
+    parsed, background_id = vc.ImageClassifierDataset.parse_class_groups(synthetic)
+    assert background_id == 2
+    assert parsed == {0: [0], 1: [1]}
+
+
+def test_bad_tags_stay_out_of_error_rate(vc):
+    stats = vc.EvalStats()
+    stats.add(
+        vc.BoxVerdict(
+            sample_id="s",
+            detection_id="d1",
+            img_path="a.jpg",
+            img_w=10,
+            img_h=10,
+            cx=0.5,
+            cy=0.5,
+            w=0.2,
+            h=0.2,
+            status=vc.STATUS_OK,
+            gt_name="head-face_frontal",
+            gt_id=0,
+        )
+    )
+    stats.add(
+        vc.BoxVerdict(
+            sample_id="s",
+            detection_id="d2",
+            img_path="a.jpg",
+            img_w=10,
+            img_h=10,
+            cx=0.5,
+            cy=0.5,
+            w=0.2,
+            h=0.2,
+            status=vc.STATUS_BAD,
+            bad_reason=vc.REASON_MULTI_GT,
+            matched_names=("head-eye_open_0", "head-eye_open_1"),
+        )
+    )
+    assert stats.n_scored == 1
+    assert stats.n_ok == 1
+    assert stats.n_err == 0
+    assert stats.n_bad == 1
+    assert stats.n_multi_gt == 1

@@ -286,18 +286,18 @@ checkpoint 与 `config.yaml` 在 `logs/<实验名>/version_N/`。测试 / 预测
 
 ## 分类结果写回 FiftyOne
 
-对 FiftyOne 里已有的头框打分。`--sample-tags` 选图，眼睛真值读框上的 `eye_open_*`（没有则视为 `eye_open_0`）。`--write-fo` 写回原框：判错写 `eval_err` 和 `pred_eye_open_*`（或 `pred_background`），判对只写预测标签、不写 `eval_ok`。再次写入会清掉旧的 `eval_ok`。不新建字段，不加样本标签，也不改 `eye_open_*`。`--care-classes` 只把「关注类 vs 非关注类」不一致标成 `eval_err`（例如只关心 `eye_open_2`）。`--ckpt` 须与 `--config` 的分类头一致（2 类用 v100，含 background 的 3 类用 v000）。
+对 FiftyOne 里已有的框打分。`--sample-tags` 选图。`--class-map` 把模型输出 id 一一对应到框上的 tag，例如 `0:face_frontal,1:face_side,2:face_head`。`--box-labels head` 已经选定框。映射值必须和框上的 tag 完全一致，例如 `face_frontal`，不要写 `head-face_frontal`。带这些样本 tag 的图上，`--box-labels` 里的框都会看；短边小于配置 `min_side_px` 的跳过。正好命中一个映射 tag 才打分：判错写 `eval_err` 和 `pred_<tag>`，判对只写预测标签。一个映射 tag 都没有的框也推理，写 `eval_bad_tag` 和 `pred_<tag>`，不进错误率，预测可当预标注。命中多个映射 tag 时只写 `eval_bad_tag`，不进模型。预测 id 不在映射里时，标签是 `pred_<id>`。不改真值 tag 和 `changed`。`--ckpt` 须与 `--config` 的分类头一致。
 
-本机若已有 mongod 在 27017，脚本会默认连 `mongodb://127.0.0.1:27017`（也可用环境变量 `FIFTYONE_DATABASE_URI` 覆盖）。默认跳过 `dup_repeat_drop` 和 `dup_near_drop`。
+本机若已有 mongod 在 27017，脚本会默认连 `mongodb://127.0.0.1:27017`（也可用环境变量 `FIFTYONE_DATABASE_URI` 覆盖）。
 
 ```bash
 uv run scripts/val_classifier_with_fiftyone.py \
-  --ckpt logs/image_classifiter_from_detect_box_head_eye_open/version_6/checkpoints/epoch=19-val_acc=0.96.ckpt \
-  --config configs/experiments/image_classifiter_from_detect_box_head_eye_open_v100.yaml \
+  --ckpt logs/image_classifiter_from_detect_box_head_face_mobilenet_v2_v001/version_0/checkpoints/last.ckpt \
+  --config configs/experiments/image_classifiter_from_detect_box_head_face_mobilenet_v2_v001.yaml \
   --dataset BBM08S_head \
-  --sample-tags test_v301 \
+  --sample-tags test_v401 \
   --box-labels head \
-  --care-classes eye_open_2 \
+  --class-map 0:face_frontal,1:face_side,2:face_head \
   --write-fo
 
 uv run fiftyone app launch BBM08S_head --address 0.0.0.0 --port 5151
@@ -310,12 +310,12 @@ uv run fiftyone app launch BBM08S_head --address 0.0.0.0 --port 5151
 3. **filter** 粘贴 JSON（页面不接受 Python 的 `F(...)`），回车：
 
 ```json
-{"$setIsSubset": [["eval_err", "pred_eye_open_0"], "$$this.tags"]}
+{"$setIsSubset": [["eval_err", "pred_face_frontal"], "$$this.tags"]}
 ```
 
 4. **only_matches** 保持 `True`，**trajectories** 保持 `False`，各回车一次。
 
-网格只留下同时带这两个标签的框。另外两批把 `pred_eye_open_0` 换成 `pred_eye_open_2` 或 `pred_background`。左上角视图下拉里的 **Save current filters as view** 可保存；视图栏右侧清空按钮回到完整数据集。
+网格只留下同时带这两个标签的框。其它预测类把 `pred_face_frontal` 换成对应的 `pred_<tag>`。标注异常用 `eval_bad_tag` 筛选。左上角视图下拉里的 **Save current filters as view** 可保存；视图栏右侧清空按钮回到完整数据集。
 
 ## 测试
 

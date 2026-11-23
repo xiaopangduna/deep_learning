@@ -1,24 +1,31 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""对 FiftyOne 里已有的头框打分，可选把结果写回这些真值框的 tag。
+"""对 FiftyOne 里已有的框打分，可选把结果写回这些框的 tag。
 
-``--sample-tags`` 选图。眼睛真值读框上的 ``eye_open_*``，多个时取最大编号，
-没有则视为 ``eye_open_0``。不改 ``eye_open_*`` 和 ``changed``。默认只打分；
-``--write-fo`` 才写回原框。判错写 ``eval_err`` 以及 ``pred_eye_open_<n>``
-或 ``pred_background``；判对只写预测标签，不写 ``eval_ok``。再次写入会清掉旧的
-``eval_ok``。``--care-classes`` 指定关注类时，ERR 按「是否属于 care」
-的 XOR 判定（如只关心 ``eye_open_2``）；未指定则在训练组空间一一对应。
+``--sample-tags`` 选图。``--class-map`` 给出模型输出 id 到框上的 tag，id 和 tag
+一一对应，例如 ``0:face_frontal,1:face_side,2:face_head``。值必须和框上的 tag
+完全一致。``--box-labels head`` 
+只认映射里的名字，``changed`` 和旧的评估 tag 不参与。
+
+在带这些样本 tag 的图上，``--box-labels`` 里的每个框都会看一遍。短边小于配置
+``min_side_px`` 的框跳过，不打分。正好命中一个映射 tag 的框裁图打分：判错写
+``eval_err`` 和 ``pred_<tag>``，判对只写预测标签。一个映射 tag 都没有的框也裁图
+推理，写 ``eval_bad_tag`` 和 ``pred_<tag>``，不进对错统计，预测可当预标注。命中
+多个映射 tag 时只写 ``eval_bad_tag``，不进模型。预测 id 不在映射里时，``pred_``
+后面是这个 id。
+不改真值 tag 和 ``changed``。默认只打分；``--write-fo`` 才写回原框。再次写入会清掉旧的
+``eval_ok``、``eval_err``、``eval_bad_tag`` 和 ``pred_*``。
 
 示例::
 
     export FIFTYONE_DATABASE_URI=mongodb://127.0.0.1:27017   # 可选，本机已有 mongod 时脚本会默认连上
     uv run scripts/val_classifier_with_fiftyone.py 
         --ckpt logs/.../epoch=19-val_acc=0.96.ckpt 
-        --config configs/experiments/image_classifiter_from_detect_box_head_eye_open_v100.yaml 
+        --config configs/experiments/image_classifiter_from_detect_box_head_face_mobilenet_v2_v001.yaml 
         --dataset BBM08S_head 
-        --sample-tags test_v301 
+        --sample-tags test_v401 
         --box-labels head 
-        --care-classes eye_open_2 
+        --class-map 0:face_frontal,1:face_side,2:face_head 
         --write-fo
 """
 
@@ -50,53 +57,88 @@ from lovely_deep_learning.dataset.image_classifier import (
 )
 
 ROOT = Path(__file__).resolve().parents[1]
-EYE_TAG_PREFIX = "eye_open_"
 EVAL_OK = "eval_ok"
 EVAL_ERR = "eval_err"
-PRED_TAG_PREFIX = "pred_eye_open_"
-PRED_BACKGROUND = "pred_background"
-DEFAULT_EXCLUDE_TAGS = ("dup_repeat_drop", "dup_near_drop")
+EVAL_BAD = "eval_bad_tag"
+PRED_TAG_PREFIX = "pred_"
+STATUS_PENDING = "pending"
+STATUS_OK = "ok"
+STATUS_ERR = "err"
+STATUS_BAD = "bad_tag"
+REASON_NO_GT = "no_gt_tag"
+REASON_MULTI_GT = "multi_gt_tag"
 FO_SAMPLE_BATCH = 100
 IMG_CACHE_SIZE = 16
 
 
 @dataclass
-class BoxPrediction:
-    """One GT-box classification result."""
+class ClassMap:
+    """模型输出 id 与框 tag 一一对应。"""
+
+    entries: list[tuple[int, str]]
+    name_to_id: dict[str, int]
+    id_to_names: dict[int, list[str]]
+
+    def first_name(self, model_id: int) -> str | None:
+        names = self.id_to_names.get(int(model_id))
+        if not names:
+            return None
+        return names[0]
+
+    def ids(self) -> set[int]:
+        return set(self.id_to_names)
+
+
+@dataclass
+class BoxVerdict:
+    """一个框的真值匹配结果；打分后补上预测。"""
 
     sample_id: str
     detection_id: str
-    img_path: Path
+    img_path: str
+    img_w: int
+    img_h: int
     cx: float
     cy: float
     w: float
     h: float
-    gt_original_id: int
-    gt_original_name: str
-    gt_group_id: int
-    pred_group_id: int
-    pred_group_name: str
-    pred_tag: str
-    pred_conf: float
-    is_err: bool
+    status: str
+    gt_name: str = ""
+    gt_id: int = -1
+    pred_group_id: int = -1
+    pred_group_name: str = ""
+    pred_tag: str = ""
+    pred_conf: float = float("nan")
+    bad_reason: str = ""
+    matched_names: tuple[str, ...] = ()
 
 
 @dataclass
 class EvalStats:
-    n_boxes: int = 0
+    n_scored: int = 0
     n_err: int = 0
     n_ok: int = 0
+    n_bad: int = 0
+    n_no_gt: int = 0
+    n_multi_gt: int = 0
     by_gt: dict[str, dict[str, int]] = field(default_factory=lambda: defaultdict(lambda: {"n": 0, "err": 0}))
 
-    def add(self, row: BoxPrediction) -> None:
-        self.n_boxes += 1
-        if row.is_err:
+    def add(self, row: BoxVerdict) -> None:
+        if row.status == STATUS_BAD:
+            self.n_bad += 1
+            if row.bad_reason == REASON_NO_GT:
+                self.n_no_gt += 1
+            elif row.bad_reason == REASON_MULTI_GT:
+                self.n_multi_gt += 1
+            return
+        self.n_scored += 1
+        if row.status == STATUS_ERR:
             self.n_err += 1
         else:
             self.n_ok += 1
-        bucket = self.by_gt[row.gt_original_name]
+        bucket = self.by_gt[row.gt_name]
         bucket["n"] += 1
-        if row.is_err:
+        if row.status == STATUS_ERR:
             bucket["err"] += 1
 
 
@@ -157,7 +199,15 @@ class BoxCropEvalDataset(ImageClassifierFromDetectBoxDataset):
         else:
             self._original_class_ids = []
             self._original_class_names = []
-        super()._filter_boxes()
+        # 评估子集可以缺某个训练类，不要求 class_groups 里每一组都有样本。
+        require_samples = ImageClassifierFromDetectBoxDataset.require_merged_samples
+        ImageClassifierFromDetectBoxDataset.require_merged_samples = staticmethod(
+            lambda table, groups: None
+        )
+        try:
+            super()._filter_boxes()
+        finally:
+            ImageClassifierFromDetectBoxDataset.require_merged_samples = staticmethod(require_samples)
         if self._has_label and len(self._original_class_ids) != len(self.sample_path_table):
             raise RuntimeError(
                 "原始标签与筛选后行数不一致："
@@ -181,26 +231,87 @@ def comma_names(value: str) -> list[str]:
     return names
 
 
-def comma_names_optional(value: str) -> list[str]:
-    return [part.strip() for part in value.replace("，", ",").split(",") if part.strip()]
+def parse_class_map(value: str) -> ClassMap:
+    """解析 ``0:face_frontal,1:face_side``。id 和 tag 都不能重复。"""
+    parts = [part.strip() for part in value.replace("，", ",").split(",") if part.strip()]
+    if not parts:
+        raise ValueError("--class-map 不能为空")
+    entries: list[tuple[int, str]] = []
+    name_to_id: dict[str, int] = {}
+    id_to_names: dict[int, list[str]] = defaultdict(list)
+    for part in parts:
+        id_text, sep, name = part.partition(":")
+        id_text = id_text.strip()
+        name = name.strip()
+        if not sep or not id_text or not name:
+            raise ValueError(f"--class-map 项须为 id:类名，收到 {part!r}")
+        if not id_text.isdigit():
+            raise ValueError(f"--class-map 的 id 须为非负整数，收到 {id_text!r}")
+        model_id = int(id_text)
+        if model_id in id_to_names:
+            raise ValueError(f"--class-map 的 id 重复: {model_id}")
+        if name in name_to_id:
+            raise ValueError(f"--class-map 类名重复: {name}")
+        entries.append((model_id, name))
+        name_to_id[name] = model_id
+        id_to_names[model_id].append(name)
+    return ClassMap(entries=entries, name_to_id=name_to_id, id_to_names=dict(id_to_names))
 
 
-def eye_open_code(tags: object) -> int:
-    """框上 ``eye_open_<n>`` 的最大 n。没有这种标签时返回 0。"""
-    codes: list[int] = []
-    for tag in tags or []:
-        if not isinstance(tag, str) or not tag.startswith(EYE_TAG_PREFIX):
-            continue
-        suffix = tag[len(EYE_TAG_PREFIX) :]
-        if suffix.isdigit():
-            codes.append(int(suffix))
-    if not codes:
-        return 0
-    return max(codes)
+def class_map_arg(value: str) -> ClassMap:
+    try:
+        return parse_class_map(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(str(error)) from error
 
 
-def eye_class_name(label: str, code: int) -> str:
-    return f"{label}-eye_open_{code}"
+def validate_class_map(
+    class_map: ClassMap,
+    groups: dict[int, list[int]] | None,
+    background_id: int | None,
+    box_labels: list[str],
+) -> None:
+    """映射 id 必须是模型输出的前景类，名字必须是框上的 tag，不带框标签前缀。"""
+    if background_id is not None and int(background_id) in class_map.ids():
+        raise ValueError(
+            f"--class-map 不能把 background id {int(background_id)} 当作真值类"
+        )
+    if groups is not None:
+        unknown = sorted(class_map.ids() - set(groups))
+        if unknown:
+            raise ValueError(
+                f"--class-map 的 id 不在 class_groups 里: {unknown}；"
+                f"模型输出组为 {sorted(groups)}"
+            )
+    for box_label in box_labels:
+        prefix = f"{box_label}-"
+        prefixed = [name for name in class_map.name_to_id if name.startswith(prefix)]
+        if prefixed:
+            raise ValueError(
+                f"--class-map 写框上的 tag，不要带框标签前缀 {prefix!r}: {prefixed}"
+            )
+
+
+def eval_class_groups(
+    groups: dict[int, list[int]] | None,
+    background_id: int | None,
+) -> dict[int, list[int] | str] | None:
+    """评估表的 class_id 已经是模型输出 id，分组改成恒等映射。"""
+    if not groups and background_id is None:
+        return None
+    synthetic: dict[int, list[int] | str] = {}
+    for model_id in groups or {}:
+        synthetic[int(model_id)] = [int(model_id)]
+    if background_id is not None:
+        synthetic[int(background_id)] = ImageClassifierDataset.BACKGROUND_NAME
+    return synthetic
+
+
+def matched_class_names(box_label: str, tags: object, class_map: ClassMap) -> list[str]:
+    """按映射顺序返回与框 tag 完全相同的类名。``box_label`` 不参与匹配。"""
+    del box_label
+    present = {str(tag) for tag in (tags or []) if isinstance(tag, str)}
+    return [name for name in class_map.name_to_id if name in present]
 
 
 def fo_xywh_to_yolo_cxcywh(box: list[float]) -> tuple[float, float, float, float]:
@@ -209,41 +320,39 @@ def fo_xywh_to_yolo_cxcywh(box: list[float]) -> tuple[float, float, float, float
 
 
 def is_eval_tag(tag: object) -> bool:
-    """评估写在真值框上的标签。不含 ``eye_open_*`` 和 ``changed``。"""
+    """评估写在框上的标签。真值类名和 ``changed`` 保留。"""
     if not isinstance(tag, str):
         return False
-    if tag in {EVAL_OK, EVAL_ERR, PRED_BACKGROUND}:
+    if tag in {EVAL_OK, EVAL_ERR, EVAL_BAD}:
         return True
-    if tag.startswith(PRED_TAG_PREFIX) and tag[len(PRED_TAG_PREFIX) :].isdigit():
-        return True
-    return False
+    return tag.startswith(PRED_TAG_PREFIX)
 
 
-def pred_tag_for_group(
-    pred_group_id: int,
-    groups: dict[int, list[int]] | None,
-    background_id: int | None,
-) -> str:
-    """训练组 → ``pred_background`` 或 ``pred_eye_open_<最小原始 id>``。"""
-    group_id = int(pred_group_id)
-    if background_id is not None and group_id == int(background_id):
-        return PRED_BACKGROUND
-    members = (groups or {}).get(group_id)
-    if not members:
-        raise ValueError(f"预测组 {group_id} 不在 class_groups 里")
-    return f"{PRED_TAG_PREFIX}{min(int(item) for item in members)}"
+def pred_tag_for_id(pred_id: int, class_map: ClassMap) -> str:
+    """映射内的模型 id → ``pred_<tag>``；映射外的 id → ``pred_<id>``。"""
+    group_id = int(pred_id)
+    name = class_map.first_name(group_id)
+    if name is not None:
+        return f"{PRED_TAG_PREFIX}{name}"
+    return f"{PRED_TAG_PREFIX}{group_id}"
 
 
 def strip_eval_tags(tags: object) -> list[str]:
     return [str(tag) for tag in (tags or []) if not is_eval_tag(tag)]
 
 
-def apply_eval_tags(tags: object, *, is_err: bool, pred_tag: str) -> list[str]:
-    """判错写 ``eval_err`` 和预测标签；判对只写预测标签。"""
+def apply_eval_tags(tags: object, *, status: str, pred_tag: str) -> list[str]:
+    """判错写 ``eval_err`` 和预测标签；判对只写预测标签；标注异常写 ``eval_bad_tag``，有预测时一并写上。"""
     updated = strip_eval_tags(tags)
-    if is_err:
+    if status == STATUS_BAD:
+        updated.append(EVAL_BAD)
+        if pred_tag:
+            updated.append(pred_tag)
+        return updated
+    if status == STATUS_ERR:
         updated.append(EVAL_ERR)
-    updated.append(pred_tag)
+    if pred_tag:
+        updated.append(pred_tag)
     return updated
 
 
@@ -266,91 +375,6 @@ def data_init_args(cfg: dict[str, Any]) -> dict[str, Any]:
 def parse_class_groups_from_cfg(init_args: dict[str, Any]) -> tuple[dict[int, list[int]] | None, int | None]:
     raw = init_args.get("class_groups")
     return ImageClassifierDataset.parse_class_groups(raw)
-
-
-def original_to_group_map(groups: dict[int, list[int]] | None) -> dict[int, int]:
-    if not groups:
-        return {}
-    mapping: dict[int, int] = {}
-    for group_id, members in groups.items():
-        for original_id in members:
-            mapping[int(original_id)] = int(group_id)
-    return mapping
-
-
-def resolve_care_classes(
-    care_text: str | None,
-    id_to_name: dict[int, str],
-) -> set[int] | None:
-    """Parse ``--care-classes`` into original class ids.
-
-    Accepts comma-separated original ids (``2``), full names (``head-eye_open_2``),
-    or attribute suffixes (``eye_open_2``). ``None`` / empty → exact group match mode.
-    """
-    if care_text is None:
-        return None
-    parts = [part.strip() for part in care_text.split(",") if part.strip()]
-    if not parts:
-        return None
-    name_to_ids: dict[str, list[int]] = defaultdict(list)
-    for class_id, name in id_to_name.items():
-        name_to_ids[name].append(class_id)
-        if "-" in name:
-            _, _, suffix = name.partition("-")
-            if suffix:
-                name_to_ids[suffix].append(class_id)
-    care: set[int] = set()
-    for part in parts:
-        if part.lstrip("-").isdigit():
-            care.add(int(part))
-            continue
-        matches = name_to_ids.get(part, [])
-        if not matches:
-            known = ", ".join(f"{i}:{n}" for i, n in sorted(id_to_name.items()))
-            raise ValueError(f"unknown --care-classes entry {part!r}; known: {known}")
-        care.update(matches)
-    unknown = sorted(care - set(id_to_name))
-    if unknown:
-        raise ValueError(f"--care-classes ids not in CSV vocabulary: {unknown}")
-    return care
-
-
-def pred_originals_for_group(
-    pred_group_id: int,
-    groups: dict[int, list[int]] | None,
-    background_id: int | None,
-) -> set[int]:
-    """Original class ids represented by a predicted training group id."""
-    if background_id is not None and pred_group_id == background_id:
-        return set()
-    if not groups:
-        return {int(pred_group_id)}
-    members = groups.get(int(pred_group_id))
-    if members is None:
-        return set()
-    return {int(item) for item in members}
-
-
-def is_error(
-    *,
-    gt_original_id: int,
-    pred_group_id: int,
-    care_ids: set[int] | None,
-    groups: dict[int, list[int]] | None,
-    background_id: int | None,
-    original_to_group: dict[int, int],
-) -> bool:
-    """ERR rule: care XOR membership, or exact training-group match when care is unset."""
-    if care_ids is not None:
-        gt_in_care = gt_original_id in care_ids
-        pred_in_care = bool(pred_originals_for_group(pred_group_id, groups, background_id) & care_ids)
-        return gt_in_care != pred_in_care
-    if groups is None:
-        return int(gt_original_id) != int(pred_group_id)
-    gt_group = original_to_group.get(int(gt_original_id))
-    if gt_group is None:
-        return True
-    return int(gt_group) != int(pred_group_id)
 
 
 def strip_pretrained_weight(model_cfg: dict[str, Any]) -> dict[str, Any]:
@@ -428,7 +452,11 @@ def load_module(config_path: Path, ckpt_path: Path, device: torch.device):
     return module, cfg
 
 
-def build_dataset(cfg: dict[str, Any], csv_path: Path) -> BoxCropEvalDataset:
+def build_dataset(
+    cfg: dict[str, Any],
+    csv_path: Path,
+    class_groups: dict[int, list[int] | str] | None = None,
+) -> BoxCropEvalDataset:
     init_args = data_init_args(cfg)
     transform_spec = init_args.get("transform_val")
     if transform_spec is None:
@@ -443,7 +471,7 @@ def build_dataset(cfg: dict[str, Any], csv_path: Path) -> BoxCropEvalDataset:
         norm_std=init_args.get("norm_std"),
         box_scale=float(init_args.get("box_scale", 1.2)),
         min_side_px=float(init_args.get("min_side_px", 16.0)),
-        class_groups=init_args.get("class_groups"),
+        class_groups=init_args.get("class_groups") if class_groups is None else class_groups,
         background_ratio=0.0,
         background_iou=float(init_args.get("background_iou", 0.3)),
     )
@@ -472,7 +500,6 @@ def collect_eval_view(
     dataset,
     *,
     sample_tags: list[str],
-    exclude_tags: list[str],
     label_field: str,
 ):
     """带 tag 过滤和字段裁剪的评估视图；缺 metadata 时补一次。"""
@@ -484,8 +511,6 @@ def collect_eval_view(
     if not issubclass(field.document_type, fo.Detections):
         raise ValueError(f"字段 {label_field} 不是 Detections")
     view = dataset.match_tags(sample_tags, bool=True, all=True)
-    if exclude_tags:
-        view = view.match(~fo.ViewField("tags").contains(list(exclude_tags), all=False))
     schema = dataset.get_field_schema()
     keep = [name for name in ("filepath", "tags", "metadata", label_field) if name in schema]
     if keep:
@@ -499,19 +524,19 @@ def collect_labeled_boxes(
     dataset,
     *,
     sample_tags: list[str],
-    exclude_tags: list[str],
     label_field: str,
     box_labels: set[str],
+    class_map: ClassMap,
+    min_side_px: float,
     problems: list[dict],
-) -> tuple[list[dict[str, object]], list[str]]:
-    """从 FiftyOne 框收集分类 CSV 行，并返回有待评估框的样本 id。"""
+) -> tuple[list[BoxVerdict], list[str]]:
+    """收集框判决。正好一个类名的框待打分；没有类名的框也待推理；多个类名标为标注异常。"""
     view = collect_eval_view(
         dataset,
         sample_tags=sample_tags,
-        exclude_tags=exclude_tags,
         label_field=label_field,
     )
-    rows: list[dict[str, object]] = []
+    verdicts: list[BoxVerdict] = []
     sample_ids: list[str] = []
     for sample in view.iter_samples(progress=True, autosave=False, batch_size=FO_SAMPLE_BATCH):
         size = image_size(sample)
@@ -525,18 +550,21 @@ def collect_labeled_boxes(
             continue
         img_w, img_h = size
         label = sample[label_field]
-        n_before = len(rows)
         sample_id = str(sample.id)
         filepath = str(sample.filepath)
+        saw_box = False
         for detection in list(getattr(label, "detections", None) or []):
-            if str(detection.label) not in box_labels:
+            det_label = str(detection.label)
+            if det_label not in box_labels:
                 continue
+            saw_box = True
             box = list(getattr(detection, "bounding_box", None) or [])
+            detection_id = str(getattr(detection, "id", ""))
             if len(box) != 4:
                 append_problem(
                     problems,
                     sample_id=sample_id,
-                    detection_id=str(getattr(detection, "id", "")),
+                    detection_id=detection_id,
                     reason="bad_box",
                 )
                 continue
@@ -545,30 +573,91 @@ def collect_labeled_boxes(
                 append_problem(
                     problems,
                     sample_id=sample_id,
-                    detection_id=str(detection.id),
+                    detection_id=detection_id,
                     reason="invalid_box",
                 )
                 continue
-            code = eye_open_code(detection.tags)
-            det_label = str(detection.label)
-            rows.append(
-                {
-                    "path_img": filepath,
-                    "class_name": eye_class_name(det_label, code),
-                    "class_id": code,
-                    "cx": cx,
-                    "cy": cy,
-                    "w": width,
-                    "h": height,
-                    "img_w": img_w,
-                    "img_h": img_h,
-                    "sample_id": sample_id,
-                    "detection_id": str(detection.id),
-                }
+            short_side = min(width * img_w, height * img_h)
+            if min_side_px > 0 and short_side < min_side_px:
+                append_problem(
+                    problems,
+                    sample_id=sample_id,
+                    detection_id=detection_id,
+                    reason="short_side",
+                )
+                continue
+            names = matched_class_names(det_label, detection.tags, class_map)
+            if len(names) == 1:
+                gt_name = names[0]
+                verdicts.append(
+                    BoxVerdict(
+                        sample_id=sample_id,
+                        detection_id=detection_id,
+                        img_path=filepath,
+                        img_w=img_w,
+                        img_h=img_h,
+                        cx=cx,
+                        cy=cy,
+                        w=width,
+                        h=height,
+                        status=STATUS_PENDING,
+                        gt_name=gt_name,
+                        gt_id=class_map.name_to_id[gt_name],
+                        matched_names=(gt_name,),
+                    )
+                )
+                continue
+            if not names:
+                verdicts.append(
+                    BoxVerdict(
+                        sample_id=sample_id,
+                        detection_id=detection_id,
+                        img_path=filepath,
+                        img_w=img_w,
+                        img_h=img_h,
+                        cx=cx,
+                        cy=cy,
+                        w=width,
+                        h=height,
+                        status=STATUS_PENDING,
+                        gt_id=-1,
+                        bad_reason=REASON_NO_GT,
+                    )
+                )
+                append_problem(
+                    problems,
+                    sample_id=sample_id,
+                    detection_id=detection_id,
+                    reason=REASON_NO_GT,
+                    matched=[],
+                )
+                continue
+            verdicts.append(
+                BoxVerdict(
+                    sample_id=sample_id,
+                    detection_id=detection_id,
+                    img_path=filepath,
+                    img_w=img_w,
+                    img_h=img_h,
+                    cx=cx,
+                    cy=cy,
+                    w=width,
+                    h=height,
+                    status=STATUS_BAD,
+                    bad_reason=REASON_MULTI_GT,
+                    matched_names=tuple(names),
+                )
             )
-        if len(rows) > n_before:
+            append_problem(
+                problems,
+                sample_id=sample_id,
+                detection_id=detection_id,
+                reason=REASON_MULTI_GT,
+                matched=list(names),
+            )
+        if saw_box:
             sample_ids.append(sample_id)
-    return rows, sample_ids
+    return verdicts, sample_ids
 
 
 def write_json(path: Path, payload: dict) -> None:
@@ -578,15 +667,14 @@ def write_json(path: Path, payload: dict) -> None:
 def run_inference(
     module,
     dataset: BoxCropEvalDataset,
+    verdicts: dict[str, BoxVerdict],
     *,
+    class_map: ClassMap,
     device: torch.device,
     batch_size: int,
     num_workers: int,
-    care_ids: set[int] | None,
-) -> list[BoxPrediction]:
-    groups = dataset.class_groups
-    background_id = dataset.background_id
-    original_to_group = original_to_group_map(groups)
+) -> set[str]:
+    """给待打分框写入预测，并返回实际打到的 detection id。"""
     collate = ImageClassifierDataset.get_collate_fn_for_dataloader()
     loader_kwargs: dict[str, Any] = {
         "dataset": dataset,
@@ -601,20 +689,13 @@ def run_inference(
         loader_kwargs["prefetch_factor"] = 4
     loader = DataLoader(**loader_kwargs)
     table = dataset.sample_path_table
-    sample_ids = table["sample_id"].astype(str).to_numpy()
     detection_ids = table["detection_id"].astype(str).to_numpy()
-    img_paths = table["img_path"].astype(str).to_numpy()
-    cxs = table["cx"].to_numpy(dtype=float, copy=False)
-    cys = table["cy"].to_numpy(dtype=float, copy=False)
-    ws = table["w"].to_numpy(dtype=float, copy=False)
-    hs = table["h"].to_numpy(dtype=float, copy=False)
-    original_ids = dataset._original_class_ids
-    original_names = dataset._original_class_names
-    group_names = dict(dataset.map_class_id_to_class_name)
-    rows: list[BoxPrediction] = []
+    model_ids = [int(str(value).strip()) for value in table["model_id"].tolist()]
+    gt_names = table["gt_name"].fillna("").astype(str).tolist()
+    seen: set[str] = set()
     offset = 0
     with torch.inference_mode():
-        for net_in, net_out in tqdm(loader, desc="infer", unit="batch"):
+        for net_in, _net_out in tqdm(loader, desc="infer", unit="batch"):
             imgs = BaseDataset.stack_batch_images(net_in)
             imgs = imgs.to(device, non_blocking=True)
             preds = module(imgs)
@@ -622,52 +703,32 @@ def run_inference(
             pred_ids = metric_preds["pred_ids"].detach().cpu()
             pred_conf = metric_preds["pred_conf"].detach().cpu()
             batch_n = len(net_in)
-            batch_gt_groups = (
-                net_out["class_id"].tolist() if net_out else [None] * batch_n
-            )
             for i in range(batch_n):
                 index = offset + i
-                gt_original_id = int(original_ids[index])
-                gt_original_name = str(original_names[index])
-                if batch_gt_groups[i] is None:
-                    gt_group_id = int(original_to_group.get(gt_original_id, -1))
-                else:
-                    gt_group_id = int(batch_gt_groups[i])
+                detection_id = str(detection_ids[index])
+                verdict = verdicts.get(detection_id)
+                if verdict is None:
+                    continue
+                gt_id = int(model_ids[index])
                 pred_group_id = int(pred_ids[i].item())
-                pred_group_name = group_names.get(
-                    pred_group_id, dataset.class_name_for_id(pred_group_id)
-                )
-                pred_tag = pred_tag_for_group(pred_group_id, groups, background_id)
-                conf = float(pred_conf[i].item())
-                err = is_error(
-                    gt_original_id=gt_original_id,
-                    pred_group_id=pred_group_id,
-                    care_ids=care_ids,
-                    groups=groups,
-                    background_id=background_id,
-                    original_to_group=original_to_group,
-                )
-                rows.append(
-                    BoxPrediction(
-                        sample_id=str(sample_ids[index]),
-                        detection_id=str(detection_ids[index]),
-                        img_path=Path(str(img_paths[index])),
-                        cx=float(cxs[index]),
-                        cy=float(cys[index]),
-                        w=float(ws[index]),
-                        h=float(hs[index]),
-                        gt_original_id=gt_original_id,
-                        gt_original_name=gt_original_name,
-                        gt_group_id=gt_group_id,
-                        pred_group_id=pred_group_id,
-                        pred_group_name=str(pred_group_name),
-                        pred_tag=pred_tag,
-                        pred_conf=conf,
-                        is_err=err,
-                    )
-                )
+                mapped_name = class_map.first_name(pred_group_id)
+                pred_group_name = mapped_name if mapped_name is not None else str(pred_group_id)
+                verdict.gt_id = gt_id
+                verdict.gt_name = str(gt_names[index])
+                verdict.pred_group_id = pred_group_id
+                verdict.pred_group_name = pred_group_name
+                verdict.pred_tag = pred_tag_for_id(pred_group_id, class_map)
+                verdict.pred_conf = float(pred_conf[i].item())
+                if gt_id < 0:
+                    verdict.status = STATUS_BAD
+                    if not verdict.bad_reason:
+                        verdict.bad_reason = REASON_NO_GT
+                else:
+                    verdict.status = STATUS_ERR if pred_group_id != gt_id else STATUS_OK
+                    verdict.bad_reason = ""
+                seen.add(detection_id)
             offset += batch_n
-    return rows
+    return seen
 
 
 def ensure_fiftyone_database_uri() -> None:
@@ -678,7 +739,7 @@ def ensure_fiftyone_database_uri() -> None:
 def write_fiftyone(
     *,
     dataset,
-    rows: list[BoxPrediction],
+    verdicts: list[BoxVerdict],
     sample_ids: list[str],
     label_field: str,
     box_labels: set[str],
@@ -688,9 +749,11 @@ def write_fiftyone(
     ids = list(dict.fromkeys(sample_ids))
     if not ids:
         return 0
-    by_detection = {row.detection_id: row for row in rows}
-    by_sample: dict[str, list[BoxPrediction]] = defaultdict(list)
-    for row in rows:
+    by_detection = {
+        row.detection_id: row for row in verdicts if row.status in {STATUS_OK, STATUS_ERR, STATUS_BAD}
+    }
+    by_sample: dict[str, list[BoxVerdict]] = defaultdict(list)
+    for row in by_detection.values():
         by_sample[row.sample_id].append(row)
     tagged = 0
     # 不要 select_fields：从裁剪视图 save 可能清掉未选字段。
@@ -711,7 +774,7 @@ def write_fiftyone(
             if result is None:
                 new_tags = strip_eval_tags(detection.tags)
             else:
-                new_tags = apply_eval_tags(detection.tags, is_err=result.is_err, pred_tag=result.pred_tag)
+                new_tags = apply_eval_tags(detection.tags, status=result.status, pred_tag=result.pred_tag)
                 tagged += 1
             if [str(tag) for tag in (detection.tags or [])] != new_tags:
                 detection.tags = new_tags
@@ -738,20 +801,19 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--box-labels", required=True, type=comma_names, help="要评估的 detection.label，例如 head")
     parser.add_argument("--label-field", default="ground_truth", help="检测框字段，默认 ground_truth")
     parser.add_argument(
-        "--exclude-tags",
-        type=comma_names_optional,
-        default=list(DEFAULT_EXCLUDE_TAGS),
-        help="带其中任一 tag 的样本跳过。默认 dup_repeat_drop,dup_near_drop",
+        "--class-map",
+        required=True,
+        type=class_map_arg,
+        help="模型输出 id 到框 tag，一一对应。例如 0:face_frontal,1:face_side,2:face_head",
     )
     parser.add_argument(
-        "--care-classes",
-        default=None,
-        help="Comma-separated focus classes (id / name / eye_open_2). Omit for exact group match.",
+        "--write-fo",
+        action="store_true",
+        help="判错写 eval_err 和预测标签；判对只写预测标签；无真值写 eval_bad_tag 和预测标签；多个真值只写 eval_bad_tag",
     )
-    parser.add_argument("--write-fo", action="store_true", help="判错写 eval_err 和预测标签；判对只写预测标签")
     parser.add_argument("--device", default=None, help="cuda / cpu / cuda:0 (default: auto)")
     parser.add_argument("--batch-size", type=int, default=None, help="Override data.batch_size")
-    parser.add_argument("--num-workers", type=int, default=None, help="Override data.num_workers")
+    parser.add_argument("--num-workers", type=int, default=4, help="Override data.num_workers")
     parser.add_argument(
         "--out-dir",
         type=Path,
@@ -780,6 +842,12 @@ def main(argv: list[str] | None = None) -> int:
     module, cfg = load_module(config_path, ckpt_path, device)
     init_args = data_init_args(cfg)
     groups, background_id = parse_class_groups_from_cfg(init_args)
+    class_map: ClassMap = args.class_map
+    try:
+        validate_class_map(class_map, groups, background_id, args.box_labels)
+    except ValueError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
 
     ensure_fiftyone_database_uri()
     try:
@@ -796,64 +864,120 @@ def main(argv: list[str] | None = None) -> int:
     out_dir = (args.out_dir or (ROOT / "logs" / "val_classifier_fo" / stamp)).expanduser().resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
     problems: list[dict] = []
+    min_side_px = float(init_args.get("min_side_px", 16.0))
     try:
-        labeled_rows, sample_ids = collect_labeled_boxes(
+        verdicts, sample_ids = collect_labeled_boxes(
             fo_dataset,
             sample_tags=args.sample_tags,
-            exclude_tags=args.exclude_tags,
             label_field=args.label_field,
             box_labels=set(args.box_labels),
+            class_map=class_map,
+            min_side_px=min_side_px,
             problems=problems,
         )
     except ValueError as error:
         print(f"error: {error}", file=sys.stderr)
         return 2
-    if not labeled_rows:
+    pending = [row for row in verdicts if row.status == STATUS_PENDING]
+    if not verdicts:
+        problems_path = out_dir / "problems.jsonl"
+        with problems_path.open("w", encoding="utf-8") as handle:
+            for item in problems:
+                handle.write(json.dumps(item, ensure_ascii=False) + "\n")
         print("error: 没有样本同时带有 --sample-tags，或这些样本没有可评估的框", file=sys.stderr)
-        return 2
-    csv_path = out_dir / "boxes.csv"
-    pd.DataFrame(labeled_rows).to_csv(csv_path, index=False)
-    try:
-        dataset = build_dataset(cfg, csv_path)
-    except ValueError as error:
-        print(f"error: {error}", file=sys.stderr)
-        return 2
-    id_to_name = ImageClassifierDataset.names_by_original_id(
-        pd.DataFrame(
-            {
-                "class_id": dataset._original_class_ids,
-                "class_name": dataset._original_class_names,
-            }
-        )
-    )
-    try:
-        care_ids = resolve_care_classes(args.care_classes, id_to_name)
-    except ValueError as error:
-        print(f"error: {error}", file=sys.stderr)
+        print(f"problems_path={problems_path}", file=sys.stderr)
         return 2
 
     batch_size = int(args.batch_size or init_args.get("batch_size") or 32)
     num_workers = int(args.num_workers if args.num_workers is not None else init_args.get("num_workers") or 0)
-
+    csv_path = out_dir / "boxes.csv"
     print(f"device={device}")
     print(f"ckpt={ckpt_path}")
     print(f"config={config_path}")
-    print(f"dataset={args.dataset} label_field={args.label_field} boxes={len(dataset)}")
-    print(f"sample_tags={args.sample_tags} exclude_tags={args.exclude_tags} box_labels={args.box_labels}")
+    print(f"dataset={args.dataset} label_field={args.label_field} pending={len(pending)} bad={len(verdicts) - len(pending)}")
+    print(f"sample_tags={args.sample_tags} box_labels={args.box_labels}")
     print(f"class_groups={groups} background_id={background_id}")
-    print(f"care_classes={sorted(care_ids) if care_ids is not None else None}")
+    print(f"class_map={class_map.entries}")
     print(f"write_fo={args.write_fo}")
 
-    rows = run_inference(
-        module,
-        dataset,
-        device=device,
-        batch_size=batch_size,
-        num_workers=num_workers,
-        care_ids=care_ids,
-    )
+    if pending:
+        # 无真值的框没有 class_id。CSV 里借用一个映射内 id 通过类别筛选，model_id 仍为 -1。
+        placeholder_id = class_map.entries[0][0]
+        pd.DataFrame(
+            [
+                {
+                    "path_img": row.img_path,
+                    "class_name": class_map.first_name(
+                        row.gt_id if row.gt_id >= 0 else placeholder_id
+                    ),
+                    "class_id": row.gt_id if row.gt_id >= 0 else placeholder_id,
+                    "cx": row.cx,
+                    "cy": row.cy,
+                    "w": row.w,
+                    "h": row.h,
+                    "img_w": row.img_w,
+                    "img_h": row.img_h,
+                    "sample_id": row.sample_id,
+                    "detection_id": row.detection_id,
+                    "model_id": row.gt_id,
+                    "gt_name": row.gt_name,
+                }
+                for row in pending
+            ]
+        ).to_csv(csv_path, index=False)
+        try:
+            dataset = build_dataset(
+                cfg,
+                csv_path,
+                class_groups=eval_class_groups(groups, background_id),
+            )
+        except ValueError as error:
+            print(f"error: {error}", file=sys.stderr)
+            return 2
+        by_detection = {row.detection_id: row for row in pending}
+        seen = run_inference(
+            module,
+            dataset,
+            by_detection,
+            class_map=class_map,
+            device=device,
+            batch_size=batch_size,
+            num_workers=num_workers,
+        )
+        for row in pending:
+            if row.detection_id in seen:
+                continue
+            row.status = STATUS_BAD
+            row.bad_reason = "filtered_out"
+            append_problem(
+                problems,
+                sample_id=row.sample_id,
+                detection_id=row.detection_id,
+                reason="filtered_out",
+            )
+    else:
+        pd.DataFrame(
+            columns=[
+                "path_img",
+                "class_name",
+                "class_id",
+                "cx",
+                "cy",
+                "w",
+                "h",
+                "img_w",
+                "img_h",
+                "sample_id",
+                "detection_id",
+                "model_id",
+                "gt_name",
+            ]
+        ).to_csv(csv_path, index=False)
+
     stats = EvalStats()
-    for row in rows:
+    for row in verdicts:
+        if row.status == STATUS_PENDING:
+            continue
         stats.add(row)
 
     results_csv = out_dir / "box_results.csv"
@@ -862,21 +986,23 @@ def main(argv: list[str] | None = None) -> int:
             {
                 "sample_id": row.sample_id,
                 "detection_id": row.detection_id,
-                "img_path": str(row.img_path),
+                "img_path": row.img_path,
                 "cx": row.cx,
                 "cy": row.cy,
                 "w": row.w,
                 "h": row.h,
-                "gt_original_id": row.gt_original_id,
-                "gt_original_name": row.gt_original_name,
-                "gt_group_id": row.gt_group_id,
+                "status": row.status,
+                "gt_name": row.gt_name,
+                "gt_id": row.gt_id,
+                "matched_names": ",".join(row.matched_names),
                 "pred_group_id": row.pred_group_id,
                 "pred_group_name": row.pred_group_name,
                 "pred_tag": row.pred_tag,
                 "pred_conf": row.pred_conf,
-                "is_err": row.is_err,
+                "bad_reason": row.bad_reason,
             }
-            for row in rows
+            for row in verdicts
+            if row.status != STATUS_PENDING
         ]
     ).to_csv(results_csv, index=False)
 
@@ -884,7 +1010,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.write_fo:
         n_tagged = write_fiftyone(
             dataset=fo_dataset,
-            rows=rows,
+            verdicts=verdicts,
             sample_ids=sample_ids,
             label_field=args.label_field,
             box_labels=set(args.box_labels),
@@ -901,23 +1027,22 @@ def main(argv: list[str] | None = None) -> int:
         "config": str(config_path),
         "dataset": args.dataset,
         "sample_tags": args.sample_tags,
-        "exclude_tags": args.exclude_tags,
         "box_labels": args.box_labels,
         "label_field": args.label_field,
         "boxes_csv": str(csv_path),
         "write_fo": args.write_fo,
-        "eval_tags": [EVAL_ERR],
-        "care_classes": sorted(care_ids) if care_ids is not None else None,
-        "care_class_names": (
-            [id_to_name[i] for i in sorted(care_ids) if i in id_to_name] if care_ids is not None else None
-        ),
+        "eval_tags": [EVAL_ERR, EVAL_BAD],
+        "class_map": [{"id": model_id, "name": name} for model_id, name in class_map.entries],
         "class_groups": {str(k): v for k, v in (groups or {}).items()},
         "background_id": background_id,
         "device": str(device),
-        "n_boxes": stats.n_boxes,
+        "n_scored": stats.n_scored,
         "n_ok": stats.n_ok,
         "n_err": stats.n_err,
-        "err_rate": (stats.n_err / stats.n_boxes) if stats.n_boxes else 0.0,
+        "n_bad_tag": stats.n_bad,
+        "n_no_gt_tag": stats.n_no_gt,
+        "n_multi_gt_tag": stats.n_multi_gt,
+        "err_rate": (stats.n_err / stats.n_scored) if stats.n_scored else 0.0,
         "by_gt": dict(stats.by_gt),
         "n_tagged": n_tagged,
         "n_problems": len(problems),
@@ -928,7 +1053,8 @@ def main(argv: list[str] | None = None) -> int:
     write_json(out_dir / "summary.json", summary)
 
     print(
-        f"boxes={stats.n_boxes} ok={stats.n_ok} err={stats.n_err} "
+        f"scored={stats.n_scored} ok={stats.n_ok} err={stats.n_err} "
+        f"bad_tag={stats.n_bad} no_gt={stats.n_no_gt} multi_gt={stats.n_multi_gt} "
         f"err_rate={summary['err_rate']:.4f}"
     )
     for name, bucket in sorted(stats.by_gt.items()):
@@ -936,7 +1062,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  gt={name} n={bucket['n']} err={bucket['err']} err_rate={rate:.4f}")
     if args.write_fo:
         print(f"tagged={n_tagged}")
-        print(f"app filter: detection tag `{EVAL_ERR}`")
+        print(f"app filter: detection tag `{EVAL_ERR}` or `{EVAL_BAD}`")
     print(f"results_csv={results_csv}")
     print(f"summary={out_dir / 'summary.json'}")
     print(f"problems_path={problems_path}")
