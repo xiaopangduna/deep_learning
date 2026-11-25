@@ -71,9 +71,12 @@ datasets/LFWA/
     ├── lfw_att_40.mat
     ├── lfw_att_73.mat
     ├── indices_train_test.mat
-    ├── list_attr_lfwa.txt
-    ├── train.csv
-    ├── test.csv
+    ├── train_40.csv
+    ├── val_40.csv
+    ├── test_40.csv
+    ├── train_73.csv
+    ├── val_73.csv
+    ├── test_73.csv
     └── lfw/
         └── George_HW_Bush/George_HW_Bush_0001.jpg
 ```
@@ -90,7 +93,7 @@ ln -s /data/lfw/lfw datasets/LFWA/lfw/lfw
 
 ## 标签
 
-训练用 `lfw_att_40.mat` 的 40 个属性。取值已经是 `0` / `1`，列顺序就是下表顺序，名字与 CelebA 的 40 个属性相同。`lfw_att_73.mat` 是另一套 73 个属性，名字带空格，取值也是 `0` / `1`，单独成表，不和这 40 列写进同一个 CSV。`indices_train_test.mat` 是训练/测试划分。CSV 列名用英文原名，中文只供对照。
+训练用 `lfw_att_40.mat` 的 40 个属性。取值已经是 `0` / `1`，列顺序就是下表顺序，名字与 CelebA 的 40 个属性相同。`lfw_att_73.mat` 是另一套 73 个属性，名字带空格，取值也是 `0` / `1`，单独成表，不和这 40 列写进同一个 CSV。`indices_train_test.mat` 是训练/测试划分。CSV 列名是 `attr_` 加英文原名，名字里的空白换成下划线。下表的中文只供对照。
 
 ### `lfw_att_40.mat` 的 40 个属性
 
@@ -215,29 +218,20 @@ ln -s /data/lfw/lfw datasets/LFWA/lfw/lfw
 | 72 | `Wearing Necktie` | 戴领带 |
 | 73 | `Wearing Necklace` | 戴项链 |
 
-`lfwa_attr_to_csv.py` 还不读 `.mat`。它只认文本表 `list_attr_lfwa.txt`。若手头已经有这份文本表，放到数据目录后转 CSV：
+40 个属性和 73 个属性各写一套 CSV。两套表里有 38 个名字加上 `attr_` 前缀后会变成同一列名，例如 `attr_Male`。放进同一个文件就分不清这列来自哪一套标签。图像、框和训练/验证/测试划分是同一套，实验要换标签时改 YAML 指向的文件名。
 
 ```bash
-mv ~/Downloads/list_attr_lfwa.txt datasets/LFWA/lfw/list_attr_lfwa.txt
-python datasets/LFWA/lfwa_attr_to_csv.py
-python datasets/LFWA/lfwa_attr_to_csv.py --overwrite
+uv run --with h5py python datasets/LFWA/lfwa_attr_to_csv.py
+uv run --with h5py python datasets/LFWA/lfwa_attr_to_csv.py --overwrite
 ```
 
-原始表是空格分隔的纯文本：
+脚本读 `datasets/LFWA/lfw/` 里的三个 `.mat`，再读每张 JPEG 的宽高。六个 CSV 都已存在时跳过写入，但仍检查 `.mat`。`--overwrite` 在 `.mat` 换过之后重写。
+
+划分用 `indices_train_test.mat` 的图像下标，下标从 1 开始。测试集 6880 张、2989 人，原样写入 `test_40.csv` 和 `test_73.csv`。训练下标里的身份按名字排序，用 `RandomState(0)` 打乱，按这个顺序往验证集加人，加到图像数达到 626 为止。最后加入的那个人会把张数推过 626。这次的结果是训练 5618 张、2457 人，验证 645 张、275 人。同一个人只出现在一个文件里。`.mat` 里没有图的身份编号不写进行。没有属性的 90 张图也不写进行。
 
 ```text
-13233
-5_o_Clock_Shadow Arched_Eyebrows ... Young
-George_HW_Bush_0001.jpg -1 1 ... 1
+path_img,cx,cy,w,h,img_w,img_h,attr_5_o_Clock_Shadow,...,attr_Young
+lfw/Aaron_Eckhart/Aaron_Eckhart_0001.jpg,0.5,0.5,1,1,250,250,0,...,1
 ```
 
-第一行是图像数，第二行是 40 个属性名，之后每行一个扁平文件名和 40 个 `1` 或 `-1`。图实际在 `lfw/George_HW_Bush/George_HW_Bush_0001.jpg`。公开协议按文件里的顺序切：前 6263 行训练，其余 6970 行测试。没有官方验证集。
-
-脚本做这三步：`-1` 改成 `0`、`1` 保持 `1`；文件名补上身份目录；按 6263 / 6970 写成两个 CSV。不打开 JPEG，图像可以还在压缩包里。`train.csv` 和 `test.csv` 都已存在时跳过写入，但仍检查属性文件。`--overwrite` 用于属性文件换了之后重写。
-
-```text
-path_img,5_o_Clock_Shadow,Arched_Eyebrows,...,Young
-lfw/George_HW_Bush/George_HW_Bush_0001.jpg,0,1,...,1
-```
-
-`path_img` 相对 `datasets/LFWA/lfw/`。40 列的顺序与属性文件第二行一致。
+`path_img` 相对 `datasets/LFWA/lfw/`。这些图已经是脸，框是整张图。`img_w`、`img_h` 来自 JPEG。属性列是 `attr_` 加属性名，名字里的空白换成下划线，顺序与 `.mat` 的 `AttrName` 一致。73 属性的表用同一套框和路径，列名是 `attr_Male`、`attr_Eyes_Open` 这一类。要少训几个属性，在实验 YAML 的 `attribute_columns` 里点名，不用改 CSV。
