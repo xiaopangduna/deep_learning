@@ -7,3 +7,9 @@
 !.gitignore
 !*/
 */*/
+
+# LFWA 的三个属性表进仓库。同目录里的图像和压缩包仍忽略。
+!LFWA/lfw/
+!LFWA/lfw/lfw_att_40.mat
+!LFWA/lfw/lfw_att_73.mat
+!LFWA/lfw/indices_train_test.mat

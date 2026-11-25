@@ -1,13 +1,14 @@
-"""原始 LFW 图像包的下载与解压，以及 LFWA 属性表转 CSV。
+"""LFWA 图像包下载、整包解压，以及属性表转 CSV。
 
-图像包只有 ``lfw/<身份>/<身份>_xxxx.jpg``。40 个属性在单独的
-``list_attr_lfwa.txt``，不随图像包下载。DataModule 以后再接。
+图像只走一条 ``lfw.tgz`` 直链。三个属性 ``.mat`` 在仓库的
+``datasets/LFWA/lfw/``。DataModule 以后再接。
 """
 
 from __future__ import annotations
 
 import tarfile
 import urllib.request
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -26,9 +27,19 @@ LFW_IMAGE_COUNT = 13_233
 LFW_IDENTITY_COUNT = 5_749
 LFW_IMAGE_ROOT = "lfw"
 LFW_ATTR_NAME = "list_attr_lfwa.txt"
-LFW_ATTR_FOLDER = "https://drive.google.com/drive/folders/0B7EVK8r0v71pQ3NzdzRhVUhSams"
+LFW_ATTR_FOLDER = (
+    "https://drive.google.com/drive/folders/0B7EVK8r0v71pQ3NzdzRhVUhSams"
+    "?resourcekey=0-Kpdd6Vctf-AdJYfS55VULA"
+)
 LFW_ATTR_COUNT = 40
 LFW_TRAIN_COUNT = 6_263
+LFWA_PLUS_ZIP_GLOB = "LFWA+-*.zip"
+LFWA_PLUS_MEMBER_BYTES = {
+    "lfw.zip": 191_778_528,
+    "lfw_att_40.mat": 6_171_224,
+    "lfw_att_73.mat": 6_310_861,
+    "indices_train_test.mat": 65_227,
+}
 
 _LABEL_SUFFIXES = {".txt", ".csv", ".tsv", ".json", ".xml"}
 _CHUNK = 1024 * 1024
@@ -171,6 +182,111 @@ def prepare_lfw_images(dataset_dir, *, url: str = LFW_TGZ_URL) -> LfwArchiveInfo
     return info
 
 
+def unpack_lfwa_plus(dataset_dir, archive: Path | None = None) -> Path:
+    """解开已经放好的 LFWA+ 整包。不下载。
+
+    整包是网盘目录一次下载得到的 ``LFWA+-*.zip``。成员在 ``LFWA+/`` 下，
+    四个文件的字节数必须和官方目录一致。三个 ``.mat`` 解到 ``dataset_dir``。
+    图像已经是 13233 张时不再解开里面的 ``lfw.zip``。
+    """
+    root = _dataset_root(dataset_dir)
+    package = _lfwa_plus_zip(root, archive)
+    with zipfile.ZipFile(package) as outer:
+        members = _lfwa_plus_members(outer)
+        for name, size in LFWA_PLUS_MEMBER_BYTES.items():
+            if name == "lfw.zip":
+                continue
+            dest = root / name
+            if dest.is_file() and dest.stat().st_size == size:
+                print(f"已在，跳过: {dest}")
+                continue
+            print(f"解出 {name}")
+            _extract_zip_member(outer, members[name], dest)
+            if dest.stat().st_size != size:
+                raise RuntimeError(f"{name} 解出后大小不符: {dest.stat().st_size} 字节，期望 {size}")
+        if _images_ready(root):
+            print(f"LFW 图像已解压，跳过里面的 lfw.zip: {root / LFW_IMAGE_ROOT}")
+        else:
+            print(f"从 {package.name} 解开 lfw.zip")
+            _extract_nested_lfw_zip(outer, members["lfw.zip"], root)
+            if not _images_ready(root):
+                raise RuntimeError(f"解开 lfw.zip 后不足 {LFW_IMAGE_COUNT} 张 JPEG: {root / LFW_IMAGE_ROOT}")
+    return package
+
+
+def _lfwa_plus_zip(root: Path, archive: Path | None) -> Path:
+    if archive is not None:
+        path = Path(archive).expanduser()
+        if not path.is_file():
+            raise FileNotFoundError(f"找不到 LFWA+ 整包: {path}")
+        return path.resolve()
+    matches = sorted(path for path in root.glob(LFWA_PLUS_ZIP_GLOB) if path.is_file())
+    if not matches:
+        raise FileNotFoundError(
+            f"{root} 里没有 {LFWA_PLUS_ZIP_GLOB}。"
+            "在 LFWA+ 网盘目录里一次下载整个文件夹，把得到的 zip 放到这里。"
+        )
+    if len(matches) > 1:
+        listed = ", ".join(path.name for path in matches)
+        raise RuntimeError(f"{root} 里有多份 LFWA+ 整包，请用 --archive 指定其一: {listed}")
+    return matches[0].resolve()
+
+
+def _lfwa_plus_members(outer: zipfile.ZipFile) -> dict[str, zipfile.ZipInfo]:
+    found: dict[str, zipfile.ZipInfo] = {}
+    for info in outer.infolist():
+        if info.is_dir():
+            continue
+        relative = info.filename.rstrip("/")
+        name = Path(relative).name
+        if name not in LFWA_PLUS_MEMBER_BYTES:
+            raise RuntimeError(f"LFWA+ 整包里有预料外的文件: {info.filename}")
+        prefix = str(Path(relative).parent).replace("\\", "/")
+        if prefix != "LFWA+":
+            raise RuntimeError(f"LFWA+ 整包路径应为 LFWA+/{name}: {info.filename}")
+        if info.file_size != LFWA_PLUS_MEMBER_BYTES[name]:
+            raise RuntimeError(
+                f"{info.filename} 大小不符: {info.file_size} 字节，"
+                f"期望 {LFWA_PLUS_MEMBER_BYTES[name]}"
+            )
+        if name in found:
+            raise RuntimeError(f"LFWA+ 整包里 {name} 重复")
+        found[name] = info
+    missing = [name for name in LFWA_PLUS_MEMBER_BYTES if name not in found]
+    if missing:
+        raise RuntimeError("LFWA+ 整包缺少: " + ", ".join(missing))
+    return found
+
+
+def _extract_zip_member(outer: zipfile.ZipFile, info: zipfile.ZipInfo, dest: Path) -> None:
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    with outer.open(info) as source, dest.open("wb") as handle:
+        while True:
+            chunk = source.read(_CHUNK)
+            if not chunk:
+                break
+            handle.write(chunk)
+
+
+def _extract_nested_lfw_zip(outer: zipfile.ZipFile, info: zipfile.ZipInfo, root: Path) -> None:
+    with outer.open(info) as source, zipfile.ZipFile(source) as inner:
+        for member in inner.infolist():
+            relative = member.filename.rstrip("/")
+            if relative in ("", "."):
+                continue
+            dest = _safe_dest(root, relative)
+            if member.is_dir():
+                dest.mkdir(parents=True, exist_ok=True)
+                continue
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            with inner.open(member) as raw, dest.open("wb") as handle:
+                while True:
+                    chunk = raw.read(_CHUNK)
+                    if not chunk:
+                        break
+                    handle.write(chunk)
+
+
 def generate_lfwa_csvs(
     dataset_dir,
     *,
@@ -220,8 +336,9 @@ def parse_list_attr_lfwa(
     """读取 LFWA 属性表。返回属性名，以及 ``(文件名, 0/1 列表)``。"""
     if not path.is_file():
         raise FileNotFoundError(
-            f"找不到 {path}。{LFW_ATTR_NAME} 不在 lfw.tgz 里。"
-            f"登录 Google 后从 {LFW_ATTR_FOLDER} 下载，再放到这个路径。"
+            f"找不到 {path}。{LFW_ATTR_NAME} 不在 lfw.tgz 里，"
+            f"官方目录 {LFW_ATTR_FOLDER} 里是 lfw_att_40.mat，没有这份 txt。"
+            "手动下载见 datasets/LFWA/README.md。"
         )
     lines = [line.strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
     if len(lines) < 3:
