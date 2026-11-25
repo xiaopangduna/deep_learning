@@ -9,8 +9,14 @@ DataModule 还没接。下载有两条途径，先走第一条。
 浏览器得到 `LFWA+-<时间>Z-<卷数>-<序号>.zip`。这次只有一卷，当前这份是 `datasets/LFWA/lfw/LFWA+-20261125T093552Z-1-001.zip`，185 MB。时间每次下载都会变。放到 `datasets/LFWA/lfw/` 后解开：
 
 ```bash
-mv ~/Downloads/LFWA+-*.zip datasets/LFWA/lfw/
-python datasets/LFWA/unpack_lfwa_plus.py
+unzip ~/Downloads/LFWA+-*.zip -d /tmp/lfwa-plus
+mv /tmp/lfwa-plus/LFWA+/*.mat datasets/LFWA/lfw/
+```
+
+解压后是 `LFWA+/` 里的三个 `.mat` 和 `lfw.zip`。三个 `.mat` 移到 `datasets/LFWA/lfw/` 即可。仓库里已经有这三个文件，字节数一致时不必覆盖。图像已经解开时不必再动 `lfw.zip`。还没有图像时，再把它解到同一层，里面的 `lfw/` 会落到 `datasets/LFWA/lfw/lfw/`：
+
+```bash
+unzip /tmp/lfwa-plus/LFWA+/lfw.zip -d datasets/LFWA/lfw
 ```
 
 2026-11-25 打开这份 zip，四个成员都在 `LFWA+/` 下：
@@ -22,7 +28,13 @@ python datasets/LFWA/unpack_lfwa_plus.py
 | `lfw_att_73.mat` | 6310861 字节 | MATLAB 7.3，2014-09-15。73 个属性 |
 | `indices_train_test.mat` | 65227 字节 | MATLAB 7.3，2014-09-15。训练/测试划分 |
 
-三个 `.mat` 解到 `datasets/LFWA/lfw/`。`lfw/` 里已经有 13233 张 JPEG 时不再解开里面的 `lfw.zip`。整包留着。同一目录里有多份 `LFWA+-*.zip` 时停下，用 `--archive` 指定一份。
+三个 `.mat` 的位置：
+
+```text
+datasets/LFWA/lfw/lfw_att_40.mat
+datasets/LFWA/lfw/lfw_att_73.mat
+datasets/LFWA/lfw/indices_train_test.mat
+```
 
 ## 次要途径：只下载图像
 
@@ -52,7 +64,6 @@ datasets/LFWA/lfw/indices_train_test.mat
 ```text
 datasets/LFWA/
 ├── README.md
-├── unpack_lfwa_plus.py
 ├── lfwa_attr_to_csv.py
 └── lfw/
     ├── LFWA+-20261125T093552Z-1-001.zip

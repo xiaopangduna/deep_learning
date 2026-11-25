@@ -2,7 +2,6 @@
 
 import io
 import tarfile
-import zipfile
 from pathlib import Path
 
 import pandas as pd
@@ -112,58 +111,6 @@ def test_generate_csvs_maps_path_and_splits(tmp_path: Path):
 def test_missing_attr_file_names_the_manual_source(tmp_path: Path):
     with pytest.raises(FileNotFoundError, match="drive.google.com"):
         lfwa.generate_lfwa_csvs(tmp_path / "empty")
-
-
-def _plus_zip(path: Path, jpeg: bytes = b"jpeg") -> dict[str, int]:
-    inner = io.BytesIO()
-    with zipfile.ZipFile(inner, "w") as archive:
-        archive.writestr("lfw/Ada/Ada_0001.jpg", jpeg)
-    payload = {
-        "LFWA+/lfw.zip": inner.getvalue(),
-        "LFWA+/lfw_att_40.mat": b"mat40",
-        "LFWA+/lfw_att_73.mat": b"mat73",
-        "LFWA+/indices_train_test.mat": b"split",
-    }
-    with zipfile.ZipFile(path, "w") as outer:
-        for name, data in payload.items():
-            outer.writestr(name, data)
-    return {Path(name).name: len(data) for name, data in payload.items()}
-
-
-def test_unpack_lfwa_plus_extracts_mats_and_skips_existing_images(tmp_path: Path, monkeypatch):
-    root = tmp_path / "lfw"
-    root.mkdir()
-    archive = root / "LFWA+-20261125T093552Z-1-001.zip"
-    monkeypatch.setattr(lfwa, "LFWA_PLUS_MEMBER_BYTES", _plus_zip(archive))
-    monkeypatch.setattr(lfwa, "LFW_IMAGE_COUNT", 1)
-    monkeypatch.setattr(lfwa, "LFW_IDENTITY_COUNT", 1)
-    (root / "lfw" / "Ada").mkdir(parents=True)
-    (root / "lfw" / "Ada" / "Ada_0001.jpg").write_bytes(b"kept")
-
-    lfwa.unpack_lfwa_plus(root)
-
-    assert (root / "lfw_att_40.mat").read_bytes() == b"mat40"
-    assert (root / "lfw_att_73.mat").read_bytes() == b"mat73"
-    assert (root / "indices_train_test.mat").read_bytes() == b"split"
-    assert (root / "lfw" / "Ada" / "Ada_0001.jpg").read_bytes() == b"kept"
-
-    (root / "lfw_att_40.mat").write_bytes(b"mat40")
-    lfwa.unpack_lfwa_plus(root)
-    assert (root / "lfw_att_40.mat").read_bytes() == b"mat40"
-
-
-def test_unpack_lfwa_plus_extracts_images_when_missing(tmp_path: Path, monkeypatch):
-    root = tmp_path / "lfw"
-    root.mkdir()
-    monkeypatch.setattr(
-        lfwa, "LFWA_PLUS_MEMBER_BYTES", _plus_zip(root / "LFWA+-example.zip", jpeg=b"from-zip")
-    )
-    monkeypatch.setattr(lfwa, "LFW_IMAGE_COUNT", 1)
-    monkeypatch.setattr(lfwa, "LFW_IDENTITY_COUNT", 1)
-
-    lfwa.unpack_lfwa_plus(root)
-
-    assert (root / "lfw" / "Ada" / "Ada_0001.jpg").read_bytes() == b"from-zip"
 
 
 def test_download_rejects_html_confirm_page(tmp_path: Path, monkeypatch):
