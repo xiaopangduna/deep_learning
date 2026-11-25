@@ -90,74 +90,130 @@ ln -s /data/lfw/lfw datasets/LFWA/lfw/lfw
 
 ## 标签
 
-训练用 `lfw_att_40.mat` 的 40 个属性。取值已经是 `0` / `1`，列顺序就是下表顺序，名字与 CelebA 的 40 个属性相同。`lfw_att_73.mat` 是另一套 73 个属性，名字带空格，取值也是 `0` / `1`，单独成表，不和这 40 列写进同一个 CSV。`indices_train_test.mat` 是训练/测试划分。
+训练用 `lfw_att_40.mat` 的 40 个属性。取值已经是 `0` / `1`，列顺序就是下表顺序，名字与 CelebA 的 40 个属性相同。`lfw_att_73.mat` 是另一套 73 个属性，名字带空格，取值也是 `0` / `1`，单独成表，不和这 40 列写进同一个 CSV。`indices_train_test.mat` 是训练/测试划分。CSV 列名用英文原名，中文只供对照。
 
 ### `lfw_att_40.mat` 的 40 个属性
 
-| 序号 | 名称 | 序号 | 名称 |
-|---|---|---|---|
-| 1 | `5_o_Clock_Shadow` | 21 | `Male` |
-| 2 | `Arched_Eyebrows` | 22 | `Mouth_Slightly_Open` |
-| 3 | `Attractive` | 23 | `Mustache` |
-| 4 | `Bags_Under_Eyes` | 24 | `Narrow_Eyes` |
-| 5 | `Bald` | 25 | `No_Beard` |
-| 6 | `Bangs` | 26 | `Oval_Face` |
-| 7 | `Big_Lips` | 27 | `Pale_Skin` |
-| 8 | `Big_Nose` | 28 | `Pointy_Nose` |
-| 9 | `Black_Hair` | 29 | `Receding_Hairline` |
-| 10 | `Blond_Hair` | 30 | `Rosy_Cheeks` |
-| 11 | `Blurry` | 31 | `Sideburns` |
-| 12 | `Brown_Hair` | 32 | `Smiling` |
-| 13 | `Bushy_Eyebrows` | 33 | `Straight_Hair` |
-| 14 | `Chubby` | 34 | `Wavy_Hair` |
-| 15 | `Double_Chin` | 35 | `Wearing_Earrings` |
-| 16 | `Eyeglasses` | 36 | `Wearing_Hat` |
-| 17 | `Goatee` | 37 | `Wearing_Lipstick` |
-| 18 | `Gray_Hair` | 38 | `Wearing_Necklace` |
-| 19 | `Heavy_Makeup` | 39 | `Wearing_Necktie` |
-| 20 | `High_Cheekbones` | 40 | `Young` |
+| 序号 | 名称 | 中文 |
+|---|---|---|
+| 1 | `5_o_Clock_Shadow` | 胡茬 |
+| 2 | `Arched_Eyebrows` | 拱形眉 |
+| 3 | `Attractive` | 有吸引力 |
+| 4 | `Bags_Under_Eyes` | 眼袋 |
+| 5 | `Bald` | 秃顶 |
+| 6 | `Bangs` | 刘海 |
+| 7 | `Big_Lips` | 厚嘴唇 |
+| 8 | `Big_Nose` | 大鼻子 |
+| 9 | `Black_Hair` | 黑发 |
+| 10 | `Blond_Hair` | 金发 |
+| 11 | `Blurry` | 模糊 |
+| 12 | `Brown_Hair` | 棕发 |
+| 13 | `Bushy_Eyebrows` | 浓眉 |
+| 14 | `Chubby` | 圆胖 |
+| 15 | `Double_Chin` | 双下巴 |
+| 16 | `Eyeglasses` | 戴眼镜 |
+| 17 | `Goatee` | 山羊胡 |
+| 18 | `Gray_Hair` | 灰发 |
+| 19 | `Heavy_Makeup` | 浓妆 |
+| 20 | `High_Cheekbones` | 高颧骨 |
+| 21 | `Male` | 男性 |
+| 22 | `Mouth_Slightly_Open` | 嘴微张 |
+| 23 | `Mustache` | 八字胡 |
+| 24 | `Narrow_Eyes` | 细长眼 |
+| 25 | `No_Beard` | 无胡须 |
+| 26 | `Oval_Face` | 鹅蛋脸 |
+| 27 | `Pale_Skin` | 肤色苍白 |
+| 28 | `Pointy_Nose` | 尖鼻 |
+| 29 | `Receding_Hairline` | 发际线后移 |
+| 30 | `Rosy_Cheeks` | 脸颊红润 |
+| 31 | `Sideburns` | 鬓角 |
+| 32 | `Smiling` | 微笑 |
+| 33 | `Straight_Hair` | 直发 |
+| 34 | `Wavy_Hair` | 波浪发 |
+| 35 | `Wearing_Earrings` | 戴耳环 |
+| 36 | `Wearing_Hat` | 戴帽子 |
+| 37 | `Wearing_Lipstick` | 涂口红 |
+| 38 | `Wearing_Necklace` | 戴项链 |
+| 39 | `Wearing_Necktie` | 戴领带 |
+| 40 | `Young` | 年轻 |
 
 ### `lfw_att_73.mat` 的 73 个属性
 
-| 序号 | 名称 | 序号 | 名称 |
-|---|---|---|---|
-| 1 | `Male` | 38 | `Eyes Open` |
-| 2 | `Asian` | 39 | `Big Nose` |
-| 3 | `White` | 40 | `Pointy Nose` |
-| 4 | `Black` | 41 | `Big Lips` |
-| 5 | `Baby` | 42 | `Mouth Closed` |
-| 6 | `Child` | 43 | `Mouth Slightly Open` |
-| 7 | `Youth` | 44 | `Mouth Wide Open` |
-| 8 | `Middle Aged` | 45 | `Teeth Not Visible` |
-| 9 | `Senior` | 46 | `No Beard` |
-| 10 | `Black Hair` | 47 | `Goatee` |
-| 11 | `Blond Hair` | 48 | `Round Jaw` |
-| 12 | `Brown Hair` | 49 | `Double Chin` |
-| 13 | `Bald` | 50 | `Wearing Hat` |
-| 14 | `No Eyewear` | 51 | `Oval Face` |
-| 15 | `Eyeglasses` | 52 | `Square Face` |
-| 16 | `Sunglasses` | 53 | `Round Face` |
-| 17 | `Mustache` | 54 | `Color Photo` |
-| 18 | `Smiling` | 55 | `Posed Photo` |
-| 19 | `Frowning` | 56 | `Attractive Man` |
-| 20 | `Chubby` | 57 | `Attractive Woman` |
-| 21 | `Blurry` | 58 | `Indian` |
-| 22 | `Harsh Lighting` | 59 | `Gray Hair` |
-| 23 | `Flash` | 60 | `Bags Under Eyes` |
-| 24 | `Soft Lighting` | 61 | `Heavy Makeup` |
-| 25 | `Outdoor` | 62 | `Rosy Cheeks` |
-| 26 | `Curly Hair` | 63 | `Shiny Skin` |
-| 27 | `Wavy Hair` | 64 | `Pale Skin` |
-| 28 | `Straight Hair` | 65 | `5 o Clock Shadow` |
-| 29 | `Receding Hairline` | 66 | `Strong Nose-Mouth Lines` |
-| 30 | `Bangs` | 67 | `Wearing Lipstick` |
-| 31 | `Sideburns` | 68 | `Flushed Face` |
-| 32 | `Fully Visible Forehead` | 69 | `High Cheekbones` |
-| 33 | `Partially Visible Forehead` | 70 | `Brown Eyes` |
-| 34 | `Obstructed Forehead` | 71 | `Wearing Earrings` |
-| 35 | `Bushy Eyebrows` | 72 | `Wearing Necktie` |
-| 36 | `Arched Eyebrows` | 73 | `Wearing Necklace` |
-| 37 | `Narrow Eyes` | | |
+| 序号 | 名称 | 中文 |
+|---|---|---|
+| 1 | `Male` | 男性 |
+| 2 | `Asian` | 亚洲人 |
+| 3 | `White` | 白人 |
+| 4 | `Black` | 黑人 |
+| 5 | `Baby` | 婴儿 |
+| 6 | `Child` | 儿童 |
+| 7 | `Youth` | 青年 |
+| 8 | `Middle Aged` | 中年 |
+| 9 | `Senior` | 老年 |
+| 10 | `Black Hair` | 黑发 |
+| 11 | `Blond Hair` | 金发 |
+| 12 | `Brown Hair` | 棕发 |
+| 13 | `Bald` | 秃顶 |
+| 14 | `No Eyewear` | 不戴眼镜 |
+| 15 | `Eyeglasses` | 戴眼镜 |
+| 16 | `Sunglasses` | 戴墨镜 |
+| 17 | `Mustache` | 八字胡 |
+| 18 | `Smiling` | 微笑 |
+| 19 | `Frowning` | 皱眉 |
+| 20 | `Chubby` | 圆胖 |
+| 21 | `Blurry` | 模糊 |
+| 22 | `Harsh Lighting` | 硬光 |
+| 23 | `Flash` | 闪光灯 |
+| 24 | `Soft Lighting` | 柔光 |
+| 25 | `Outdoor` | 户外 |
+| 26 | `Curly Hair` | 卷发 |
+| 27 | `Wavy Hair` | 波浪发 |
+| 28 | `Straight Hair` | 直发 |
+| 29 | `Receding Hairline` | 发际线后移 |
+| 30 | `Bangs` | 刘海 |
+| 31 | `Sideburns` | 鬓角 |
+| 32 | `Fully Visible Forehead` | 额头完全可见 |
+| 33 | `Partially Visible Forehead` | 额头部分可见 |
+| 34 | `Obstructed Forehead` | 额头被挡住 |
+| 35 | `Bushy Eyebrows` | 浓眉 |
+| 36 | `Arched Eyebrows` | 拱形眉 |
+| 37 | `Narrow Eyes` | 细长眼 |
+| 38 | `Eyes Open` | 睁眼 |
+| 39 | `Big Nose` | 大鼻子 |
+| 40 | `Pointy Nose` | 尖鼻 |
+| 41 | `Big Lips` | 厚嘴唇 |
+| 42 | `Mouth Closed` | 闭嘴 |
+| 43 | `Mouth Slightly Open` | 嘴微张 |
+| 44 | `Mouth Wide Open` | 嘴大张 |
+| 45 | `Teeth Not Visible` | 看不见牙齿 |
+| 46 | `No Beard` | 无胡须 |
+| 47 | `Goatee` | 山羊胡 |
+| 48 | `Round Jaw` | 圆下颌 |
+| 49 | `Double Chin` | 双下巴 |
+| 50 | `Wearing Hat` | 戴帽子 |
+| 51 | `Oval Face` | 鹅蛋脸 |
+| 52 | `Square Face` | 方脸 |
+| 53 | `Round Face` | 圆脸 |
+| 54 | `Color Photo` | 彩色照片 |
+| 55 | `Posed Photo` | 摆拍 |
+| 56 | `Attractive Man` | 有吸引力的男性 |
+| 57 | `Attractive Woman` | 有吸引力的女性 |
+| 58 | `Indian` | 印度人 |
+| 59 | `Gray Hair` | 灰发 |
+| 60 | `Bags Under Eyes` | 眼袋 |
+| 61 | `Heavy Makeup` | 浓妆 |
+| 62 | `Rosy Cheeks` | 脸颊红润 |
+| 63 | `Shiny Skin` | 皮肤有光泽 |
+| 64 | `Pale Skin` | 肤色苍白 |
+| 65 | `5 o Clock Shadow` | 胡茬 |
+| 66 | `Strong Nose-Mouth Lines` | 鼻唇沟明显 |
+| 67 | `Wearing Lipstick` | 涂口红 |
+| 68 | `Flushed Face` | 脸发红 |
+| 69 | `High Cheekbones` | 高颧骨 |
+| 70 | `Brown Eyes` | 棕色眼睛 |
+| 71 | `Wearing Earrings` | 戴耳环 |
+| 72 | `Wearing Necktie` | 戴领带 |
+| 73 | `Wearing Necklace` | 戴项链 |
 
 `lfwa_attr_to_csv.py` 还不读 `.mat`。它只认文本表 `list_attr_lfwa.txt`。若手头已经有这份文本表，放到数据目录后转 CSV：
 
