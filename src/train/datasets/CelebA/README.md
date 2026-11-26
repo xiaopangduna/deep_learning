@@ -6,17 +6,24 @@ DataModule 还没接。下载有两条途径，先走第一条。图像版权不
 
 打开 [CelebA 网盘目录](https://drive.google.com/drive/folders/0B7EVK8r0v71pWEZsZE9oNnFzTm8?resourcekey=0-5BR16BdXnb8hVj6CNHKzLg)，下载整个文件夹，不要逐个点文件。入口也列在 [CelebA 页面](https://mmlab.ie.cuhk.edu.hk/projects/CelebA.html)。带 `resourcekey` 才能打开。
 
-浏览器得到 `CelebA-<时间>Z-<卷数>-<序号>.zip`。这次是 15 卷，时间戳 `20261126T023442Z`，合计 23239784775 字节。时间每次下载都会变。每一卷都能单独解开，成员都在顶层 `CelebA/` 下。这一层解开后还是压缩包和标注文本，没有散落的 jpg。图片在 `Img/img_align_celeba.zip` 里，要再解一次。
+浏览器整包下载得到若干 zip，文件名不固定。可能是 `CelebA-<时间>Z-<卷数>-<序号>.zip`，也可能是 `drive-download-<时间>Z-<卷数>-<序号>.zip`。时间戳、分卷方式和每一卷的字节数每次都会变。这次是 15 卷，`drive-download-20261125T160343Z-1-001.zip` 到 `-015.zip`。每一卷都能单独解开。成员直接是 `README.txt`、`Anno/`、`Eval/`、`Img/`，没有再包一层目录名。这一层解开后还是压缩包和标注文本，没有散落的 jpg。图片在 `Img/img_align_celeba.zip` 里，要再解一次。
 
-放到 `datasets/CelebA/` 后先解开，再去掉 `CelebA/` 这一层：
+放到 `datasets/CelebA/` 后，解进 `datasets/CelebA/celeba/`。外层 zip 用目录里的 `*.zip`，不要写死某一次的文件名：
 
 ```bash
 mkdir -p datasets/CelebA/celeba
-for z in datasets/CelebA/CelebA-*.zip; do
+for z in datasets/CelebA/*.zip; do
   unzip -n -q "$z" -d datasets/CelebA/celeba
 done
-mv datasets/CelebA/celeba/CelebA/* datasets/CelebA/celeba/
-rmdir datasets/CelebA/celeba/CelebA
+```
+
+数据目录到 `datasets/CelebA/celeba/` 就够了，里面直接是 `Anno/`、`Eval/`、`Img/` 和 `README.txt`。若某次下载的成员顶层多了一层文件夹名（例如 `CelebA/`），再把那一层拿掉；这次没有这一层，下面不用执行：
+
+```bash
+if [ -d datasets/CelebA/celeba/CelebA ]; then
+  mv datasets/CelebA/celeba/CelebA/* datasets/CelebA/celeba/
+  rmdir datasets/CelebA/celeba/CelebA
+fi
 ```
 
 然后解对齐 JPEG。`img_align_celeba/` 会落到 `Img/` 下，里面是 `000001.jpg` 到 `202599.jpg`，共 202599 张，宽 178、高 218：
@@ -41,25 +48,7 @@ unzip -n -q datasets/CelebA/celeba/Img/img_align_celeba.zip \
   -odatasets/CelebA/celeba/Img/img_align_celeba_png
 ```
 
-第一层解开大约再占 22GB，对齐 JPEG 再占约 1.4GB。外面的 zip 留着。2026-11-26 这 15 卷的字节数：
-
-| 文件 | 字节 |
-|---|---|
-| `CelebA-20261126T023442Z-1-001.zip` | 1443711354 |
-| `CelebA-20261126T023442Z-1-002.zip` | 1468456898 |
-| `CelebA-20261126T023442Z-1-003.zip` | 1469407378 |
-| `CelebA-20261126T023442Z-1-004.zip` | 1468930723 |
-| `CelebA-20261126T023442Z-1-005.zip` | 2049548441 |
-| `CelebA-20261126T023442Z-1-006.zip` | 1470637407 |
-| `CelebA-20261126T023442Z-1-007.zip` | 1470573311 |
-| `CelebA-20261126T023442Z-1-008.zip` | 1470106068 |
-| `CelebA-20261126T023442Z-1-009.zip` | 2117683992 |
-| `CelebA-20261126T023442Z-1-010.zip` | 1468454948 |
-| `CelebA-20261126T023442Z-1-011.zip` | 1468454868 |
-| `CelebA-20261126T023442Z-1-012.zip` | 1468454868 |
-| `CelebA-20261126T023442Z-1-013.zip` | 1468454868 |
-| `CelebA-20261126T023442Z-1-014.zip` | 1468454783 |
-| `CelebA-20261126T023442Z-1-015.zip` | 1468454868 |
+第一层解开大约再占 22GB，对齐 JPEG 再占约 1.4GB。外面的 zip 留着。外层 zip 的文件名和字节数随每次下载变化，不拿来核对。核对下面这些成员。
 
 合在一起的成员：
 
@@ -112,31 +101,30 @@ datasets/CelebA/
 ├── README.md
 ├── download_celeba.py
 ├── celeba_attr_to_csv.py
-├── CelebA-20261126T023442Z-1-001.zip
+├── drive-download-<时间>Z-1-001.zip
 ├── ...
-├── CelebA-20261126T023442Z-1-015.zip
+├── drive-download-<时间>Z-1-015.zip
 └── celeba/
-    └── CelebA/
-        ├── README.txt
-        ├── Anno/
-        │   ├── list_attr_celeba.txt
-        │   ├── identity_CelebA.txt
-        │   ├── list_bbox_celeba.txt
-        │   ├── list_landmarks_celeba.txt
-        │   └── list_landmarks_align_celeba.txt
-        ├── Eval/
-        │   └── list_eval_partition.txt
-        ├── train.csv
-        ├── val.csv
-        ├── test.csv
-        └── Img/
-            ├── img_align_celeba.zip
-            ├── img_align_celeba/000001.jpg
-            ├── img_celeba.7z/img_celeba.7z.001
-            └── img_align_celeba_png.7z/img_align_celeba_png.7z.001
+    ├── README.txt
+    ├── Anno/
+    │   ├── list_attr_celeba.txt
+    │   ├── identity_CelebA.txt
+    │   ├── list_bbox_celeba.txt
+    │   ├── list_landmarks_celeba.txt
+    │   └── list_landmarks_align_celeba.txt
+    ├── Eval/
+    │   └── list_eval_partition.txt
+    ├── train.csv
+    ├── val.csv
+    ├── test.csv
+    └── Img/
+        ├── img_align_celeba.zip
+        ├── img_align_celeba/000001.jpg
+        ├── img_celeba.7z/img_celeba.7z.001
+        └── img_align_celeba_png.7z/img_align_celeba_png.7z.001
 ```
 
-上面的 `mv` 做完后，`CelebA/` 里的内容会直接位于 `celeba/`。实验 YAML 写的是还没移动时的路径。
+`Anno/`、`Eval/`、`Img/` 和三个 CSV 都在 `celeba/`。实验 YAML 写的就是这一层。某次下载若多包了一层目录名，先按上面的 `if` 挪平，再写 CSV。
 
 `datasets/CelebA/` 留在项目里，放这份 README 和脚本。图像、压缩包和标注不进 Git。
 
@@ -205,7 +193,7 @@ ln -s /data/celeba datasets/CelebA/celeba
 
 两个关键点文件都是 5 点：左眼、右眼、鼻、左嘴角、右嘴角，各一个 `x y`。`list_landmarks_celeba.txt` 用原图坐标，`list_landmarks_align_celeba.txt` 用对齐图坐标。
 
-这些文本写成和 LFWA 相同的框表。属性列是 `attr_` 加属性名，`1` 保持为 `1`，`-1` 写成 `0`。划分用 `list_eval_partition.txt`：`0` 进 `train.csv`，`1` 进 `val.csv`，`2` 进 `test.csv`。图已经是对齐的脸，框是整张图。`path_img` 相对放着 `Anno/`、`Eval/`、`Img/` 的那一层。现在这一层还在 `datasets/CelebA/celeba/CelebA/`；若已经去掉多余的 `CelebA/`，脚本会改写到 `datasets/CelebA/celeba/`，实验 YAML 里的三个路径也要跟着改。
+这些文本写成和 LFWA 相同的框表。属性列是 `attr_` 加属性名，`1` 保持为 `1`，`-1` 写成 `0`。划分用 `list_eval_partition.txt`：`0` 进 `train.csv`，`1` 进 `val.csv`，`2` 进 `test.csv`。图已经是对齐的脸，框是整张图。`path_img` 相对 `datasets/CelebA/celeba/`。三个 CSV 也写在这一层。脚本若发现标注在多出来的 `CelebA/` 里，会改用那一层；实验 YAML 仍指向 `datasets/CelebA/celeba/`。
 
 ```bash
 python datasets/CelebA/celeba_attr_to_csv.py

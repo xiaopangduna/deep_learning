@@ -1,5 +1,5 @@
 # CelebA 对齐脸的 40 个属性。MobileNetV2，分类头 40 维，二元交叉熵。
-# CSV 由 datasets/CelebA/celeba_attr_to_csv.py 写出，路径指向解开后仍带着 CelebA/ 的那一层。
+# CSV 由 datasets/CelebA/celeba_attr_to_csv.py 写到 datasets/CelebA/celeba/。
 #   python datasets/CelebA/celeba_attr_to_csv.py
 #   python scripts/train.py fit --config configs/experiments/face_attr_CelebA_40_mobilenet_v2.yaml
 
@@ -43,10 +43,10 @@ data:
   init_args:
     box_scale: 1.2
     min_side_px: 16
-    train_csv_paths: [datasets/CelebA/celeba/CelebA/train.csv]
-    val_csv_paths: [datasets/CelebA/celeba/CelebA/val.csv]
-    test_csv_paths: [datasets/CelebA/celeba/CelebA/test.csv]
-    predict_csv_paths: [datasets/CelebA/celeba/CelebA/test.csv]
+    train_csv_paths: [datasets/CelebA/celeba/train.csv]
+    val_csv_paths: [datasets/CelebA/celeba/val.csv]
+    test_csv_paths: [datasets/CelebA/celeba/test.csv]
+    predict_csv_paths: [datasets/CelebA/celeba/test.csv]
     norm_mean: [0.485, 0.456, 0.406]
     norm_std: [0.229, 0.224, 0.225]
     batch_size: 64
