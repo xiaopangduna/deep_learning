@@ -97,17 +97,26 @@ def test_apply_eval_tags_keeps_ground_truth_tags(vc):
     )
     assert correct == ["eye_open_2", "pred_eye_open_2"]
     unlabeled = vc.apply_eval_tags(
-        ["changed", "eval_err", "pred_eye_open_2"],
+        ["changed", "eval_err", "eval_bad_tag", "pred_eye_open_2"],
         status=vc.STATUS_BAD,
         pred_tag="pred_eye_open_0",
+        bad_reason=vc.REASON_NO_GT,
     )
-    assert unlabeled == ["changed", "eval_bad_tag", "pred_eye_open_0"]
+    assert unlabeled == ["changed", "eval_miss_tag", "pred_eye_open_0"]
     multi = vc.apply_eval_tags(
-        ["eye_open_0", "eye_open_2", "eval_err", "pred_eye_open_0"],
+        ["eye_open_0", "eye_open_2", "eval_miss_tag", "pred_eye_open_0"],
         status=vc.STATUS_BAD,
-        pred_tag="",
+        pred_tag="pred_eye_open_0",
+        bad_reason=vc.REASON_MULTI_GT,
     )
-    assert multi == ["eye_open_0", "eye_open_2", "eval_bad_tag"]
+    assert multi == ["eye_open_0", "eye_open_2", "eval_mult_tag"]
+    skipped = vc.apply_eval_tags(
+        ["eye_open_0", "eval_err", "pred_eye_open_0"],
+        status=vc.STATUS_SKIP,
+        pred_tag="pred_eye_open_0",
+        bad_reason=vc.REASON_SHORT_SIDE,
+    )
+    assert skipped == ["eye_open_0", "eval_skip"]
 
 
 def test_eval_class_groups_is_identity_over_model_ids(vc):
@@ -154,5 +163,22 @@ def test_bad_tags_stay_out_of_error_rate(vc):
     assert stats.n_scored == 1
     assert stats.n_ok == 1
     assert stats.n_err == 0
+    stats.add(
+        vc.BoxVerdict(
+            sample_id="s",
+            detection_id="d3",
+            img_path="a.jpg",
+            img_w=10,
+            img_h=10,
+            cx=0.5,
+            cy=0.5,
+            w=0.01,
+            h=0.01,
+            status=vc.STATUS_SKIP,
+            bad_reason=vc.REASON_SHORT_SIDE,
+        )
+    )
     assert stats.n_bad == 1
     assert stats.n_multi_gt == 1
+    assert stats.n_skip == 1
+    assert stats.n_scored == 1

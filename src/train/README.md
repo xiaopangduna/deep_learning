@@ -286,7 +286,7 @@ checkpoint 与 `config.yaml` 在 `logs/<实验名>/version_N/`。测试 / 预测
 
 ## 分类结果写回 FiftyOne
 
-对 FiftyOne 里已有的框打分。`--sample-tags` 选图。`--class-map` 把模型输出 id 一一对应到框上的 tag，例如 `0:face_frontal,1:face_side,2:face_head`。`--box-labels head` 已经选定框。映射值必须和框上的 tag 完全一致，例如 `face_frontal`，不要写 `head-face_frontal`。带这些样本 tag 的图上，`--box-labels` 里的框都会看；短边小于配置 `min_side_px` 的跳过。正好命中一个映射 tag 才打分：判错写 `eval_err` 和 `pred_<tag>`，判对只写预测标签。一个映射 tag 都没有的框也推理，写 `eval_bad_tag` 和 `pred_<tag>`，不进错误率，预测可当预标注。命中多个映射 tag 时只写 `eval_bad_tag`，不进模型。预测 id 不在映射里时，标签是 `pred_<id>`。不改真值 tag 和 `changed`。`--ckpt` 须与 `--config` 的分类头一致。
+对 FiftyOne 里已有的框打分。`--sample-tags` 选图。`--class-map` 把模型输出 id 一一对应到框上的 tag，例如 `0:face_frontal,1:face_side,2:face_head`。`--box-labels head` 已经选定框。映射值必须和框上的 tag 完全一致，例如 `face_frontal`，不要写 `head-face_frontal`。带这些样本 tag 的图上，`--box-labels` 里的框都会看。短边小于配置 `min_side_px`、框无效、或数据集筛掉的框不打分，写 `eval_skip`。正好命中一个映射 tag 才打分：判错写 `eval_err` 和 `pred_<tag>`，判对只写预测标签。一个映射 tag 都没有的框也推理，写 `eval_miss_tag` 和 `pred_<tag>`，不进错误率，预测可当预标注。命中多个映射 tag 时只写 `eval_mult_tag`，不进模型。预测 id 不在映射里时，标签是 `pred_<id>`。不改真值 tag 和 `changed`。`--ckpt` 须与 `--config` 的分类头一致。
 
 本机若已有 mongod 在 27017，脚本会默认连 `mongodb://127.0.0.1:27017`（也可用环境变量 `FIFTYONE_DATABASE_URI` 覆盖）。
 
@@ -315,7 +315,7 @@ uv run fiftyone app launch BBM08S_head --address 0.0.0.0 --port 5151
 
 4. **only_matches** 保持 `True`，**trajectories** 保持 `False`，各回车一次。
 
-网格只留下同时带这两个标签的框。其它预测类把 `pred_face_frontal` 换成对应的 `pred_<tag>`。标注异常用 `eval_bad_tag` 筛选。左上角视图下拉里的 **Save current filters as view** 可保存；视图栏右侧清空按钮回到完整数据集。
+网格只留下同时带这两个标签的框。其它预测类把 `pred_face_frontal` 换成对应的 `pred_<tag>`。没有映射 tag 的框用 `eval_miss_tag` 筛选，命中多个映射 tag 的框用 `eval_mult_tag` 筛选，跳过的框用 `eval_skip` 筛选。左上角视图下拉里的 **Save current filters as view** 可保存；视图栏右侧清空按钮回到完整数据集。
 
 ## 测试
 

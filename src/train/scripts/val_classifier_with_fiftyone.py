@@ -8,13 +8,14 @@
 只认映射里的名字，``changed`` 和旧的评估 tag 不参与。
 
 在带这些样本 tag 的图上，``--box-labels`` 里的每个框都会看一遍。短边小于配置
-``min_side_px`` 的框跳过，不打分。正好命中一个映射 tag 的框裁图打分：判错写
-``eval_err`` 和 ``pred_<tag>``，判对只写预测标签。一个映射 tag 都没有的框也裁图
-推理，写 ``eval_bad_tag`` 和 ``pred_<tag>``，不进对错统计，预测可当预标注。命中
-多个映射 tag 时只写 ``eval_bad_tag``，不进模型。预测 id 不在映射里时，``pred_``
-后面是这个 id。
+``min_side_px``、框无效、或数据集筛掉的框不打分，写 ``eval_skip``。正好命中一个映射
+tag 的框裁图打分：判错写 ``eval_err`` 和 ``pred_<tag>``，判对只写预测标签。一个映射
+tag 都没有的框也裁图推理，写 ``eval_miss_tag`` 和 ``pred_<tag>``，不进对错统计，预测
+可当预标注。命中多个映射 tag 时只写 ``eval_mult_tag``，不进模型。预测 id 不在映射里
+时，``pred_`` 后面是这个 id。
 不改真值 tag 和 ``changed``。默认只打分；``--write-fo`` 才写回原框。再次写入会清掉旧的
-``eval_ok``、``eval_err``、``eval_bad_tag`` 和 ``pred_*``。
+``eval_ok``、``eval_err``、``eval_miss_tag``、``eval_mult_tag``、``eval_skip``、
+``eval_bad_tag`` 和 ``pred_*``。
 
 示例::
 
@@ -59,14 +60,22 @@ from lovely_deep_learning.dataset.image_classifier import (
 ROOT = Path(__file__).resolve().parents[1]
 EVAL_OK = "eval_ok"
 EVAL_ERR = "eval_err"
+EVAL_MISS = "eval_miss_tag"
+EVAL_MULT = "eval_mult_tag"
+EVAL_SKIP = "eval_skip"
 EVAL_BAD = "eval_bad_tag"
 PRED_TAG_PREFIX = "pred_"
 STATUS_PENDING = "pending"
 STATUS_OK = "ok"
 STATUS_ERR = "err"
 STATUS_BAD = "bad_tag"
+STATUS_SKIP = "skip"
 REASON_NO_GT = "no_gt_tag"
 REASON_MULTI_GT = "multi_gt_tag"
+REASON_SHORT_SIDE = "short_side"
+REASON_BAD_BOX = "bad_box"
+REASON_INVALID_BOX = "invalid_box"
+REASON_FILTERED = "filtered_out"
 FO_SAMPLE_BATCH = 100
 IMG_CACHE_SIZE = 16
 
@@ -119,11 +128,15 @@ class EvalStats:
     n_err: int = 0
     n_ok: int = 0
     n_bad: int = 0
+    n_skip: int = 0
     n_no_gt: int = 0
     n_multi_gt: int = 0
     by_gt: dict[str, dict[str, int]] = field(default_factory=lambda: defaultdict(lambda: {"n": 0, "err": 0}))
 
     def add(self, row: BoxVerdict) -> None:
+        if row.status == STATUS_SKIP:
+            self.n_skip += 1
+            return
         if row.status == STATUS_BAD:
             self.n_bad += 1
             if row.bad_reason == REASON_NO_GT:
@@ -323,7 +336,7 @@ def is_eval_tag(tag: object) -> bool:
     """评估写在框上的标签。真值类名和 ``changed`` 保留。"""
     if not isinstance(tag, str):
         return False
-    if tag in {EVAL_OK, EVAL_ERR, EVAL_BAD}:
+    if tag in {EVAL_OK, EVAL_ERR, EVAL_MISS, EVAL_MULT, EVAL_SKIP, EVAL_BAD}:
         return True
     return tag.startswith(PRED_TAG_PREFIX)
 
@@ -341,13 +354,25 @@ def strip_eval_tags(tags: object) -> list[str]:
     return [str(tag) for tag in (tags or []) if not is_eval_tag(tag)]
 
 
-def apply_eval_tags(tags: object, *, status: str, pred_tag: str) -> list[str]:
-    """判错写 ``eval_err`` 和预测标签；判对只写预测标签；标注异常写 ``eval_bad_tag``，有预测时一并写上。"""
+def apply_eval_tags(tags: object, *, status: str, pred_tag: str, bad_reason: str = "") -> list[str]:
+    """判错写 ``eval_err`` 和预测标签；判对只写预测标签。
+
+    没有映射 tag 写 ``eval_miss_tag`` 和预测标签。命中多个映射 tag 只写 ``eval_mult_tag``。
+    跳过的框只写 ``eval_skip``。
+    """
     updated = strip_eval_tags(tags)
+    if status == STATUS_SKIP:
+        updated.append(EVAL_SKIP)
+        return updated
     if status == STATUS_BAD:
-        updated.append(EVAL_BAD)
-        if pred_tag:
-            updated.append(pred_tag)
+        if bad_reason == REASON_NO_GT:
+            updated.append(EVAL_MISS)
+            if pred_tag:
+                updated.append(pred_tag)
+        elif bad_reason == REASON_MULTI_GT:
+            updated.append(EVAL_MULT)
+        else:
+            updated.append(EVAL_BAD)
         return updated
     if status == STATUS_ERR:
         updated.append(EVAL_ERR)
@@ -560,31 +585,47 @@ def collect_labeled_boxes(
             saw_box = True
             box = list(getattr(detection, "bounding_box", None) or [])
             detection_id = str(getattr(detection, "id", ""))
-            if len(box) != 4:
+
+            def append_skip(
+                reason: str,
+                *,
+                cx: float = 0.0,
+                cy: float = 0.0,
+                width: float = 0.0,
+                height: float = 0.0,
+            ) -> None:
+                verdicts.append(
+                    BoxVerdict(
+                        sample_id=sample_id,
+                        detection_id=detection_id,
+                        img_path=filepath,
+                        img_w=img_w,
+                        img_h=img_h,
+                        cx=cx,
+                        cy=cy,
+                        w=width,
+                        h=height,
+                        status=STATUS_SKIP,
+                        bad_reason=reason,
+                    )
+                )
                 append_problem(
                     problems,
                     sample_id=sample_id,
                     detection_id=detection_id,
-                    reason="bad_box",
+                    reason=reason,
                 )
+
+            if len(box) != 4:
+                append_skip(REASON_BAD_BOX)
                 continue
             cx, cy, width, height = fo_xywh_to_yolo_cxcywh(box)
             if width <= 0 or height <= 0:
-                append_problem(
-                    problems,
-                    sample_id=sample_id,
-                    detection_id=detection_id,
-                    reason="invalid_box",
-                )
+                append_skip(REASON_INVALID_BOX, cx=cx, cy=cy, width=width, height=height)
                 continue
             short_side = min(width * img_w, height * img_h)
             if min_side_px > 0 and short_side < min_side_px:
-                append_problem(
-                    problems,
-                    sample_id=sample_id,
-                    detection_id=detection_id,
-                    reason="short_side",
-                )
+                append_skip(REASON_SHORT_SIDE, cx=cx, cy=cy, width=width, height=height)
                 continue
             names = matched_class_names(det_label, detection.tags, class_map)
             if len(names) == 1:
@@ -750,7 +791,9 @@ def write_fiftyone(
     if not ids:
         return 0
     by_detection = {
-        row.detection_id: row for row in verdicts if row.status in {STATUS_OK, STATUS_ERR, STATUS_BAD}
+        row.detection_id: row
+        for row in verdicts
+        if row.status in {STATUS_OK, STATUS_ERR, STATUS_BAD, STATUS_SKIP}
     }
     by_sample: dict[str, list[BoxVerdict]] = defaultdict(list)
     for row in by_detection.values():
@@ -774,7 +817,12 @@ def write_fiftyone(
             if result is None:
                 new_tags = strip_eval_tags(detection.tags)
             else:
-                new_tags = apply_eval_tags(detection.tags, status=result.status, pred_tag=result.pred_tag)
+                new_tags = apply_eval_tags(
+                    detection.tags,
+                    status=result.status,
+                    pred_tag=result.pred_tag,
+                    bad_reason=result.bad_reason,
+                )
                 tagged += 1
             if [str(tag) for tag in (detection.tags or [])] != new_tags:
                 detection.tags = new_tags
@@ -809,7 +857,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--write-fo",
         action="store_true",
-        help="判错写 eval_err 和预测标签；判对只写预测标签；无真值写 eval_bad_tag 和预测标签；多个真值只写 eval_bad_tag",
+        help="判错写 eval_err 和预测标签；判对只写预测标签；无映射 tag 写 eval_miss_tag 和预测标签；多个映射 tag 只写 eval_mult_tag；跳过的框写 eval_skip",
     )
     parser.add_argument("--device", default=None, help="cuda / cpu / cuda:0 (default: auto)")
     parser.add_argument("--batch-size", type=int, default=None, help="Override data.batch_size")
@@ -879,6 +927,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {error}", file=sys.stderr)
         return 2
     pending = [row for row in verdicts if row.status == STATUS_PENDING]
+    n_skip_now = sum(row.status == STATUS_SKIP for row in verdicts)
+    n_bad_now = sum(row.status == STATUS_BAD for row in verdicts)
     if not verdicts:
         problems_path = out_dir / "problems.jsonl"
         with problems_path.open("w", encoding="utf-8") as handle:
@@ -894,7 +944,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"device={device}")
     print(f"ckpt={ckpt_path}")
     print(f"config={config_path}")
-    print(f"dataset={args.dataset} label_field={args.label_field} pending={len(pending)} bad={len(verdicts) - len(pending)}")
+    print(f"dataset={args.dataset} label_field={args.label_field} pending={len(pending)} bad={n_bad_now} skip={n_skip_now}")
     print(f"sample_tags={args.sample_tags} box_labels={args.box_labels}")
     print(f"class_groups={groups} background_id={background_id}")
     print(f"class_map={class_map.entries}")
@@ -947,13 +997,13 @@ def main(argv: list[str] | None = None) -> int:
         for row in pending:
             if row.detection_id in seen:
                 continue
-            row.status = STATUS_BAD
-            row.bad_reason = "filtered_out"
+            row.status = STATUS_SKIP
+            row.bad_reason = REASON_FILTERED
             append_problem(
                 problems,
                 sample_id=row.sample_id,
                 detection_id=row.detection_id,
-                reason="filtered_out",
+                reason=REASON_FILTERED,
             )
     else:
         pd.DataFrame(
@@ -1031,7 +1081,7 @@ def main(argv: list[str] | None = None) -> int:
         "label_field": args.label_field,
         "boxes_csv": str(csv_path),
         "write_fo": args.write_fo,
-        "eval_tags": [EVAL_ERR, EVAL_BAD],
+        "eval_tags": [EVAL_ERR, EVAL_MISS, EVAL_MULT, EVAL_SKIP],
         "class_map": [{"id": model_id, "name": name} for model_id, name in class_map.entries],
         "class_groups": {str(k): v for k, v in (groups or {}).items()},
         "background_id": background_id,
@@ -1040,6 +1090,7 @@ def main(argv: list[str] | None = None) -> int:
         "n_ok": stats.n_ok,
         "n_err": stats.n_err,
         "n_bad_tag": stats.n_bad,
+        "n_skip": stats.n_skip,
         "n_no_gt_tag": stats.n_no_gt,
         "n_multi_gt_tag": stats.n_multi_gt,
         "err_rate": (stats.n_err / stats.n_scored) if stats.n_scored else 0.0,
@@ -1054,7 +1105,7 @@ def main(argv: list[str] | None = None) -> int:
 
     print(
         f"scored={stats.n_scored} ok={stats.n_ok} err={stats.n_err} "
-        f"bad_tag={stats.n_bad} no_gt={stats.n_no_gt} multi_gt={stats.n_multi_gt} "
+        f"miss_tag={stats.n_no_gt} mult_tag={stats.n_multi_gt} skip={stats.n_skip} "
         f"err_rate={summary['err_rate']:.4f}"
     )
     for name, bucket in sorted(stats.by_gt.items()):
@@ -1062,7 +1113,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  gt={name} n={bucket['n']} err={bucket['err']} err_rate={rate:.4f}")
     if args.write_fo:
         print(f"tagged={n_tagged}")
-        print(f"app filter: detection tag `{EVAL_ERR}` or `{EVAL_BAD}`")
+        print(
+            f"app filter: detection tag `{EVAL_ERR}` or `{EVAL_MISS}` or `{EVAL_MULT}` or `{EVAL_SKIP}`"
+        )
     print(f"results_csv={results_csv}")
     print(f"summary={out_dir / 'summary.json'}")
     print(f"problems_path={problems_path}")
