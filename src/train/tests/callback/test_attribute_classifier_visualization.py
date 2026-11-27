@@ -137,11 +137,12 @@ def test_val_logs_first_batch_and_metric_chart(tmp_path, monkeypatch):
         "rank",
         "attribute",
         "ap",
+        "positive_rate",
+        "ap_minus_positive_rate",
         "threshold",
         "f1",
         "precision",
         "recall",
-        "positive_rate",
     ]
     assert (tmp_path / "val_detection_rank.png").is_file()
 
@@ -204,6 +205,7 @@ def test_test_end_caps_error_images_and_writes_metrics(tmp_path):
     assert list(metrics.index) == ["Male", "Smiling"]
     assert metrics.loc["Male", "threshold"] == 0.5
     assert metrics.loc["Male", "ap"] == 1
+    assert metrics.loc["Male", "ap_minus_positive_rate"] == pytest.approx(0.6, abs=5e-4)
     assert metrics.loc["Male", "recall"] == 0.5
     assert metrics.loc["Male", "precision"] == 1
     assert metrics.loc["Male", "f1"] == pytest.approx(2 / 3, abs=5e-4)
@@ -222,11 +224,12 @@ def test_test_end_caps_error_images_and_writes_metrics(tmp_path):
         "rank",
         "attribute",
         "ap",
+        "positive_rate",
+        "ap_minus_positive_rate",
         "threshold",
         "f1",
         "precision",
         "recall",
-        "positive_rate",
     ]
     assert (tmp_path / "test_detection_rank.png").is_file()
     assert (tmp_path / "per_attribute_metrics.png").is_file()

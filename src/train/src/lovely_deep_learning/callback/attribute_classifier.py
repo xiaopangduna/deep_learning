@@ -204,6 +204,7 @@ _RATE_COLUMNS = (
     "balanced_accuracy",
     "specificity",
     "positive_rate",
+    "ap_minus_positive_rate",
 )
 _COUNT_COLUMNS = (
     "tp",
@@ -226,6 +227,7 @@ _METRIC_DISPLAY_COLUMNS = (
     "balanced_accuracy",
     "specificity",
     "positive_rate",
+    "ap_minus_positive_rate",
     "tp",
     "fp",
     "tn",
@@ -236,7 +238,15 @@ _METRIC_DISPLAY_COLUMNS = (
     "pred_negative",
     "count",
 )
-_RANK_COLUMNS = ("ap", "threshold", "f1", "precision", "recall", "positive_rate")
+_RANK_COLUMNS = (
+    "ap",
+    "positive_rate",
+    "ap_minus_positive_rate",
+    "threshold",
+    "f1",
+    "precision",
+    "recall",
+)
 _F1_THRESHOLD_GRID = np.round(np.arange(1, 100) / 100.0, 2)
 
 
@@ -972,8 +982,11 @@ def metrics_from_scores(
     balanced = _pair_mean(recall, specificity)
     for column in (precision, recall, specificity, accuracy, f1, balanced):
         column[missing] = np.nan
+    positive_rate = _divide(gt_pos, count)
+    ap = _average_precision(scores, labels)
     return {
-        "ap": _average_precision(scores, labels),
+        "ap": ap,
+        "ap_minus_positive_rate": ap - positive_rate,
         "threshold": limit,
         "f1": f1,
         "precision": precision,
@@ -981,7 +994,7 @@ def metrics_from_scores(
         "accuracy": accuracy,
         "balanced_accuracy": balanced,
         "specificity": specificity,
-        "positive_rate": _divide(gt_pos, count),
+        "positive_rate": positive_rate,
         "tp": tp,
         "fp": fp,
         "tn": tn,
@@ -1072,9 +1085,9 @@ def render_detection_rank_chart(frame: pd.DataFrame) -> np.ndarray:
         matplotlib.use("Agg", force=True)
     import matplotlib.pyplot as plt
 
-    columns = ["rank", "attribute", "ap", "threshold", "f1", "precision", "recall", "positive_rate"]
+    columns = ["rank", "attribute", *_RANK_COLUMNS]
     show = frame.loc[:, columns]
-    fig, axis = plt.subplots(figsize=(11.0, max(4.2, 0.28 * len(show) + 0.9)))
+    fig, axis = plt.subplots(figsize=(12.4, max(4.2, 0.28 * len(show) + 0.9)))
     axis.axis("off")
     axis.set_title("detection rank by AP", loc="left", fontsize=11, pad=8)
     cells = []
@@ -1084,11 +1097,12 @@ def render_detection_rank_chart(frame: pd.DataFrame) -> np.ndarray:
                 str(int(row["rank"])),
                 str(row["attribute"]),
                 _rank_cell(row["ap"]),
+                _rank_cell(row["positive_rate"]),
+                _rank_cell(row["ap_minus_positive_rate"]),
                 _rank_cell(row["threshold"], digits=2),
                 _rank_cell(row["f1"]),
                 _rank_cell(row["precision"]),
                 _rank_cell(row["recall"]),
-                _rank_cell(row["positive_rate"]),
             ]
         )
     table = axis.table(cellText=cells, colLabels=columns, loc="center", cellLoc="left")
