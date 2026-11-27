@@ -15,6 +15,7 @@ from lovely_deep_learning.callback.attribute_classifier import (
     SaveAttributeDistributionCallback,
     _face_bgr,
     attribute_distribution_frame,
+    choose_f1_thresholds,
     render_attribute_panel,
     visible_attribute_rows,
 )
@@ -129,10 +130,19 @@ def test_val_logs_first_batch_and_metric_chart(tmp_path, monkeypatch):
     assert tags == ["val/sample_attributes", "val/attribute_rates", "val/detection_rank"]
     assert experiment.images[0][2] == 4
     table = pd.read_csv(tmp_path / "val_per_attribute_metrics.csv")
-    assert {"accuracy", "f1", "mcc", "roc_auc", "pr_auc", "tn", "fn", "specificity", "npv", "lift"} <= set(table.columns)
+    assert list(table.columns[:6]) == ["attribute", "ap", "threshold", "f1", "precision", "recall"]
     assert (tmp_path / "val_metric_summary.csv").is_file()
     rank = pd.read_csv(tmp_path / "val_detection_rank.csv")
-    assert list(rank.columns) == ["epoch", "rank", "attribute", "f1", "recall", "accuracy"]
+    assert list(rank.columns) == [
+        "rank",
+        "attribute",
+        "ap",
+        "threshold",
+        "f1",
+        "precision",
+        "recall",
+        "positive_rate",
+    ]
     assert (tmp_path / "val_detection_rank.png").is_file()
 
 
@@ -162,6 +172,7 @@ def test_test_end_caps_error_images_and_writes_metrics(tmp_path):
         save_dir=str(tmp_path),
         max_per_bucket=2,
     )
+    callback._thresholds = np.array([0.5, 0.5])
     samples = [
         ("/data/a.jpg", [1, 0], [1, 1], [0.9, 0.8]),
         ("/data/b.jpg", [1, 1], [0, 1], [0.2, 0.7]),
@@ -190,24 +201,33 @@ def test_test_end_caps_error_images_and_writes_metrics(tmp_path):
     assert metrics.loc["Male", "tn"] == 3
     assert metrics.loc["Male", "fn"] == 1
     assert metrics.loc["Male", "gt_positive"] == 2
+    assert list(metrics.index) == ["Male", "Smiling"]
+    assert metrics.loc["Male", "threshold"] == 0.5
+    assert metrics.loc["Male", "ap"] == 1
     assert metrics.loc["Male", "recall"] == 0.5
     assert metrics.loc["Male", "precision"] == 1
-    assert list(metrics.index) == ["Smiling", "Male"]
     assert metrics.loc["Male", "f1"] == pytest.approx(2 / 3, abs=5e-4)
     assert metrics.loc["Male", "balanced_accuracy"] == 0.75
-    assert metrics.loc["Male", "roc_auc"] == 1
-    assert metrics.loc["Male", "pr_auc"] == 1
     assert metrics.loc["Smiling", "fp"] == 3
     assert metrics.loc["Smiling", "recall"] == 1
     assert metrics.loc["Smiling", "precision"] == 0.25
-    assert metrics.loc["Smiling", "pr_auc"] == 0.5
+    assert metrics.loc["Smiling", "ap"] == 0.5
     summary = pd.read_csv(tmp_path / "test_metric_summary.csv")
     assert summary.loc[0, "count"] == 5
     assert summary.loc[0, "tp"] == 2
     rank = pd.read_csv(tmp_path / "test_detection_rank.csv")
     assert list(rank["attribute"]) == ["Male", "Smiling"]
     assert list(rank["rank"]) == [1, 2]
-    assert list(rank.columns) == ["rank", "attribute", "f1", "recall", "accuracy"]
+    assert list(rank.columns) == [
+        "rank",
+        "attribute",
+        "ap",
+        "threshold",
+        "f1",
+        "precision",
+        "recall",
+        "positive_rate",
+    ]
     assert (tmp_path / "test_detection_rank.png").is_file()
     assert (tmp_path / "per_attribute_metrics.png").is_file()
     assert cv2.imread(str(tmp_path / "per_attribute_metrics.png")) is not None
@@ -254,6 +274,14 @@ def _write_attr_csv(path, rows):
         "path_img,attr_Bald,attr_Male\n" + "\n".join(rows) + "\n",
         encoding="utf-8",
     )
+
+
+def test_choose_f1_threshold_keeps_the_cut_closest_to_half():
+    scores = np.array([[0.3, 0.9], [0.05, 0.2], [0.0, 0.1]])
+    labels = np.array([[1, 1], [0, 0], [0, 0]])
+    thresholds = choose_f1_thresholds(scores, labels)
+    assert thresholds[0] == pytest.approx(0.3)
+    assert thresholds[1] == pytest.approx(0.5)
 
 
 def test_attribute_distribution_compares_three_splits(tmp_path):

@@ -193,25 +193,17 @@ def render_attribute_rate_chart(
     return _rgb_from_matplotlib_figure(fig)
 
 
-# 阈值 0.5 上能从混淆矩阵算出的率，再加上两条与阈值无关的排序曲线面积。
-# 分母为 0 的位置是 NaN，例如该属性没有正样本时的召回率。
+# 分析表里的比率都在验证集选出的阈值上计算。AP 与阈值无关。
+# 分母为 0 的位置是 NaN。训练日志里的准确率仍用后处理的 0.5，不读这些列。
 _RATE_COLUMNS = (
-    "positive_rate",
-    "predicted_positive_rate",
-    "accuracy",
-    "majority_accuracy",
-    "lift",
-    "balanced_accuracy",
+    "ap",
+    "f1",
     "precision",
     "recall",
+    "accuracy",
+    "balanced_accuracy",
     "specificity",
-    "fpr",
-    "fnr",
-    "npv",
-    "f1",
-    "mcc",
-    "roc_auc",
-    "pr_auc",
+    "positive_rate",
 )
 _COUNT_COLUMNS = (
     "tp",
@@ -224,34 +216,28 @@ _COUNT_COLUMNS = (
     "pred_negative",
     "count",
 )
-# 先看阳性率和准确率是否只是多数类，再看错在漏报还是误报，计数放最后。
 _METRIC_DISPLAY_COLUMNS = (
-    "positive_rate",
-    "gt_positive",
-    "count",
-    "accuracy",
-    "majority_accuracy",
-    "lift",
+    "ap",
+    "threshold",
+    "f1",
     "precision",
     "recall",
-    "f1",
-    "specificity",
-    "npv",
-    "fpr",
-    "fnr",
+    "accuracy",
     "balanced_accuracy",
-    "mcc",
-    "roc_auc",
-    "pr_auc",
-    "predicted_positive_rate",
-    "pred_positive",
-    "pred_negative",
+    "specificity",
+    "positive_rate",
     "tp",
     "fp",
     "tn",
     "fn",
+    "gt_positive",
     "gt_negative",
+    "pred_positive",
+    "pred_negative",
+    "count",
 )
+_RANK_COLUMNS = ("ap", "threshold", "f1", "precision", "recall", "positive_rate")
+_F1_THRESHOLD_GRID = np.round(np.arange(1, 100) / 100.0, 2)
 
 
 class AttributeCount:
@@ -297,6 +283,14 @@ class AttributeCount:
             raise ValueError(f"概率 {tuple(scores.shape)} 与真值 {tuple(target_b.shape)} 形状不一致")
         self._scores.append(scores)
         self._labels.append(target_b.to(torch.int64))
+
+    def score_matrix(self) -> tuple[np.ndarray, np.ndarray] | None:
+        if not self._scores:
+            return None
+        return (
+            torch.cat(self._scores, dim=0).numpy().astype(np.float64, copy=False),
+            torch.cat(self._labels, dim=0).numpy().astype(np.int64, copy=False),
+        )
 
     def accuracy_recall(self) -> tuple[np.ndarray, np.ndarray]:
         summary = self.summary()
@@ -621,7 +615,11 @@ class LogAttributeClassifierValVisualizationCallback(pl.Callback):
         if names is None:
             return
         try:
-            rates = self._counts.summary()
+            packed = self._counts.score_matrix()
+            if packed is None:
+                return
+            thresholds = choose_f1_thresholds(*packed)
+            rates = metrics_from_scores(*packed, thresholds)
             chart = render_attribute_rate_chart(
                 names, rates["positive_rate"], rates["precision"], rates["recall"]
             )
@@ -630,15 +628,7 @@ class LogAttributeClassifierValVisualizationCallback(pl.Callback):
             root = _log_dir(trainer)
             if root is None:
                 return
-            epoch = int(getattr(trainer, "current_epoch", 0))
-            _append_csv(root / "val_per_attribute_metrics.csv", metrics_frame(names, rates, epoch))
-            _append_csv(root / "val_metric_summary.csv", metric_summary_frame(rates, epoch))
-            rank = detection_rank_frame(names, rates, epoch)
-            rank_csv = root / "val_detection_rank.csv"
-            rank.to_csv(rank_csv, index=False)
-            rank_chart = render_detection_rank_chart(rank)
-            cv2.imwrite(str(root / "val_detection_rank.png"), cv2.cvtColor(rank_chart, cv2.COLOR_RGB2BGR))
-            _add_image(trainer, pl_module, "val/detection_rank", rank_chart)
+            _write_operating_tables(root, "val", names, rates, trainer, pl_module)
         except Exception as exc:
             print(
                 "Warning: failed to log val attribute metrics at step "
@@ -684,7 +674,11 @@ class SaveAttributeClassifierTestPredictVisualizationCallback(pl.Callback):
         self.max_per_bucket = int(max_per_bucket)
         self.max_predict_images = None if max_predict_images is None else int(max_predict_images)
         self._configured_save_dir = Path(save_dir) if save_dir else None
+        self._thresholds: np.ndarray | None = None
         self._reset_run_state()
+
+    def on_test_start(self, trainer, pl_module) -> None:
+        self._thresholds = _validation_thresholds(trainer, pl_module)
 
     def on_test_epoch_start(self, trainer, pl_module) -> None:
         self._reset_run_state()
@@ -704,17 +698,20 @@ class SaveAttributeClassifierTestPredictVisualizationCallback(pl.Callback):
             print("Warning: test batch has no attribute labels, skip error images")
             return
         self._counts.update(pred, target, probs)
+        decision = _decision_at_thresholds(probs, self._thresholds, pred)
         root = self._root(trainer)
         display = [attribute_display_name(name) for name in names]
-        for index in range(pred.shape[0]):
+        for index in range(decision.shape[0]):
             image_path = str(net_in[index].get("img_path", f"sample_{index}"))
-            self._rows.append(_result_row(image_path, display, probs[index], pred[index], target[index]))
+            self._rows.append(
+                _result_row(image_path, display, probs[index], decision[index], target[index])
+            )
             if root is None:
                 continue
-            needed = self._open_error_buckets(pred[index], target[index])
+            needed = self._open_error_buckets(decision[index], target[index])
             if not needed:
                 continue
-            rows = visible_attribute_rows(display, probs[index], pred[index], target[index])
+            rows = visible_attribute_rows(display, probs[index], decision[index], target[index])
             panel = render_attribute_panel(_face_bgr(dataset, net_in[index]), rows, with_target=True)
             stem = Path(image_path).stem
             for attr_index, kind in needed:
@@ -737,26 +734,24 @@ class SaveAttributeClassifierTestPredictVisualizationCallback(pl.Callback):
         names = _column_names(dataset, int(self._counts.correct.shape[0]))
         if names is None:
             return
-        rates = self._counts.summary()
-        metrics_path = root / "per_attribute_metrics.csv"
-        metrics_frame(names, rates).to_csv(metrics_path, index=False)
-        summary_path = root / "test_metric_summary.csv"
-        metric_summary_frame(rates).to_csv(summary_path, index=False)
+        packed = self._counts.score_matrix()
+        if packed is None:
+            return
+        thresholds = self._thresholds
+        if thresholds is None:
+            print("Warning: 验证集阈值未选出，测试分析表的阈值留空")
+            thresholds = np.full(packed[0].shape[1], np.nan)
+        elif len(thresholds) != packed[0].shape[1]:
+            print("Warning: 验证集属性数与测试不一致，测试分析表的阈值留空")
+            thresholds = np.full(packed[0].shape[1], np.nan)
+        rates = metrics_from_scores(*packed, thresholds)
         chart = render_attribute_rate_chart(
             names, rates["positive_rate"], rates["precision"], rates["recall"]
         )
         chart_path = root / "per_attribute_metrics.png"
         cv2.imwrite(str(chart_path), cv2.cvtColor(chart, cv2.COLOR_RGB2BGR))
         _add_image(trainer, pl_module, "test/attribute_rates", chart)
-        rank = detection_rank_frame(names, rates)
-        rank_path = root / "test_detection_rank.csv"
-        rank.to_csv(rank_path, index=False)
-        rank_chart = render_detection_rank_chart(rank)
-        cv2.imwrite(str(root / "test_detection_rank.png"), cv2.cvtColor(rank_chart, cv2.COLOR_RGB2BGR))
-        _add_image(trainer, pl_module, "test/detection_rank", rank_chart)
-        _add_metric_means(trainer, pl_module, "test/metric_mean", rates)
-        print(f"逐属性指标已保存到: {metrics_path}")
-        print(f"按 F1 排序的检测效果已保存到: {rank_path}")
+        _write_operating_tables(root, "test", names, rates, trainer, pl_module)
 
     def on_predict_batch_end(
         self,
@@ -910,29 +905,132 @@ def _pair_mean(left: np.ndarray, right: np.ndarray) -> np.ndarray:
     return out
 
 
-def metrics_frame(names, rates: dict[str, np.ndarray], epoch: int | None = None) -> pd.DataFrame:
+def choose_f1_thresholds(scores: np.ndarray, labels: np.ndarray) -> np.ndarray:
+    """在验证集上为每个属性选 F1 最大的阈值。
+
+    网格是 0.01 到 0.99。F1 并列时留精确率更高的；再并列时留更接近 0.5 的。
+    该属性没有正样本时阈值留空。
+    """
+    grid = _F1_THRESHOLD_GRID
+    thresholds = np.full(scores.shape[1], np.nan, dtype=np.float64)
+    labels_b = labels.astype(bool)
+    for index in range(scores.shape[1]):
+        positive = labels_b[:, index]
+        if not np.any(positive):
+            continue
+        score = scores[:, index]
+        pred = score[None, :] >= grid[:, None]
+        tp = np.logical_and(pred, positive).sum(axis=1)
+        fp = np.logical_and(pred, ~positive).sum(axis=1)
+        fn = np.logical_and(~pred, positive).sum(axis=1)
+        denom = 2 * tp + fp + fn
+        valid = denom > 0
+        f1 = np.full(grid.shape, -np.inf, dtype=np.float64)
+        f1[valid] = (2 * tp[valid]) / denom[valid]
+        predicted = tp + fp
+        precision = np.full(grid.shape, -np.inf, dtype=np.float64)
+        has_pred = predicted > 0
+        precision[has_pred] = tp[has_pred] / predicted[has_pred]
+        closeness = -np.abs(grid - 0.5)
+        order = np.lexsort((np.arange(grid.shape[0]), closeness, precision, f1))
+        best = int(order[-1])
+        if not np.isfinite(f1[best]):
+            continue
+        thresholds[index] = float(grid[best])
+    return thresholds
+
+
+def metrics_from_scores(
+    scores: np.ndarray,
+    labels: np.ndarray,
+    thresholds: np.ndarray,
+) -> dict[str, np.ndarray]:
+    """AP 来自当前划分的概率。其余比率和计数用给定阈值，通常是验证集选出的阈值。"""
+    labels_b = labels.astype(bool)
+    limit = np.asarray(thresholds, dtype=np.float64)
+    finite = np.isfinite(limit)
+    pred = np.zeros(scores.shape, dtype=bool)
+    if np.any(finite):
+        pred[:, finite] = scores[:, finite] >= limit[finite]
+    tp = (pred & labels_b).sum(axis=0).astype(np.int64)
+    fp = (pred & ~labels_b).sum(axis=0).astype(np.int64)
+    fn = (~pred & labels_b).sum(axis=0).astype(np.int64)
+    tn = (~pred & ~labels_b).sum(axis=0).astype(np.int64)
+    count = np.full(tp.shape, scores.shape[0], dtype=np.int64)
+    gt_pos = labels_b.sum(axis=0).astype(np.int64)
+    gt_neg = count - gt_pos
+    pred_pos = tp + fp
+    pred_neg = tn + fn
+    missing = ~finite
+    for column in (tp, fp, tn, fn, pred_pos, pred_neg):
+        column[missing] = 0
+    precision = _divide(tp, pred_pos)
+    recall = _divide(tp, gt_pos)
+    specificity = _divide(tn, gt_neg)
+    accuracy = _divide(tp + tn, count)
+    f1 = _divide(2 * tp, 2 * tp + fp + fn)
+    balanced = _pair_mean(recall, specificity)
+    for column in (precision, recall, specificity, accuracy, f1, balanced):
+        column[missing] = np.nan
+    return {
+        "ap": _average_precision(scores, labels),
+        "threshold": limit,
+        "f1": f1,
+        "precision": precision,
+        "recall": recall,
+        "accuracy": accuracy,
+        "balanced_accuracy": balanced,
+        "specificity": specificity,
+        "positive_rate": _divide(gt_pos, count),
+        "tp": tp,
+        "fp": fp,
+        "tn": tn,
+        "fn": fn,
+        "gt_positive": gt_pos,
+        "gt_negative": gt_neg,
+        "pred_positive": pred_pos,
+        "pred_negative": pred_neg,
+        "count": count,
+    }
+
+
+def _average_precision(scores: np.ndarray, labels: np.ndarray) -> np.ndarray:
+    from torchmetrics.functional.classification import binary_average_precision
+
+    ap = np.full(scores.shape[1], np.nan, dtype=np.float64)
+    score_t = torch.as_tensor(scores, dtype=torch.float32)
+    label_t = torch.as_tensor(labels, dtype=torch.int64)
+    for index in range(scores.shape[1]):
+        label = label_t[:, index]
+        if int(label.min()) == int(label.max()):
+            continue
+        ap[index] = float(binary_average_precision(score_t[:, index], label))
+    return ap
+
+
+def metrics_frame(names, rates: dict[str, np.ndarray]) -> pd.DataFrame:
     rows = []
     for index, name in enumerate(names):
         row: dict[str, Any] = {"attribute": attribute_display_name(name)}
-        if epoch is not None:
-            row["epoch"] = int(epoch)
-        for key in _RATE_COLUMNS:
+        for key in _METRIC_DISPLAY_COLUMNS:
             value = float(rates[key][index])
-            row[key] = None if np.isnan(value) else round(value, 4)
-        for key in _COUNT_COLUMNS:
-            row[key] = int(rates[key][index])
+            if np.isnan(value):
+                row[key] = None
+            elif key == "threshold":
+                row[key] = round(value, 2)
+            elif key in _COUNT_COLUMNS:
+                row[key] = int(rates[key][index])
+            else:
+                row[key] = round(value, 4)
         rows.append(row)
     frame = pd.DataFrame(rows)
-    frame = frame.sort_values(["positive_rate", "attribute"], ascending=True, na_position="last", kind="mergesort")
-    columns = ["attribute"] + (["epoch"] if epoch is not None else []) + list(_METRIC_DISPLAY_COLUMNS)
-    return frame[columns].reset_index(drop=True)
+    frame = frame.sort_values(["ap", "attribute"], ascending=[False, True], na_position="last", kind="mergesort")
+    return frame[["attribute", *_METRIC_DISPLAY_COLUMNS]].reset_index(drop=True)
 
 
-def metric_summary_frame(rates: dict[str, np.ndarray], epoch: int | None = None) -> pd.DataFrame:
-    """40 个属性的宏平均。某个属性分母为 0 时不进入该项平均。计数是各属性相加。"""
+def metric_summary_frame(rates: dict[str, np.ndarray]) -> pd.DataFrame:
+    """各属性的宏平均。某个属性分母为 0 时不进入该项平均。计数是各属性相加。"""
     row: dict[str, Any] = {}
-    if epoch is not None:
-        row["epoch"] = int(epoch)
     for key in _RATE_COLUMNS:
         values = np.asarray(rates[key], dtype=np.float64)
         finite = values[np.isfinite(values)]
@@ -942,65 +1040,67 @@ def metric_summary_frame(rates: dict[str, np.ndarray], epoch: int | None = None)
             row[key] = int(rates[key][0])
         else:
             row[key] = int(np.asarray(rates[key]).sum())
-    columns = (["epoch"] if epoch is not None else []) + list(_METRIC_DISPLAY_COLUMNS)
+    columns = list(_RATE_COLUMNS) + list(_COUNT_COLUMNS)
     return pd.DataFrame([row])[columns]
 
 
-def detection_rank_frame(names, rates: dict[str, np.ndarray], epoch: int | None = None) -> pd.DataFrame:
-    """按 F1 从高到低排列。F1 同时看准和看全，用来比哪个属性检测效果好。"""
+def detection_rank_frame(names, rates: dict[str, np.ndarray]) -> pd.DataFrame:
+    """按 AP 从高到低排列。阈值和 F1、精确率、召回率是验证集选出的工作点。"""
     rows = []
     for index, name in enumerate(names):
         row: dict[str, Any] = {"attribute": attribute_display_name(name)}
-        for key in ("f1", "recall", "accuracy"):
+        for key in _RANK_COLUMNS:
             value = float(rates[key][index])
-            row[key] = None if np.isnan(value) else round(value, 4)
+            if np.isnan(value):
+                row[key] = None
+            elif key == "threshold":
+                row[key] = round(value, 2)
+            else:
+                row[key] = round(value, 4)
         rows.append(row)
     frame = pd.DataFrame(rows)
-    frame = frame.sort_values(["f1", "attribute"], ascending=[False, True], na_position="last", kind="mergesort")
+    frame = frame.sort_values(["ap", "attribute"], ascending=[False, True], na_position="last", kind="mergesort")
     frame.insert(0, "rank", range(1, len(frame) + 1))
-    if epoch is not None:
-        frame.insert(0, "epoch", int(epoch))
     return frame.reset_index(drop=True)
 
 
 def render_detection_rank_chart(frame: pd.DataFrame) -> np.ndarray:
-    """F1 高的在上。F1 一列按高低着色。返回 RGB uint8。"""
+    """AP 高的在上。AP 一列按高低着色。返回 RGB uint8。"""
     import matplotlib
 
     if matplotlib.get_backend().lower() != "agg":
         matplotlib.use("Agg", force=True)
     import matplotlib.pyplot as plt
 
-    show = frame.loc[:, ["rank", "attribute", "f1", "recall", "accuracy"]]
-    fig, axis = plt.subplots(figsize=(7.4, max(4.2, 0.28 * len(show) + 0.9)))
+    columns = ["rank", "attribute", "ap", "threshold", "f1", "precision", "recall", "positive_rate"]
+    show = frame.loc[:, columns]
+    fig, axis = plt.subplots(figsize=(11.0, max(4.2, 0.28 * len(show) + 0.9)))
     axis.axis("off")
-    axis.set_title("detection rank by F1", loc="left", fontsize=11, pad=8)
+    axis.set_title("detection rank by AP", loc="left", fontsize=11, pad=8)
     cells = []
     for _, row in show.iterrows():
         cells.append(
             [
                 str(int(row["rank"])),
                 str(row["attribute"]),
+                _rank_cell(row["ap"]),
+                _rank_cell(row["threshold"], digits=2),
                 _rank_cell(row["f1"]),
+                _rank_cell(row["precision"]),
                 _rank_cell(row["recall"]),
-                _rank_cell(row["accuracy"]),
+                _rank_cell(row["positive_rate"]),
             ]
         )
-    table = axis.table(
-        cellText=cells,
-        colLabels=["rank", "attribute", "f1", "recall", "accuracy"],
-        loc="center",
-        cellLoc="left",
-    )
+    table = axis.table(cellText=cells, colLabels=columns, loc="center", cellLoc="left")
     table.auto_set_font_size(False)
     table.set_fontsize(8)
     table.scale(1, 1.2)
-    f1_values = pd.to_numeric(show["f1"], errors="coerce").to_numpy(dtype=np.float64)
-    finite = f1_values[np.isfinite(f1_values)]
+    ap_values = pd.to_numeric(show["ap"], errors="coerce").to_numpy(dtype=np.float64)
+    finite = ap_values[np.isfinite(ap_values)]
     low = float(finite.min()) if finite.size else 0.0
     high = float(finite.max()) if finite.size else 1.0
     span = max(high - low, 1e-6)
-    for row_index, value in enumerate(f1_values, start=1):
+    for row_index, value in enumerate(ap_values, start=1):
         if not np.isfinite(value):
             continue
         shade = (float(value) - low) / span
@@ -1009,10 +1109,103 @@ def render_detection_rank_chart(frame: pd.DataFrame) -> np.ndarray:
     return _rgb_from_matplotlib_figure(fig)
 
 
-def _rank_cell(value) -> str:
-    if value is None or (isinstance(value, float) and np.isnan(value)):
+def _rank_cell(value, digits: int = 4) -> str:
+    if value is None or (isinstance(value, float) and np.isnan(value)) or pd.isna(value):
         return ""
-    return f"{float(value):.4f}"
+    return f"{float(value):.{digits}f}"
+
+
+def _write_operating_tables(root: Path, stage: str, names, rates, trainer, pl_module) -> None:
+    root.mkdir(parents=True, exist_ok=True)
+    if stage == "val":
+        detail_name = "val_per_attribute_metrics.csv"
+        summary_name = "val_metric_summary.csv"
+        rank_name = "val_detection_rank.csv"
+        rank_png = "val_detection_rank.png"
+        tag = "val/detection_rank"
+    else:
+        detail_name = "per_attribute_metrics.csv"
+        summary_name = "test_metric_summary.csv"
+        rank_name = "test_detection_rank.csv"
+        rank_png = "test_detection_rank.png"
+        tag = "test/detection_rank"
+    detail_path = root / detail_name
+    metrics_frame(names, rates).to_csv(detail_path, index=False)
+    metric_summary_frame(rates).to_csv(root / summary_name, index=False)
+    rank = detection_rank_frame(names, rates)
+    rank_path = root / rank_name
+    rank.to_csv(rank_path, index=False)
+    chart = render_detection_rank_chart(rank)
+    cv2.imwrite(str(root / rank_png), cv2.cvtColor(chart, cv2.COLOR_RGB2BGR))
+    _add_image(trainer, pl_module, tag, chart)
+    if stage == "test":
+        print(f"逐属性指标已保存到: {detail_path}")
+        print(f"按 AP 排序的检测效果已保存到: {rank_path}")
+
+
+def _validation_thresholds(trainer, pl_module) -> np.ndarray | None:
+    """用当前权重在验证集上选阈值。不读以前的日志。"""
+    datamodule = getattr(trainer, "datamodule", None)
+    if datamodule is None or not hasattr(datamodule, "setup") or not hasattr(datamodule, "val_dataloader"):
+        print("Warning: 没有验证集，测试分析表的阈值留空")
+        return None
+    try:
+        datamodule.setup("validate")
+        loader = datamodule.val_dataloader()
+    except Exception as exc:
+        print(f"Warning: 无法构建验证集来选择阈值，{exc}")
+        return None
+    device = _module_device(pl_module)
+    was_training = bool(getattr(pl_module, "training", False))
+    if hasattr(pl_module, "eval"):
+        pl_module.eval()
+    scores: list[torch.Tensor] = []
+    labels: list[torch.Tensor] = []
+    try:
+        with torch.inference_mode():
+            for batch in loader:
+                net_in, net_out = batch
+                if not isinstance(net_out, dict) or "attr" not in net_out:
+                    continue
+                images = BaseDataset.model_float_images(BaseDataset.stack_batch_images(net_in)).to(device)
+                posterior = pl_module.postprocess.run(pl_module(images))
+                scores.append(posterior["probs"].detach().float().cpu())
+                labels.append(net_out["attr"].detach().cpu())
+    except Exception as exc:
+        print(f"Warning: 验证集前向失败，测试分析表的阈值留空，{exc}")
+        return None
+    finally:
+        if was_training and hasattr(pl_module, "train"):
+            pl_module.train()
+    if not scores:
+        print("Warning: 验证集没有属性标签，测试分析表的阈值留空")
+        return None
+    return choose_f1_thresholds(torch.cat(scores).numpy(), torch.cat(labels).numpy())
+
+
+def _module_device(module) -> torch.device:
+    parameters = getattr(module, "parameters", None)
+    if parameters is None:
+        return torch.device("cpu")
+    try:
+        return next(parameters()).device
+    except StopIteration:
+        return torch.device("cpu")
+
+
+def _decision_at_thresholds(probs: torch.Tensor, thresholds: np.ndarray | None, fallback: torch.Tensor) -> torch.Tensor:
+    """有验证集阈值时按该阈值判定，没有时沿用后处理给出的 0.5 预测。"""
+    if thresholds is None:
+        return fallback
+    scores = probs.detach().cpu().float()
+    limit = np.asarray(thresholds, dtype=np.float64)
+    if limit.shape[0] != scores.shape[-1]:
+        return fallback
+    chosen = scores.numpy() >= limit
+    missing = ~np.isfinite(limit)
+    if np.any(missing):
+        chosen[:, missing] = _as_numpy_binary(fallback)[:, missing]
+    return torch.from_numpy(chosen.astype(np.float32))
 
 
 def _order_by_ascending(values: np.ndarray) -> np.ndarray:
