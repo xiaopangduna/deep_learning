@@ -3,6 +3,7 @@
 from types import SimpleNamespace
 
 import cv2
+import pytest
 import numpy as np
 import pandas as pd
 import torch
@@ -125,8 +126,14 @@ def test_val_logs_first_batch_and_metric_chart(tmp_path, monkeypatch):
 
     assert calls == ["/data/0.jpg", "/data/1.jpg"]
     tags = [item[0] for item in experiment.images]
-    assert tags == ["val/sample_attributes", "val/attribute_rates"]
+    assert tags == ["val/sample_attributes", "val/attribute_rates", "val/detection_rank"]
     assert experiment.images[0][2] == 4
+    table = pd.read_csv(tmp_path / "val_per_attribute_metrics.csv")
+    assert {"accuracy", "f1", "mcc", "roc_auc", "pr_auc", "tn", "fn", "specificity", "npv", "lift"} <= set(table.columns)
+    assert (tmp_path / "val_metric_summary.csv").is_file()
+    rank = pd.read_csv(tmp_path / "val_detection_rank.csv")
+    assert list(rank.columns) == ["epoch", "rank", "attribute", "f1", "recall", "accuracy"]
+    assert (tmp_path / "val_detection_rank.png").is_file()
 
 
 def test_val_second_batch_call_uses_outputs(tmp_path, monkeypatch):
@@ -141,7 +148,7 @@ def test_val_second_batch_call_uses_outputs(tmp_path, monkeypatch):
     outputs, batch = _batch("/data/a.jpg", [1, 0], [0, 0], [0.2, 0.1])
     callback.on_validation_batch_end(trainer, module, outputs, batch, 1)
     callback.on_validation_epoch_end(trainer, module)
-    assert [item[0] for item in experiment.images] == ["val/attribute_rates"]
+    assert [item[0] for item in experiment.images] == ["val/attribute_rates", "val/detection_rank"]
     assert callback._counts.count == 1
     accuracy, recall = callback._counts.accuracy_recall()
     assert accuracy[0] == 0
@@ -180,9 +187,28 @@ def test_test_end_caps_error_images_and_writes_metrics(tmp_path):
 
     metrics = pd.read_csv(tmp_path / "per_attribute_metrics.csv").set_index("attribute")
     assert metrics.loc["Male", "tp"] == 1
+    assert metrics.loc["Male", "tn"] == 3
+    assert metrics.loc["Male", "fn"] == 1
     assert metrics.loc["Male", "gt_positive"] == 2
     assert metrics.loc["Male", "recall"] == 0.5
+    assert metrics.loc["Male", "precision"] == 1
+    assert list(metrics.index) == ["Smiling", "Male"]
+    assert metrics.loc["Male", "f1"] == pytest.approx(2 / 3, abs=5e-4)
+    assert metrics.loc["Male", "balanced_accuracy"] == 0.75
+    assert metrics.loc["Male", "roc_auc"] == 1
+    assert metrics.loc["Male", "pr_auc"] == 1
+    assert metrics.loc["Smiling", "fp"] == 3
     assert metrics.loc["Smiling", "recall"] == 1
+    assert metrics.loc["Smiling", "precision"] == 0.25
+    assert metrics.loc["Smiling", "pr_auc"] == 0.5
+    summary = pd.read_csv(tmp_path / "test_metric_summary.csv")
+    assert summary.loc[0, "count"] == 5
+    assert summary.loc[0, "tp"] == 2
+    rank = pd.read_csv(tmp_path / "test_detection_rank.csv")
+    assert list(rank["attribute"]) == ["Male", "Smiling"]
+    assert list(rank["rank"]) == [1, 2]
+    assert list(rank.columns) == ["rank", "attribute", "f1", "recall", "accuracy"]
+    assert (tmp_path / "test_detection_rank.png").is_file()
     assert (tmp_path / "per_attribute_metrics.png").is_file()
     assert cv2.imread(str(tmp_path / "per_attribute_metrics.png")) is not None
     assert experiment.images[0][0] == "test/attribute_rates"
@@ -271,6 +297,14 @@ def test_attribute_distribution_compares_three_splits(tmp_path):
     callback.on_fit_start(trainer, module)
     saved = pd.read_csv(tmp_path / "run" / "attribute_distribution.csv")
     assert list(saved["attribute"]) == ["Bald", "Male"]
+    assert list(saved.columns[:6]) == [
+        "attribute",
+        "train_rate",
+        "val_rate",
+        "test_rate",
+        "val_minus_train",
+        "test_minus_train",
+    ]
     assert (tmp_path / "run" / "attribute_distribution.png").is_file()
     assert cv2.imread(str(tmp_path / "run" / "attribute_distribution.png")) is not None
 

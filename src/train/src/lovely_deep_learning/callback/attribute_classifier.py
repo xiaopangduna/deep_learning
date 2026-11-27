@@ -164,7 +164,7 @@ def render_attribute_rate_chart(
     precision: np.ndarray,
     recall: np.ndarray,
 ) -> np.ndarray:
-    """正样本比例、精确率、召回率。返回 RGB uint8。没有正例或预测的位置留空。"""
+    """正样本比例、精确率、召回率，稀有属性在上。返回 RGB uint8。没有正例或预测的位置留空。"""
     import matplotlib
 
     if matplotlib.get_backend().lower() != "agg":
@@ -172,22 +172,90 @@ def render_attribute_rate_chart(
     import matplotlib.pyplot as plt
 
     labels = [attribute_display_name(name) for name in names]
-    x = np.arange(len(labels))
-    width = 0.25
-    fig, axis = plt.subplots(figsize=(max(8.0, 0.36 * len(labels) + 1.5), 5.2))
-    axis.bar(x - width, np.asarray(positive_rate, dtype=np.float64), width, label="positive rate", color="#B0B0B0")
-    axis.bar(x, np.asarray(precision, dtype=np.float64), width, label="precision", color="#4C78A8")
-    axis.bar(x + width, np.asarray(recall, dtype=np.float64), width, label="recall", color="#F58518")
-    axis.set_ylim(0.0, 1.0)
-    axis.set_xticks(x)
-    axis.set_xticklabels(labels, rotation=90, fontsize=7)
-    axis.legend(loc="upper right", fontsize=8)
+    positive = np.asarray(positive_rate, dtype=np.float64)
+    precise = np.asarray(precision, dtype=np.float64)
+    recalled = np.asarray(recall, dtype=np.float64)
+    order = _order_by_ascending(positive)
+    labels = [labels[index] for index in order]
+    positive, precise, recalled = positive[order], precise[order], recalled[order]
+    y = np.arange(len(labels))
+    height = 0.25
+    fig, axis = plt.subplots(figsize=(8.0, max(4.8, 0.32 * len(labels) + 1.2)))
+    axis.barh(y - height, positive, height, label="positive rate", color="#B0B0B0")
+    axis.barh(y, precise, height, label="precision", color="#4C78A8")
+    axis.barh(y + height, recalled, height, label="recall", color="#F58518")
+    axis.set_xlim(0.0, 1.0)
+    axis.set_yticks(y)
+    axis.set_yticklabels(labels, fontsize=8)
+    axis.invert_yaxis()
+    axis.legend(loc="lower right", fontsize=8)
     fig.tight_layout()
     return _rgb_from_matplotlib_figure(fig)
 
 
+# 阈值 0.5 上能从混淆矩阵算出的率，再加上两条与阈值无关的排序曲线面积。
+# 分母为 0 的位置是 NaN，例如该属性没有正样本时的召回率。
+_RATE_COLUMNS = (
+    "positive_rate",
+    "predicted_positive_rate",
+    "accuracy",
+    "majority_accuracy",
+    "lift",
+    "balanced_accuracy",
+    "precision",
+    "recall",
+    "specificity",
+    "fpr",
+    "fnr",
+    "npv",
+    "f1",
+    "mcc",
+    "roc_auc",
+    "pr_auc",
+)
+_COUNT_COLUMNS = (
+    "tp",
+    "fp",
+    "tn",
+    "fn",
+    "gt_positive",
+    "gt_negative",
+    "pred_positive",
+    "pred_negative",
+    "count",
+)
+# 先看阳性率和准确率是否只是多数类，再看错在漏报还是误报，计数放最后。
+_METRIC_DISPLAY_COLUMNS = (
+    "positive_rate",
+    "gt_positive",
+    "count",
+    "accuracy",
+    "majority_accuracy",
+    "lift",
+    "precision",
+    "recall",
+    "f1",
+    "specificity",
+    "npv",
+    "fpr",
+    "fnr",
+    "balanced_accuracy",
+    "mcc",
+    "roc_auc",
+    "pr_auc",
+    "predicted_positive_rate",
+    "pred_positive",
+    "pred_negative",
+    "tp",
+    "fp",
+    "tn",
+    "fn",
+    "gt_negative",
+)
+
+
 class AttributeCount:
-    """逐属性累计正确数、真正例和真值为 1 的个数。"""
+    """逐属性累计混淆矩阵，并保留概率以便计算 ROC-AUC 和 PR-AUC。"""
 
     def __init__(self) -> None:
         self.correct: torch.Tensor | None = None
@@ -195,8 +263,10 @@ class AttributeCount:
         self.fp: torch.Tensor | None = None
         self.gt_pos: torch.Tensor | None = None
         self.count = 0
+        self._scores: list[torch.Tensor] = []
+        self._labels: list[torch.Tensor] = []
 
-    def update(self, pred: torch.Tensor, target: torch.Tensor) -> None:
+    def update(self, pred: torch.Tensor, target: torch.Tensor, probs: torch.Tensor | None = None) -> None:
         pred_b = _as_binary_tensor(pred)
         target_b = _as_binary_tensor(target)
         if pred_b.shape != target_b.shape:
@@ -220,39 +290,92 @@ class AttributeCount:
             self.fp += fp
             self.gt_pos += positive
         self.count += int(pred_b.shape[0])
+        if probs is None:
+            return
+        scores = probs.detach().cpu().float()
+        if scores.shape != target_b.shape:
+            raise ValueError(f"概率 {tuple(scores.shape)} 与真值 {tuple(target_b.shape)} 形状不一致")
+        self._scores.append(scores)
+        self._labels.append(target_b.to(torch.int64))
 
     def accuracy_recall(self) -> tuple[np.ndarray, np.ndarray]:
-        if self.correct is None or self.count == 0:
-            raise RuntimeError("还没有样本")
-        accuracy = (self.correct.float() / self.count).numpy()
-        recall = np.full(self.correct.shape[0], np.nan, dtype=np.float64)
-        positive = self.gt_pos
-        assert positive is not None and self.tp is not None
-        mask = positive > 0
-        recall[mask.numpy()] = (self.tp[mask].float() / positive[mask].float()).numpy()
-        return accuracy, recall
+        summary = self.summary()
+        return summary["accuracy"], summary["recall"]
 
     def summary(self) -> dict[str, np.ndarray]:
-        """准确率、精确率、召回率，以及标签里为 1 的比例。
-
-        ``majority_accuracy`` 是每个属性永远猜出现更多的那一类能拿到的准确率。
-        稀有属性上它和准确率很接近，单看准确率会把分布当成模型效果。
-        """
-        accuracy, recall = self.accuracy_recall()
-        assert self.tp is not None and self.fp is not None and self.gt_pos is not None
-        predicted = self.tp + self.fp
-        precision = np.full(accuracy.shape[0], np.nan, dtype=np.float64)
-        mask = predicted > 0
-        precision[mask.numpy()] = (self.tp[mask].float() / predicted[mask].float()).numpy()
-        positive_rate = (self.gt_pos.float() / self.count).numpy()
+        """每个属性一行的计数和比率。训练用的平均准确率不在这里改。"""
+        if self.correct is None or self.tp is None or self.fp is None or self.gt_pos is None or self.count == 0:
+            raise RuntimeError("还没有样本")
+        tp = self.tp.numpy().astype(np.int64)
+        fp = self.fp.numpy().astype(np.int64)
+        gt_pos = self.gt_pos.numpy().astype(np.int64)
+        count = np.full(tp.shape, self.count, dtype=np.int64)
+        fn = gt_pos - tp
+        gt_neg = count - gt_pos
+        tn = gt_neg - fp
+        pred_pos = tp + fp
+        pred_neg = tn + fn
+        positive_rate = _divide(gt_pos, count)
+        predicted_positive_rate = _divide(pred_pos, count)
+        accuracy = _divide(tp + tn, count)
         majority = np.maximum(positive_rate, 1.0 - positive_rate)
+        precision = _divide(tp, pred_pos)
+        recall = _divide(tp, gt_pos)
+        specificity = _divide(tn, gt_neg)
+        roc_auc, pr_auc = self._ranking(tp.shape[0])
         return {
+            "positive_rate": positive_rate,
+            "predicted_positive_rate": predicted_positive_rate,
             "accuracy": accuracy,
+            "majority_accuracy": majority,
+            "lift": accuracy - majority,
+            "balanced_accuracy": _pair_mean(recall, specificity),
             "precision": precision,
             "recall": recall,
-            "positive_rate": positive_rate,
-            "majority_accuracy": majority,
+            "specificity": specificity,
+            "fpr": _divide(fp, gt_neg),
+            "fnr": _divide(fn, gt_pos),
+            "npv": _divide(tn, pred_neg),
+            "f1": _divide(2 * tp, 2 * tp + fp + fn),
+            "mcc": _divide(
+                tp.astype(np.float64) * tn - fp.astype(np.float64) * fn,
+                np.sqrt(
+                    (tp + fp).astype(np.float64)
+                    * (tp + fn).astype(np.float64)
+                    * (tn + fp).astype(np.float64)
+                    * (tn + fn).astype(np.float64)
+                ),
+            ),
+            "roc_auc": roc_auc,
+            "pr_auc": pr_auc,
+            "tp": tp,
+            "fp": fp,
+            "tn": tn,
+            "fn": fn,
+            "gt_positive": gt_pos,
+            "gt_negative": gt_neg,
+            "pred_positive": pred_pos,
+            "pred_negative": pred_neg,
+            "count": count,
         }
+
+    def _ranking(self, width: int) -> tuple[np.ndarray, np.ndarray]:
+        roc_auc = np.full(width, np.nan, dtype=np.float64)
+        pr_auc = np.full(width, np.nan, dtype=np.float64)
+        if not self._scores:
+            return roc_auc, pr_auc
+        from torchmetrics.functional.classification import binary_auroc, binary_average_precision
+
+        scores = torch.cat(self._scores, dim=0)
+        labels = torch.cat(self._labels, dim=0)
+        for index in range(width):
+            label = labels[:, index]
+            if int(label.min()) == int(label.max()):
+                continue
+            score = scores[:, index]
+            roc_auc[index] = float(binary_auroc(score, label))
+            pr_auc[index] = float(binary_average_precision(score, label))
+        return roc_auc, pr_auc
 
 
 def _rgb_from_matplotlib_figure(fig) -> np.ndarray:
@@ -304,11 +427,30 @@ def attribute_distribution_frame(
         row["val_minus_train"] = row["val_rate"] - train_rate
         row["test_minus_train"] = row["test_rate"] - train_rate
         rows.append(row)
-    return pd.DataFrame(rows)
+    frame = pd.DataFrame(rows)
+    for column in ("train_rate", "val_rate", "test_rate", "val_minus_train", "test_minus_train"):
+        frame[column] = frame[column].map(lambda value: round(float(value), 4))
+    frame = frame.sort_values(["train_rate", "attribute"], ascending=True, kind="mergesort")
+    return frame[
+        [
+            "attribute",
+            "train_rate",
+            "val_rate",
+            "test_rate",
+            "val_minus_train",
+            "test_minus_train",
+            "train_positive",
+            "val_positive",
+            "test_positive",
+            "train_count",
+            "val_count",
+            "test_count",
+        ]
+    ].reset_index(drop=True)
 
 
 def render_attribute_distribution_chart(frame: pd.DataFrame) -> np.ndarray:
-    """每个属性三根柱：训练、验证、测试的阳性率。返回 RGB uint8。"""
+    """每个属性三根横柱：训练、验证、测试的阳性率，稀有属性在上。返回 RGB uint8。"""
     import matplotlib
 
     if matplotlib.get_backend().lower() != "agg":
@@ -316,17 +458,18 @@ def render_attribute_distribution_chart(frame: pd.DataFrame) -> np.ndarray:
     import matplotlib.pyplot as plt
 
     labels = [str(name) for name in frame["attribute"]]
-    x = np.arange(len(labels))
-    width = 0.25
-    fig, axis = plt.subplots(figsize=(max(8.0, 0.36 * len(labels) + 1.5), 5.2))
-    axis.bar(x - width, frame["train_rate"], width, label="train", color="#4C78A8")
-    axis.bar(x, frame["val_rate"], width, label="val", color="#F58518")
-    axis.bar(x + width, frame["test_rate"], width, label="test", color="#54A24B")
-    axis.set_ylim(0.0, 1.0)
-    axis.set_ylabel("positive rate")
-    axis.set_xticks(x)
-    axis.set_xticklabels(labels, rotation=90, fontsize=7)
-    axis.legend(loc="upper right", fontsize=8)
+    y = np.arange(len(labels))
+    height = 0.25
+    fig, axis = plt.subplots(figsize=(8.0, max(4.8, 0.32 * len(labels) + 1.2)))
+    axis.barh(y - height, frame["train_rate"], height, label="train", color="#4C78A8")
+    axis.barh(y, frame["val_rate"], height, label="val", color="#F58518")
+    axis.barh(y + height, frame["test_rate"], height, label="test", color="#54A24B")
+    axis.set_xlim(0.0, 1.0)
+    axis.set_xlabel("positive rate")
+    axis.set_yticks(y)
+    axis.set_yticklabels(labels, fontsize=8)
+    axis.invert_yaxis()
+    axis.legend(loc="lower right", fontsize=8)
     fig.tight_layout()
     return _rgb_from_matplotlib_figure(fig)
 
@@ -409,11 +552,13 @@ class SaveAttributeDistributionCallback(pl.Callback):
 
 
 class LogAttributeClassifierValVisualizationCallback(pl.Callback):
-    """每个验证 epoch 把前几张脸和逐属性准确率 / 召回率写入 TensorBoard。
+    """每个验证 epoch 把前几张脸写入 TensorBoard，并把逐属性分析指标追加到日志目录。
 
     脸来自该 epoch 第一个 batch 的前 ``max_images`` 张。验证集不打乱时，
-    这就是 CSV 里的前几行，方便逐 epoch 看同一批脸。条形图用本进程看到的
-    全部验证 batch。单卡时这是完整验证集。
+    这就是 CSV 里的前几行，方便逐 epoch 看同一批脸。条形图和指标表用本进程
+    看到的全部验证 batch。单卡时这是完整验证集。指标追加到
+    ``val_per_attribute_metrics.csv``，宏平均追加到 ``val_metric_summary.csv``。
+    训练日志里的 ``val_acc`` 仍是各属性准确率的平均。
     """
 
     def __init__(self, max_images: int = 8, nrow: int = 2) -> None:
@@ -450,7 +595,7 @@ class LogAttributeClassifierValVisualizationCallback(pl.Callback):
         if target is None:
             return
         try:
-            self._counts.update(pred, target)
+            self._counts.update(pred, target, probs)
             if batch_idx != 0:
                 return
             display = [attribute_display_name(name) for name in names]
@@ -481,6 +626,19 @@ class LogAttributeClassifierValVisualizationCallback(pl.Callback):
                 names, rates["positive_rate"], rates["precision"], rates["recall"]
             )
             _add_image(trainer, pl_module, "val/attribute_rates", chart)
+            _add_metric_means(trainer, pl_module, "val/metric_mean", rates)
+            root = _log_dir(trainer)
+            if root is None:
+                return
+            epoch = int(getattr(trainer, "current_epoch", 0))
+            _append_csv(root / "val_per_attribute_metrics.csv", metrics_frame(names, rates, epoch))
+            _append_csv(root / "val_metric_summary.csv", metric_summary_frame(rates, epoch))
+            rank = detection_rank_frame(names, rates, epoch)
+            rank_csv = root / "val_detection_rank.csv"
+            rank.to_csv(rank_csv, index=False)
+            rank_chart = render_detection_rank_chart(rank)
+            cv2.imwrite(str(root / "val_detection_rank.png"), cv2.cvtColor(rank_chart, cv2.COLOR_RGB2BGR))
+            _add_image(trainer, pl_module, "val/detection_rank", rank_chart)
         except Exception as exc:
             print(
                 "Warning: failed to log val attribute metrics at step "
@@ -505,6 +663,9 @@ class SaveAttributeClassifierTestPredictVisualizationCallback(pl.Callback):
         {root}/test_attribute_probs.csv
         {root}/per_attribute_metrics.csv
         {root}/per_attribute_metrics.png
+        {root}/test_metric_summary.csv
+        {root}/test_detection_rank.csv
+        {root}/test_detection_rank.png
         {root}/predict/*.jpg
         {root}/prediction_attribute_probs.csv
     """
@@ -542,7 +703,7 @@ class SaveAttributeClassifierTestPredictVisualizationCallback(pl.Callback):
         if target is None:
             print("Warning: test batch has no attribute labels, skip error images")
             return
-        self._counts.update(pred, target)
+        self._counts.update(pred, target, probs)
         root = self._root(trainer)
         display = [attribute_display_name(name) for name in names]
         for index in range(pred.shape[0]):
@@ -578,14 +739,24 @@ class SaveAttributeClassifierTestPredictVisualizationCallback(pl.Callback):
             return
         rates = self._counts.summary()
         metrics_path = root / "per_attribute_metrics.csv"
-        _write_metrics_csv(metrics_path, names, rates, self._counts)
+        metrics_frame(names, rates).to_csv(metrics_path, index=False)
+        summary_path = root / "test_metric_summary.csv"
+        metric_summary_frame(rates).to_csv(summary_path, index=False)
         chart = render_attribute_rate_chart(
             names, rates["positive_rate"], rates["precision"], rates["recall"]
         )
         chart_path = root / "per_attribute_metrics.png"
         cv2.imwrite(str(chart_path), cv2.cvtColor(chart, cv2.COLOR_RGB2BGR))
         _add_image(trainer, pl_module, "test/attribute_rates", chart)
+        rank = detection_rank_frame(names, rates)
+        rank_path = root / "test_detection_rank.csv"
+        rank.to_csv(rank_path, index=False)
+        rank_chart = render_detection_rank_chart(rank)
+        cv2.imwrite(str(root / "test_detection_rank.png"), cv2.cvtColor(rank_chart, cv2.COLOR_RGB2BGR))
+        _add_image(trainer, pl_module, "test/detection_rank", rank_chart)
+        _add_metric_means(trainer, pl_module, "test/metric_mean", rates)
         print(f"逐属性指标已保存到: {metrics_path}")
+        print(f"按 F1 排序的检测效果已保存到: {rank_path}")
 
     def on_predict_batch_end(
         self,
@@ -723,21 +894,152 @@ def _result_row(path: str, names: list[str], probs, pred, target) -> dict[str, A
     return row
 
 
-def _write_metrics_csv(path: Path, names, rates: dict[str, np.ndarray], counts: AttributeCount) -> None:
-    assert counts.tp is not None and counts.fp is not None and counts.gt_pos is not None
+def _divide(num, den) -> np.ndarray:
+    numerator = np.asarray(num, dtype=np.float64)
+    denominator = np.asarray(den, dtype=np.float64)
+    out = np.full(np.broadcast(numerator, denominator).shape, np.nan, dtype=np.float64)
+    mask = denominator > 0
+    out[mask] = numerator[mask] / denominator[mask]
+    return out
+
+
+def _pair_mean(left: np.ndarray, right: np.ndarray) -> np.ndarray:
+    out = np.full(left.shape, np.nan, dtype=np.float64)
+    mask = np.isfinite(left) & np.isfinite(right)
+    out[mask] = 0.5 * (left[mask] + right[mask])
+    return out
+
+
+def metrics_frame(names, rates: dict[str, np.ndarray], epoch: int | None = None) -> pd.DataFrame:
     rows = []
     for index, name in enumerate(names):
-        row = {"attribute": attribute_display_name(name)}
-        for key in ("positive_rate", "accuracy", "majority_accuracy", "precision", "recall"):
+        row: dict[str, Any] = {"attribute": attribute_display_name(name)}
+        if epoch is not None:
+            row["epoch"] = int(epoch)
+        for key in _RATE_COLUMNS:
             value = float(rates[key][index])
-            row[key] = None if np.isnan(value) else value
-        row["tp"] = int(counts.tp[index])
-        row["fp"] = int(counts.fp[index])
-        row["gt_positive"] = int(counts.gt_pos[index])
-        row["count"] = counts.count
+            row[key] = None if np.isnan(value) else round(value, 4)
+        for key in _COUNT_COLUMNS:
+            row[key] = int(rates[key][index])
         rows.append(row)
+    frame = pd.DataFrame(rows)
+    frame = frame.sort_values(["positive_rate", "attribute"], ascending=True, na_position="last", kind="mergesort")
+    columns = ["attribute"] + (["epoch"] if epoch is not None else []) + list(_METRIC_DISPLAY_COLUMNS)
+    return frame[columns].reset_index(drop=True)
+
+
+def metric_summary_frame(rates: dict[str, np.ndarray], epoch: int | None = None) -> pd.DataFrame:
+    """40 个属性的宏平均。某个属性分母为 0 时不进入该项平均。计数是各属性相加。"""
+    row: dict[str, Any] = {}
+    if epoch is not None:
+        row["epoch"] = int(epoch)
+    for key in _RATE_COLUMNS:
+        values = np.asarray(rates[key], dtype=np.float64)
+        finite = values[np.isfinite(values)]
+        row[key] = None if finite.size == 0 else round(float(finite.mean()), 4)
+    for key in _COUNT_COLUMNS:
+        if key == "count":
+            row[key] = int(rates[key][0])
+        else:
+            row[key] = int(np.asarray(rates[key]).sum())
+    columns = (["epoch"] if epoch is not None else []) + list(_METRIC_DISPLAY_COLUMNS)
+    return pd.DataFrame([row])[columns]
+
+
+def detection_rank_frame(names, rates: dict[str, np.ndarray], epoch: int | None = None) -> pd.DataFrame:
+    """按 F1 从高到低排列。F1 同时看准和看全，用来比哪个属性检测效果好。"""
+    rows = []
+    for index, name in enumerate(names):
+        row: dict[str, Any] = {"attribute": attribute_display_name(name)}
+        for key in ("f1", "recall", "accuracy"):
+            value = float(rates[key][index])
+            row[key] = None if np.isnan(value) else round(value, 4)
+        rows.append(row)
+    frame = pd.DataFrame(rows)
+    frame = frame.sort_values(["f1", "attribute"], ascending=[False, True], na_position="last", kind="mergesort")
+    frame.insert(0, "rank", range(1, len(frame) + 1))
+    if epoch is not None:
+        frame.insert(0, "epoch", int(epoch))
+    return frame.reset_index(drop=True)
+
+
+def render_detection_rank_chart(frame: pd.DataFrame) -> np.ndarray:
+    """F1 高的在上。F1 一列按高低着色。返回 RGB uint8。"""
+    import matplotlib
+
+    if matplotlib.get_backend().lower() != "agg":
+        matplotlib.use("Agg", force=True)
+    import matplotlib.pyplot as plt
+
+    show = frame.loc[:, ["rank", "attribute", "f1", "recall", "accuracy"]]
+    fig, axis = plt.subplots(figsize=(7.4, max(4.2, 0.28 * len(show) + 0.9)))
+    axis.axis("off")
+    axis.set_title("detection rank by F1", loc="left", fontsize=11, pad=8)
+    cells = []
+    for _, row in show.iterrows():
+        cells.append(
+            [
+                str(int(row["rank"])),
+                str(row["attribute"]),
+                _rank_cell(row["f1"]),
+                _rank_cell(row["recall"]),
+                _rank_cell(row["accuracy"]),
+            ]
+        )
+    table = axis.table(
+        cellText=cells,
+        colLabels=["rank", "attribute", "f1", "recall", "accuracy"],
+        loc="center",
+        cellLoc="left",
+    )
+    table.auto_set_font_size(False)
+    table.set_fontsize(8)
+    table.scale(1, 1.2)
+    f1_values = pd.to_numeric(show["f1"], errors="coerce").to_numpy(dtype=np.float64)
+    finite = f1_values[np.isfinite(f1_values)]
+    low = float(finite.min()) if finite.size else 0.0
+    high = float(finite.max()) if finite.size else 1.0
+    span = max(high - low, 1e-6)
+    for row_index, value in enumerate(f1_values, start=1):
+        if not np.isfinite(value):
+            continue
+        shade = (float(value) - low) / span
+        table[row_index, 2].set_facecolor((1.0 - 0.55 * shade, 0.93 - 0.25 * shade, 0.75 - 0.55 * shade))
+    fig.tight_layout()
+    return _rgb_from_matplotlib_figure(fig)
+
+
+def _rank_cell(value) -> str:
+    if value is None or (isinstance(value, float) and np.isnan(value)):
+        return ""
+    return f"{float(value):.4f}"
+
+
+def _order_by_ascending(values: np.ndarray) -> np.ndarray:
+    """NaN 放在最后，其余按升序，相同值保持原顺序。"""
+    ranked = np.where(np.isfinite(values), values, np.inf)
+    return np.argsort(ranked, kind="mergesort")
+
+
+def _append_csv(path: Path, frame: pd.DataFrame) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    pd.DataFrame(rows).to_csv(path, index=False)
+    frame.to_csv(path, mode="a", header=not path.exists(), index=False)
+
+
+def _log_dir(trainer) -> Path | None:
+    log_dir = getattr(trainer, "log_dir", None)
+    return Path(log_dir) if log_dir else None
+
+
+def _add_metric_means(trainer, pl_module, tag: str, rates: dict[str, np.ndarray]) -> None:
+    step = int(getattr(pl_module, "global_step", 0))
+    for experiment in _experiments(trainer, pl_module, "add_scalar"):
+        for key in _RATE_COLUMNS:
+            values = np.asarray(rates[key], dtype=np.float64)
+            finite = values[np.isfinite(values)]
+            if finite.size == 0:
+                continue
+            experiment.add_scalar(f"{tag}/{key}", float(finite.mean()), global_step=step)
 
 
 def _panel_grid(panels: list[np.ndarray], nrow: int) -> np.ndarray:
@@ -759,7 +1061,7 @@ def _add_image(trainer, pl_module, tag: str, image_rgb: np.ndarray) -> None:
         experiment.add_image(tag, tensor, global_step=step)
 
 
-def _experiments(trainer, pl_module):
+def _experiments(trainer, pl_module, method: str = "add_image"):
     loggers = list(getattr(trainer, "loggers", None) or [])
     if not loggers:
         logger = getattr(trainer, "logger", None) or getattr(pl_module, "logger", None)
@@ -767,7 +1069,7 @@ def _experiments(trainer, pl_module):
             loggers = [logger]
     for logger in loggers:
         experiment = getattr(logger, "experiment", None)
-        if experiment is not None and hasattr(experiment, "add_image"):
+        if experiment is not None and hasattr(experiment, method):
             yield experiment
 
 

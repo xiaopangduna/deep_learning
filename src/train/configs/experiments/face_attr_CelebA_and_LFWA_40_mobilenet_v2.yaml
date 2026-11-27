@@ -9,13 +9,13 @@ trainer:
   callbacks:
     # fit、validate、test 各统计一次训练/验证/测试的属性阳性率，写到本次 log_dir。
     - class_path: lovely_deep_learning.callback.attribute_classifier.SaveAttributeDistributionCallback
-    # 验证：每个 epoch 把验证集前 8 张脸，以及全部验证样本的逐属性准确率 / 召回率，写入 TensorBoard。
+    # 验证：每个 epoch 把验证集前 8 张脸写入 TensorBoard，逐属性分析指标追加到 val_per_attribute_metrics.csv。
     # 脸上只标真值或预测为 1 的属性：绿=都为 1，红=误报，橙=漏报。训练图不保存。
     - class_path: lovely_deep_learning.callback.attribute_classifier.LogAttributeClassifierValVisualizationCallback
       init_args:
         max_images: 8
         nrow: 2
-    # 测试：每个属性最多 8 张误报、8 张漏报，并写每张图的属性概率。
+    # 测试：每个属性最多 8 张误报、8 张漏报，写每张图的属性概率和逐属性分析指标。
     # 预测：有标签时同样绿/红/橙对照；没有标签时只标预测为 1 的属性。
     # save_dir 省略时写到本次 log_dir。预测集很大时加 max_predict_images 限制张数。
     - class_path: lovely_deep_learning.callback.attribute_classifier.SaveAttributeClassifierTestPredictVisualizationCallback
