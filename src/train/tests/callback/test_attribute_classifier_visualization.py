@@ -11,7 +11,9 @@ from lovely_deep_learning.callback.attribute_classifier import (
     COLOR_FP,
     LogAttributeClassifierValVisualizationCallback,
     SaveAttributeClassifierTestPredictVisualizationCallback,
+    SaveAttributeDistributionCallback,
     _face_bgr,
+    attribute_distribution_frame,
     render_attribute_panel,
     visible_attribute_rows,
 )
@@ -123,7 +125,7 @@ def test_val_logs_first_batch_and_metric_chart(tmp_path, monkeypatch):
 
     assert calls == ["/data/0.jpg", "/data/1.jpg"]
     tags = [item[0] for item in experiment.images]
-    assert tags == ["val/sample_attributes", "val/attribute_accuracy_recall"]
+    assert tags == ["val/sample_attributes", "val/attribute_rates"]
     assert experiment.images[0][2] == 4
 
 
@@ -139,7 +141,7 @@ def test_val_second_batch_call_uses_outputs(tmp_path, monkeypatch):
     outputs, batch = _batch("/data/a.jpg", [1, 0], [0, 0], [0.2, 0.1])
     callback.on_validation_batch_end(trainer, module, outputs, batch, 1)
     callback.on_validation_epoch_end(trainer, module)
-    assert [item[0] for item in experiment.images] == ["val/attribute_accuracy_recall"]
+    assert [item[0] for item in experiment.images] == ["val/attribute_rates"]
     assert callback._counts.count == 1
     accuracy, recall = callback._counts.accuracy_recall()
     assert accuracy[0] == 0
@@ -183,7 +185,7 @@ def test_test_end_caps_error_images_and_writes_metrics(tmp_path):
     assert metrics.loc["Smiling", "recall"] == 1
     assert (tmp_path / "per_attribute_metrics.png").is_file()
     assert cv2.imread(str(tmp_path / "per_attribute_metrics.png")) is not None
-    assert experiment.images[0][0] == "test/attribute_accuracy_recall"
+    assert experiment.images[0][0] == "test/attribute_rates"
 
 
 def test_predict_draws_only_positive_predictions(tmp_path):
@@ -219,3 +221,65 @@ def test_predict_with_labels_writes_ground_truth(tmp_path):
     assert table.loc[0, "gt_Male"] == 1
     assert table.loc[0, "gt_Smiling"] == 0
     assert (tmp_path / "predict" / "one.jpg").is_file()
+
+
+def _write_attr_csv(path, rows):
+    path.write_text(
+        "path_img,attr_Bald,attr_Male\n" + "\n".join(rows) + "\n",
+        encoding="utf-8",
+    )
+
+
+def test_attribute_distribution_compares_three_splits(tmp_path):
+    _write_attr_csv(
+        tmp_path / "train.csv",
+        ["a.jpg,1,1", "b.jpg,1,0", "c.jpg,0,0", "d.jpg,0,1"],
+    )
+    _write_attr_csv(tmp_path / "val.csv", ["e.jpg,1,0", "f.jpg,0,1"])
+    _write_attr_csv(tmp_path / "test.csv", ["g.jpg,0,1", "h.jpg,0,1"])
+    frame = attribute_distribution_frame(
+        {
+            "train": [tmp_path / "train.csv"],
+            "val": [tmp_path / "val.csv"],
+            "test": [tmp_path / "test.csv"],
+        }
+    ).set_index("attribute")
+    assert list(frame.index) == ["Bald", "Male"]
+    assert frame.loc["Bald", "train_positive"] == 2
+    assert frame.loc["Bald", "train_count"] == 4
+    assert frame.loc["Bald", "train_rate"] == 0.5
+    assert frame.loc["Bald", "val_rate"] == 0.5
+    assert frame.loc["Bald", "test_rate"] == 0
+    assert frame.loc["Bald", "val_minus_train"] == 0
+    assert frame.loc["Bald", "test_minus_train"] == -0.5
+    assert frame.loc["Male", "test_positive"] == 2
+
+    trainer = SimpleNamespace(
+        is_global_zero=True,
+        log_dir=str(tmp_path / "run"),
+        loggers=[],
+        logger=None,
+        datamodule=SimpleNamespace(
+            train_csv_paths=[tmp_path / "train.csv"],
+            val_csv_paths=[tmp_path / "val.csv"],
+            test_csv_paths=[tmp_path / "test.csv"],
+            attribute_columns=None,
+        ),
+    )
+    module = SimpleNamespace(global_step=0, logger=None)
+    callback = SaveAttributeDistributionCallback()
+    callback.on_fit_start(trainer, module)
+    saved = pd.read_csv(tmp_path / "run" / "attribute_distribution.csv")
+    assert list(saved["attribute"]) == ["Bald", "Male"]
+    assert (tmp_path / "run" / "attribute_distribution.png").is_file()
+    assert cv2.imread(str(tmp_path / "run" / "attribute_distribution.png")) is not None
+
+    trainer.training = True
+    (tmp_path / "run" / "attribute_distribution.csv").unlink()
+    callback.on_validation_start(trainer, module)
+    assert not (tmp_path / "run" / "attribute_distribution.csv").exists()
+
+    trainer.training = False
+    callback.on_validation_start(trainer, module)
+    callback.on_test_start(trainer, module)
+    assert (tmp_path / "run" / "attribute_distribution.csv").is_file()

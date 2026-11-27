@@ -158,12 +158,13 @@ def render_attribute_panel(
     return np.concatenate([face, gap, panel], axis=1)
 
 
-def render_accuracy_recall_chart(
+def render_attribute_rate_chart(
     names: list[str],
-    accuracy: np.ndarray,
+    positive_rate: np.ndarray,
+    precision: np.ndarray,
     recall: np.ndarray,
 ) -> np.ndarray:
-    """两行条形图，返回 RGB uint8。召回率没有正样本的位置留空。"""
+    """正样本比例、精确率、召回率。返回 RGB uint8。没有正例或预测的位置留空。"""
     import matplotlib
 
     if matplotlib.get_backend().lower() != "agg":
@@ -172,22 +173,17 @@ def render_accuracy_recall_chart(
 
     labels = [attribute_display_name(name) for name in names]
     x = np.arange(len(labels))
-    fig, axes = plt.subplots(2, 1, figsize=(max(8.0, 0.32 * len(labels) + 1.5), 7.0))
-    axes[0].bar(x, np.asarray(accuracy, dtype=np.float64), color="#4C78A8")
-    axes[1].bar(x, np.asarray(recall, dtype=np.float64), color="#F58518")
-    axes[0].set_title("accuracy")
-    axes[1].set_title("recall")
-    for axis in axes:
-        axis.set_ylim(0.0, 1.0)
-        axis.set_xticks(x)
-        axis.set_xticklabels(labels, rotation=90, fontsize=7)
+    width = 0.25
+    fig, axis = plt.subplots(figsize=(max(8.0, 0.36 * len(labels) + 1.5), 5.2))
+    axis.bar(x - width, np.asarray(positive_rate, dtype=np.float64), width, label="positive rate", color="#B0B0B0")
+    axis.bar(x, np.asarray(precision, dtype=np.float64), width, label="precision", color="#4C78A8")
+    axis.bar(x + width, np.asarray(recall, dtype=np.float64), width, label="recall", color="#F58518")
+    axis.set_ylim(0.0, 1.0)
+    axis.set_xticks(x)
+    axis.set_xticklabels(labels, rotation=90, fontsize=7)
+    axis.legend(loc="upper right", fontsize=8)
     fig.tight_layout()
-    buffer = io.BytesIO()
-    fig.savefig(buffer, format="png", dpi=120)
-    plt.close(fig)
-    encoded = np.frombuffer(buffer.getvalue(), dtype=np.uint8)
-    bgr = cv2.imdecode(encoded, cv2.IMREAD_COLOR)
-    return cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+    return _rgb_from_matplotlib_figure(fig)
 
 
 class AttributeCount:
@@ -196,6 +192,7 @@ class AttributeCount:
     def __init__(self) -> None:
         self.correct: torch.Tensor | None = None
         self.tp: torch.Tensor | None = None
+        self.fp: torch.Tensor | None = None
         self.gt_pos: torch.Tensor | None = None
         self.count = 0
 
@@ -206,10 +203,12 @@ class AttributeCount:
             raise ValueError(f"预测 {tuple(pred_b.shape)} 与真值 {tuple(target_b.shape)} 形状不一致")
         correct = pred_b.eq(target_b).sum(dim=0).to(torch.int64)
         tp = (pred_b & target_b).sum(dim=0).to(torch.int64)
+        fp = (pred_b & ~target_b).sum(dim=0).to(torch.int64)
         positive = target_b.sum(dim=0).to(torch.int64)
         if self.correct is None:
             self.correct = correct
             self.tp = tp
+            self.fp = fp
             self.gt_pos = positive
         elif self.correct.shape != correct.shape:
             raise ValueError(
@@ -218,6 +217,7 @@ class AttributeCount:
         else:
             self.correct += correct
             self.tp += tp
+            self.fp += fp
             self.gt_pos += positive
         self.count += int(pred_b.shape[0])
 
@@ -231,6 +231,181 @@ class AttributeCount:
         mask = positive > 0
         recall[mask.numpy()] = (self.tp[mask].float() / positive[mask].float()).numpy()
         return accuracy, recall
+
+    def summary(self) -> dict[str, np.ndarray]:
+        """准确率、精确率、召回率，以及标签里为 1 的比例。
+
+        ``majority_accuracy`` 是每个属性永远猜出现更多的那一类能拿到的准确率。
+        稀有属性上它和准确率很接近，单看准确率会把分布当成模型效果。
+        """
+        accuracy, recall = self.accuracy_recall()
+        assert self.tp is not None and self.fp is not None and self.gt_pos is not None
+        predicted = self.tp + self.fp
+        precision = np.full(accuracy.shape[0], np.nan, dtype=np.float64)
+        mask = predicted > 0
+        precision[mask.numpy()] = (self.tp[mask].float() / predicted[mask].float()).numpy()
+        positive_rate = (self.gt_pos.float() / self.count).numpy()
+        majority = np.maximum(positive_rate, 1.0 - positive_rate)
+        return {
+            "accuracy": accuracy,
+            "precision": precision,
+            "recall": recall,
+            "positive_rate": positive_rate,
+            "majority_accuracy": majority,
+        }
+
+
+def _rgb_from_matplotlib_figure(fig) -> np.ndarray:
+    import matplotlib.pyplot as plt
+
+    buffer = io.BytesIO()
+    fig.savefig(buffer, format="png", dpi=120)
+    plt.close(fig)
+    encoded = np.frombuffer(buffer.getvalue(), dtype=np.uint8)
+    bgr = cv2.imdecode(encoded, cv2.IMREAD_COLOR)
+    if bgr is None:
+        raise RuntimeError("统计图编码失败")
+    return cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+
+
+def attribute_distribution_frame(
+    split_csv_paths: dict[str, list[str] | tuple[str, ...]],
+    attribute_columns: list[str] | None = None,
+) -> pd.DataFrame:
+    """训练、验证、测试的属性阳性人数和阳性率。
+
+    只读 CSV 标签，不读图像。``attribute_columns`` 为 ``None`` 时用训练表里的全部 ``attr_`` 列。
+    差是该划分阳性率减去训练阳性率。
+    """
+    from ..dataset.attribute_classifier import AttributeFromDetectBoxDataset
+    from ..dataset.base import BaseDataset
+
+    splits = ("train", "val", "test")
+    missing = [name for name in splits if not split_csv_paths.get(name)]
+    if missing:
+        raise ValueError(f"属性分布需要训练、验证、测试 CSV，缺少 {missing}")
+    train_paths = [Path(path) for path in split_csv_paths["train"]]
+    columns = AttributeFromDetectBoxDataset.resolve_attribute_columns(
+        BaseDataset.read_csv_fieldnames(train_paths[0]),
+        attribute_columns,
+    )
+    counts = {split: _split_positive_counts(split_csv_paths[split], columns) for split in splits}
+    rows = []
+    for index, column in enumerate(columns):
+        row: dict[str, Any] = {"attribute": attribute_display_name(column)}
+        train_positive, train_count = counts["train"][index], counts["train"][-1]
+        train_rate = train_positive / train_count
+        for split in splits:
+            positive, count = counts[split][index], counts[split][-1]
+            rate = positive / count
+            row[f"{split}_positive"] = positive
+            row[f"{split}_count"] = count
+            row[f"{split}_rate"] = rate
+        row["val_minus_train"] = row["val_rate"] - train_rate
+        row["test_minus_train"] = row["test_rate"] - train_rate
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def render_attribute_distribution_chart(frame: pd.DataFrame) -> np.ndarray:
+    """每个属性三根柱：训练、验证、测试的阳性率。返回 RGB uint8。"""
+    import matplotlib
+
+    if matplotlib.get_backend().lower() != "agg":
+        matplotlib.use("Agg", force=True)
+    import matplotlib.pyplot as plt
+
+    labels = [str(name) for name in frame["attribute"]]
+    x = np.arange(len(labels))
+    width = 0.25
+    fig, axis = plt.subplots(figsize=(max(8.0, 0.36 * len(labels) + 1.5), 5.2))
+    axis.bar(x - width, frame["train_rate"], width, label="train", color="#4C78A8")
+    axis.bar(x, frame["val_rate"], width, label="val", color="#F58518")
+    axis.bar(x + width, frame["test_rate"], width, label="test", color="#54A24B")
+    axis.set_ylim(0.0, 1.0)
+    axis.set_ylabel("positive rate")
+    axis.set_xticks(x)
+    axis.set_xticklabels(labels, rotation=90, fontsize=7)
+    axis.legend(loc="upper right", fontsize=8)
+    fig.tight_layout()
+    return _rgb_from_matplotlib_figure(fig)
+
+
+def _split_positive_counts(csv_paths, columns: list[str]) -> tuple[int, ...]:
+    frames = []
+    for path in csv_paths:
+        file = Path(path)
+        if not file.is_file():
+            raise FileNotFoundError(f"属性分布 CSV 不存在：{file}")
+        frames.append(pd.read_csv(file, dtype=str, keep_default_na=False, usecols=columns))
+    table = pd.concat(frames, ignore_index=True)
+    if len(table) == 0:
+        raise ValueError(f"属性分布 CSV 没有数据行：{list(csv_paths)}")
+    positives = []
+    for column in columns:
+        text = table[column].astype(str).str.strip()
+        bad = ~text.isin({"0", "1"})
+        if bool(bad.any()):
+            shown = sorted(set(text[bad]))[:8]
+            raise ValueError(f"属性列 {column} 只能是 0 或 1，收到 {shown}")
+        positives.append(int((text == "1").sum()))
+    positives.append(len(table))
+    return tuple(positives)
+
+
+class SaveAttributeDistributionCallback(pl.Callback):
+    """把三个划分的属性分布写到本次日志目录。
+
+    ``fit``、单独的 ``validate`` 和 ``test`` 各写一次。训练过程中每个 epoch 的验证
+    不再重写，因为标签表不变，``on_fit_start`` 已经写过。
+    文件是 ``attribute_distribution.csv`` 和 ``attribute_distribution.png``。
+    ``save_dir`` 为空时用 ``trainer.log_dir``。
+    """
+
+    def __init__(self, save_dir: str | None = None) -> None:
+        super().__init__()
+        self._configured_save_dir = Path(save_dir) if save_dir else None
+
+    def on_fit_start(self, trainer, pl_module) -> None:
+        self._write(trainer, pl_module, "fit/attribute_distribution")
+
+    def on_validation_start(self, trainer, pl_module) -> None:
+        if getattr(trainer, "training", False) or getattr(trainer, "sanity_checking", False):
+            return
+        self._write(trainer, pl_module, "val/attribute_distribution")
+
+    def on_test_start(self, trainer, pl_module) -> None:
+        self._write(trainer, pl_module, "test/attribute_distribution")
+
+    def _write(self, trainer, pl_module, tag: str) -> None:
+        if not _is_rank_zero(trainer):
+            return
+        datamodule = getattr(trainer, "datamodule", None)
+        if datamodule is None or not hasattr(datamodule, "train_csv_paths"):
+            return
+        root = self._configured_save_dir
+        if root is None:
+            log_dir = getattr(trainer, "log_dir", None)
+            root = Path(log_dir) if log_dir else None
+        if root is None:
+            print("Warning: attribute distribution skipped, no log_dir")
+            return
+        frame = attribute_distribution_frame(
+            {
+                "train": list(datamodule.train_csv_paths),
+                "val": list(datamodule.val_csv_paths),
+                "test": list(datamodule.test_csv_paths),
+            },
+            getattr(datamodule, "attribute_columns", None),
+        )
+        root.mkdir(parents=True, exist_ok=True)
+        csv_path = root / "attribute_distribution.csv"
+        frame.to_csv(csv_path, index=False)
+        chart = render_attribute_distribution_chart(frame)
+        png_path = root / "attribute_distribution.png"
+        cv2.imwrite(str(png_path), cv2.cvtColor(chart, cv2.COLOR_RGB2BGR))
+        _add_image(trainer, pl_module, tag, chart)
+        print(f"属性分布已保存到: {csv_path}")
 
 
 class LogAttributeClassifierValVisualizationCallback(pl.Callback):
@@ -301,9 +476,11 @@ class LogAttributeClassifierValVisualizationCallback(pl.Callback):
         if names is None:
             return
         try:
-            accuracy, recall = self._counts.accuracy_recall()
-            chart = render_accuracy_recall_chart(names, accuracy, recall)
-            _add_image(trainer, pl_module, "val/attribute_accuracy_recall", chart)
+            rates = self._counts.summary()
+            chart = render_attribute_rate_chart(
+                names, rates["positive_rate"], rates["precision"], rates["recall"]
+            )
+            _add_image(trainer, pl_module, "val/attribute_rates", chart)
         except Exception as exc:
             print(
                 "Warning: failed to log val attribute metrics at step "
@@ -399,13 +576,15 @@ class SaveAttributeClassifierTestPredictVisualizationCallback(pl.Callback):
         names = _column_names(dataset, int(self._counts.correct.shape[0]))
         if names is None:
             return
-        accuracy, recall = self._counts.accuracy_recall()
+        rates = self._counts.summary()
         metrics_path = root / "per_attribute_metrics.csv"
-        _write_metrics_csv(metrics_path, names, accuracy, recall, self._counts)
-        chart = render_accuracy_recall_chart(names, accuracy, recall)
+        _write_metrics_csv(metrics_path, names, rates, self._counts)
+        chart = render_attribute_rate_chart(
+            names, rates["positive_rate"], rates["precision"], rates["recall"]
+        )
         chart_path = root / "per_attribute_metrics.png"
         cv2.imwrite(str(chart_path), cv2.cvtColor(chart, cv2.COLOR_RGB2BGR))
-        _add_image(trainer, pl_module, "test/attribute_accuracy_recall", chart)
+        _add_image(trainer, pl_module, "test/attribute_rates", chart)
         print(f"逐属性指标已保存到: {metrics_path}")
 
     def on_predict_batch_end(
@@ -544,21 +723,19 @@ def _result_row(path: str, names: list[str], probs, pred, target) -> dict[str, A
     return row
 
 
-def _write_metrics_csv(path: Path, names, accuracy, recall, counts: AttributeCount) -> None:
-    assert counts.tp is not None and counts.gt_pos is not None
+def _write_metrics_csv(path: Path, names, rates: dict[str, np.ndarray], counts: AttributeCount) -> None:
+    assert counts.tp is not None and counts.fp is not None and counts.gt_pos is not None
     rows = []
     for index, name in enumerate(names):
-        recall_value = float(recall[index])
-        rows.append(
-            {
-                "attribute": attribute_display_name(name),
-                "accuracy": float(accuracy[index]),
-                "recall": None if np.isnan(recall_value) else recall_value,
-                "tp": int(counts.tp[index]),
-                "gt_positive": int(counts.gt_pos[index]),
-                "count": counts.count,
-            }
-        )
+        row = {"attribute": attribute_display_name(name)}
+        for key in ("positive_rate", "accuracy", "majority_accuracy", "precision", "recall"):
+            value = float(rates[key][index])
+            row[key] = None if np.isnan(value) else value
+        row["tp"] = int(counts.tp[index])
+        row["fp"] = int(counts.fp[index])
+        row["gt_positive"] = int(counts.gt_pos[index])
+        row["count"] = counts.count
+        rows.append(row)
     path.parent.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(rows).to_csv(path, index=False)
 

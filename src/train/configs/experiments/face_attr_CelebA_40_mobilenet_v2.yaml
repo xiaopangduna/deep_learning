@@ -9,6 +9,8 @@ trainer:
   max_epochs: 30
   accelerator: auto
   callbacks:
+    # fit、validate、test 各统计一次训练/验证/测试的属性阳性率，写到本次 log_dir。
+    - class_path: lovely_deep_learning.callback.attribute_classifier.SaveAttributeDistributionCallback
     # 验证：每个 epoch 把验证集前 8 张脸，以及全部验证样本的逐属性准确率 / 召回率，写入 TensorBoard。
     # 脸上只标真值或预测为 1 的属性：绿=都为 1，红=误报，橙=漏报。训练图不保存。
     - class_path: lovely_deep_learning.callback.attribute_classifier.LogAttributeClassifierValVisualizationCallback
