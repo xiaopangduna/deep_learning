@@ -98,17 +98,13 @@ echo "仓库根: $PWD" >&2
 echo >&2
 
 # ========== 排队从这里往下改 ==========
+# --trainer.fast_dev_run true
+step '
+uv run python scripts/train.py fit \
+  --config configs/experiments/object_detect_COCO.yaml 
+'
 
-# step '
-# uv run python scripts/train.py fit \
-#   --config configs/experiments/image_classifiter_from_detect_box_head_eye_open_mobilenet_v2_v002.yaml
-# '
-
-# step '
-# cd exports/sigmastar/mobilenet_v2
-# python verify/single_image_similarity_dump_onnx_npz.py \
-#   --model onnx/eye_v014.onnx \
-#   --image dog.jpg \
-#   --mean 0 \
-#   --std 255
-# '
+step '
+uv run python scripts/train.py fit \
+  --config configs/experiments/pedestrian_attr_RAPV2_54_mobilenet_v2.yaml 
+'

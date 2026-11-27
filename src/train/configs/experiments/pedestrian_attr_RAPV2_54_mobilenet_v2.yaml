@@ -1,0 +1,286 @@
+# RAP v2 行人的 54 个实验属性。同一份 CSV 含 98 列，这里只训前 54 列。
+# 换属性时改 attribute_columns，并把 num_attributes 和 classifier 的 out_features 改成同样的长度。
+#   python scripts/train.py fit --config configs/experiments/pedestrian_attr_RAPV2_54_mobilenet_v2.yaml
+
+trainer:
+  max_epochs: 30
+  accelerator: auto
+  callbacks:
+    - class_path: lightning.pytorch.callbacks.EarlyStopping
+      init_args:
+        monitor: val_loss
+        min_delta: 0.0
+        patience: 8
+        verbose: true
+        mode: min
+    - class_path: lightning.pytorch.callbacks.ModelCheckpoint
+      init_args:
+        monitor: val_acc
+        filename: "{epoch:02d}-{val_acc:.4f}"
+        save_top_k: 1
+        save_last: true
+        mode: max
+    - class_path: lightning.pytorch.callbacks.LearningRateMonitor
+      init_args:
+        logging_interval: epoch
+        log_momentum: false
+        log_weight_decay: false
+    # 冻结训练,随机初始化则不冻结，剪枝后不冻结
+    - class_path: lovely_deep_learning.callback.finetuning.DAGNetMilestoneUnfreezeFinetuning
+      init_args:
+        unfreeze_layers: ["classifier"]   # 自始可训的层（少）；其余 DAGNet.layers 先冻，到 unfreeze_epoch 一并解冻
+        unfreeze_epoch: 10           # 微调与max_epochs一致,剪枝后不冻结
+  logger:
+    - class_path: lightning.pytorch.loggers.TensorBoardLogger
+      init_args:
+        save_dir: logs
+        name: pedestrian_attr_RAPV2_54_mobilenet_v2
+        version: null
+
+data:
+  class_path: lovely_deep_learning.data_module.attribute_classifier.AttributeFromDetectBoxDataModule
+  init_args:
+    box_scale: 1.2
+    min_side_px: 16
+    attribute_columns:
+      - attr_hs-BaldHead
+      - attr_hs-LongHair
+      - attr_hs-BlackHair
+      - attr_hs-Hat
+      - attr_hs-Glasses
+      - attr_ub-Shirt
+      - attr_ub-Sweater
+      - attr_ub-Vest
+      - attr_ub-TShirt
+      - attr_ub-Cotton
+      - attr_ub-Jacket
+      - attr_ub-SuitUp
+      - attr_ub-Tight
+      - attr_ub-ShortSleeve
+      - attr_ub-Others
+      - attr_lb-LongTrousers
+      - attr_lb-Skirt
+      - attr_lb-ShortSkirt
+      - attr_lb-Dress
+      - attr_lb-Jeans
+      - attr_lb-TightTrousers
+      - attr_shoes-Leather
+      - attr_shoes-Sports
+      - attr_shoes-Boots
+      - attr_shoes-Cloth
+      - attr_shoes-Casual
+      - attr_shoes-Other
+      - attr_attachment-Backpack
+      - attr_attachment-ShoulderBag
+      - attr_attachment-HandBag
+      - attr_attachment-Box
+      - attr_attachment-PlasticBag
+      - attr_attachment-PaperBag
+      - attr_attachment-HandTrunk
+      - attr_attachment-Other
+      - attr_AgeLess16
+      - attr_Age17-30
+      - attr_Age31-45
+      - attr_Age46-60
+      - attr_Femal
+      - attr_BodyFat
+      - attr_BodyNormal
+      - attr_BodyThin
+      - attr_Customer
+      - attr_Employee
+      - attr_action-Calling
+      - attr_action-Talking
+      - attr_action-Gathering
+      - attr_action-Holding
+      - attr_action-Pushing
+      - attr_action-Pulling
+      - attr_action-CarryingByArm
+      - attr_action-CarryingByHand
+      - attr_action-Other
+    train_csv_paths: [datasets/RAPV2/train.csv]
+    val_csv_paths: [datasets/RAPV2/val.csv]
+    test_csv_paths: [datasets/RAPV2/test.csv]
+    predict_csv_paths: [datasets/RAPV2/test.csv]
+    norm_mean: [0.485, 0.456, 0.406]
+    norm_std: [0.229, 0.224, 0.225]
+    batch_size: 64
+    num_workers: 4
+    transform_train:
+      class_path: torchvision.transforms.v2.Compose
+      init_args:
+        transforms:
+          - class_path: lovely_deep_learning.transforms.letterbox.LetterBox
+            init_args:
+              size: [224, 224]
+              fill: 114
+              center: true
+              scaleup: true
+              interpolation: 2
+          - class_path: torchvision.transforms.v2.RandomHorizontalFlip
+            init_args:
+              p: 0.5
+          - class_path: torchvision.transforms.v2.ToDtype
+            init_args:
+              dtype: torch.float32
+              scale: true
+          - class_path: torchvision.transforms.v2.Normalize
+            init_args:
+              mean: [0.485, 0.456, 0.406]
+              std: [0.229, 0.224, 0.225]
+    transform_val:
+      class_path: torchvision.transforms.v2.Compose
+      init_args:
+        transforms:
+          - class_path: lovely_deep_learning.transforms.letterbox.LetterBox
+            init_args:
+              size: [224, 224]
+              fill: 114
+              center: true
+              scaleup: true
+              interpolation: 2
+          - class_path: torchvision.transforms.v2.ToDtype
+            init_args:
+              dtype: torch.float32
+              scale: true
+          - class_path: torchvision.transforms.v2.Normalize
+            init_args:
+              mean: [0.485, 0.456, 0.406]
+              std: [0.229, 0.224, 0.225]
+
+model:
+  class_path: lovely_deep_learning.module.image_classifier.ImageClassifierModule
+  init_args:
+    optimizer:
+      class_path: torch.optim.RAdam
+      init_args:
+        lr: 1.0e-3
+    lr_scheduler:
+      class_path: torch.optim.lr_scheduler.CosineAnnealingLR
+      init_args:
+        T_max: 30
+        eta_min: 1.0e-5
+    criterion:
+      class_path: lovely_deep_learning.loss.attribute_classifier.AttributeClassifierCriterion
+    postprocess:
+      class_path: lovely_deep_learning.postprocess.attribute_classifier.AttributeClassifierPostProcessor
+      init_args:
+        threshold: 0.5
+    metrics:
+      class_path: lovely_deep_learning.metric.attribute_classifier.AttributeClassifierMetric
+      init_args:
+        num_attributes: 54
+    model:
+      model_name: mobilenet_v2
+      pretrained: true
+      weight:
+        map_location: cpu
+        strict: false
+        stages:
+          # IMAGENET1K_V1，Acc@1 71.878，验证短边 256
+          # - format: official
+          #   path: pretrained_models/mobilenet_v2-b0353104.pth
+          #   opts:
+          #     url: https://download.pytorch.org/models/mobilenet_v2-b0353104.pth
+          #     src_key_prefix: layers.
+          #     src_key_slice_start: 0
+          # IMAGENET1K_V2，Acc@1 72.154，验证短边 232。实验配置的官方权重与这里保持一致。
+          - format: official
+            path: pretrained_models/mobilenet_v2-7ebf99e0.pth
+            opts:
+              url: https://download.pytorch.org/models/mobilenet_v2-7ebf99e0.pth
+              src_key_prefix: layers.
+              src_key_slice_start: 0
+
+      exporter:
+        class_path: lovely_deep_learning.export.base.BaseExporter
+        init_args:
+          onnx_cfg: # awnn 导出时的配置
+            input_shape: [1, 3, 224, 224]
+            path_save_onnx: null  # 如果不指定，则与pt同路径
+            cfg_for_torch_onnx_export:
+              export_params: true
+              opset_version: 12
+              input_names: ["input"]
+              output_names: ["output"]
+          trt_cfg: {}
+
+      structure:
+        inputs: [{name: input, shape: [3, 224, 224]}]
+        outputs: [{name: output, from: [classifier]}]
+        layers:
+          - name: features
+            from: [input]
+            module: torch.nn.Sequential
+            children:
+              - name: "0"
+                module: lovely_deep_learning.nn.mobilenet_v2.Conv2dNormActivation
+                args: {in_channels: 3, out_channels: 32, kernel_size: 3, stride: 2, activation_layer: relu6}
+              - name: "1"
+                module: lovely_deep_learning.nn.mobilenet_v2.InvertedResidual
+                args: {input_channels: 32, output_channels: 16, expand_ratio: 1, stride: 1}
+              - name: "2"
+                module: lovely_deep_learning.nn.mobilenet_v2.InvertedResidual
+                args: {input_channels: 16, output_channels: 24, expand_ratio: 6, stride: 2}
+              - name: "3"
+                module: lovely_deep_learning.nn.mobilenet_v2.InvertedResidual
+                args: {input_channels: 24, output_channels: 24, expand_ratio: 6, stride: 1}
+              - name: "4"
+                module: lovely_deep_learning.nn.mobilenet_v2.InvertedResidual
+                args: {input_channels: 24, output_channels: 32, expand_ratio: 6, stride: 2}
+              - name: "5"
+                module: lovely_deep_learning.nn.mobilenet_v2.InvertedResidual
+                args: {input_channels: 32, output_channels: 32, expand_ratio: 6, stride: 1}
+              - name: "6"
+                module: lovely_deep_learning.nn.mobilenet_v2.InvertedResidual
+                args: {input_channels: 32, output_channels: 32, expand_ratio: 6, stride: 1}
+              - name: "7"
+                module: lovely_deep_learning.nn.mobilenet_v2.InvertedResidual
+                args: {input_channels: 32, output_channels: 64, expand_ratio: 6, stride: 2}
+              - name: "8"
+                module: lovely_deep_learning.nn.mobilenet_v2.InvertedResidual
+                args: {input_channels: 64, output_channels: 64, expand_ratio: 6, stride: 1}
+              - name: "9"
+                module: lovely_deep_learning.nn.mobilenet_v2.InvertedResidual
+                args: {input_channels: 64, output_channels: 64, expand_ratio: 6, stride: 1}
+              - name: "10"
+                module: lovely_deep_learning.nn.mobilenet_v2.InvertedResidual
+                args: {input_channels: 64, output_channels: 64, expand_ratio: 6, stride: 1}
+              - name: "11"
+                module: lovely_deep_learning.nn.mobilenet_v2.InvertedResidual
+                args: {input_channels: 64, output_channels: 96, expand_ratio: 6, stride: 1}
+              - name: "12"
+                module: lovely_deep_learning.nn.mobilenet_v2.InvertedResidual
+                args: {input_channels: 96, output_channels: 96, expand_ratio: 6, stride: 1}
+              - name: "13"
+                module: lovely_deep_learning.nn.mobilenet_v2.InvertedResidual
+                args: {input_channels: 96, output_channels: 96, expand_ratio: 6, stride: 1}
+              - name: "14"
+                module: lovely_deep_learning.nn.mobilenet_v2.InvertedResidual
+                args: {input_channels: 96, output_channels: 160, expand_ratio: 6, stride: 2}
+              - name: "15"
+                module: lovely_deep_learning.nn.mobilenet_v2.InvertedResidual
+                args: {input_channels: 160, output_channels: 160, expand_ratio: 6, stride: 1}
+              - name: "16"
+                module: lovely_deep_learning.nn.mobilenet_v2.InvertedResidual
+                args: {input_channels: 160, output_channels: 160, expand_ratio: 6, stride: 1}
+              - name: "17"
+                module: lovely_deep_learning.nn.mobilenet_v2.InvertedResidual
+                args: {input_channels: 160, output_channels: 320, expand_ratio: 6, stride: 1}
+              - name: "18"
+                module: lovely_deep_learning.nn.mobilenet_v2.Conv2dNormActivation
+                args: {in_channels: 320, out_channels: 1280, kernel_size: 1, stride: 1, activation_layer: relu6}
+
+          - name: avgpool
+            from: [features]
+            module: torch.nn.AdaptiveAvgPool2d
+            args: {output_size: 1}
+          - name: flatten
+            from: [avgpool]
+            module: torch.nn.Flatten
+            args: {start_dim: 1}
+          - name: classifier
+            from: [flatten]
+            module: torch.nn.Sequential
+            children:
+              - {name: "0", module: torch.nn.Dropout, args: {p: 0.2}}
+              - {name: "1", module: torch.nn.Linear, args: {in_features: 1280, out_features: 54}}

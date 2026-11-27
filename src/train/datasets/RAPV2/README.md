@@ -142,4 +142,4 @@ ln -s /data/RAP_dataset datasets/RAPV2/RAP_dataset
 
 后 44 列的列名是 `attr_` 加英文短语，空白换成下划线。顺序与 `expand_attributes` 一致：12 种上衣颜色、12 种下衣颜色、12 种鞋子颜色、4 个遮挡位置、4 个遮挡原因。颜色依次是黑、白、灰、红、绿、蓝、银、黄、棕、紫、粉、橙。遮挡位置是左、右、上、下。遮挡原因是环境、附属物、另一个人、其他。
 
-要少训几个属性，在实验 YAML 的 `attribute_columns` 里点名。默认分类头是 98 维。图已经是行人，框又盖住整张图，`box_scale` 放大于图像外的部分会被裁掉。
+实验配置是 `configs/experiments/pedestrian_attr_RAPV2_54_mobilenet_v2.yaml`，`attribute_columns` 点名要训的列，当前是前 54 个实验属性。`num_attributes` 和分类头的 `out_features` 与这份名单一样长。换一组属性时复制该文件，改名单并把这两个数改成同样的长度。图已经是行人，框又盖住整张图，`box_scale` 放大于图像外的部分会被裁掉。
