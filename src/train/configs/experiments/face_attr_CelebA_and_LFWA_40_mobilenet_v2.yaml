@@ -7,6 +7,18 @@ trainer:
   max_epochs: 30
   accelerator: auto
   callbacks:
+    # 验证：每个 epoch 把验证集前 8 张脸，以及全部验证样本的逐属性准确率 / 召回率，写入 TensorBoard。
+    # 脸上只标真值或预测为 1 的属性：绿=都为 1，红=误报，橙=漏报。训练图不保存。
+    - class_path: lovely_deep_learning.callback.attribute_classifier.LogAttributeClassifierValVisualizationCallback
+      init_args:
+        max_images: 8
+        nrow: 2
+    # 测试：每个属性最多 8 张误报、8 张漏报，并写每张图的属性概率。
+    # 预测：有标签时同样绿/红/橙对照；没有标签时只标预测为 1 的属性。
+    # save_dir 省略时写到本次 log_dir。预测集很大时加 max_predict_images 限制张数。
+    - class_path: lovely_deep_learning.callback.attribute_classifier.SaveAttributeClassifierTestPredictVisualizationCallback
+      init_args:
+        max_per_bucket: 8
     - class_path: lightning.pytorch.callbacks.EarlyStopping
       init_args:
         monitor: val_loss
