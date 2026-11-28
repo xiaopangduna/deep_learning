@@ -516,7 +516,7 @@ class SaveAttributeDistributionCallback(pl.Callback):
     也会进 ``on_validation_start``，用 ``state.fn == "fit"`` 跳过。标签表不变，
     ``on_fit_start`` 已经写过。
     文件是 ``attribute_distribution.csv`` 和 ``attribute_distribution.png``。
-    ``save_dir`` 为空时用 ``trainer.log_dir``。
+    ``save_dir`` 为空时用 ``trainer.log_dir``。不进 TensorBoard。
     """
 
     def __init__(self, save_dir: str | None = None) -> None:
@@ -524,17 +524,17 @@ class SaveAttributeDistributionCallback(pl.Callback):
         self._configured_save_dir = Path(save_dir) if save_dir else None
 
     def on_fit_start(self, trainer, pl_module) -> None:
-        self._write(trainer, pl_module, "fit/attribute_distribution")
+        self._write(trainer, pl_module)
 
     def on_validation_start(self, trainer, pl_module) -> None:
         if _command_is_fit(trainer):
             return
-        self._write(trainer, pl_module, "val/attribute_distribution")
+        self._write(trainer, pl_module)
 
     def on_test_start(self, trainer, pl_module) -> None:
-        self._write(trainer, pl_module, "test/attribute_distribution")
+        self._write(trainer, pl_module)
 
-    def _write(self, trainer, pl_module, tag: str) -> None:
+    def _write(self, trainer, pl_module) -> None:
         if not _is_rank_zero(trainer):
             return
         datamodule = getattr(trainer, "datamodule", None)
@@ -561,7 +561,6 @@ class SaveAttributeDistributionCallback(pl.Callback):
         chart = render_attribute_distribution_chart(frame)
         png_path = root / "attribute_distribution.png"
         cv2.imwrite(str(png_path), cv2.cvtColor(chart, cv2.COLOR_RGB2BGR))
-        _add_image(trainer, pl_module, tag, chart)
         print(f"属性分布已保存到: {csv_path}")
 
 
