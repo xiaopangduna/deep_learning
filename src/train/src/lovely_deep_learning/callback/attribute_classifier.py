@@ -5,8 +5,8 @@
 
 - ``LogAttributeClassifierTrainValVisualizationCallback``：``fit`` 里每个 epoch
   把训练和验证第一批的前几张脸写入 TensorBoard，不落盘。
-- ``SaveAttributeClassifierTestVisualizationCallback``：测试时按属性保存误报和漏报、
-  每张图的概率，以及逐属性分析表。只落盘。
+- ``SaveAttributeClassifierTestEvaluationCallback``：测试时按属性保存误报和漏报、
+  每张图的概率、逐属性分析表，以及 AP 与训练阳性数的对照表。只落盘。
 - ``SaveAttributeClassifierPredictVisualizationCallback``：预测时保存图片和概率表。
   有标签时对照真值；没有标签时只标出预测为 1 的属性。只落盘。
 
@@ -687,8 +687,8 @@ class _AttributeDiskCallback(pl.Callback):
         return self._root_path
 
 
-class SaveAttributeClassifierTestVisualizationCallback(_AttributeDiskCallback):
-    """测试写误报 / 漏报图、概率表和逐属性分析表。
+class SaveAttributeClassifierTestEvaluationCallback(_AttributeDiskCallback):
+    """测试写误报 / 漏报图、概率表、逐属性分析表和数据对照表。
 
     ``save_dir`` 为空时用本次 ``trainer.log_dir``。每个属性的误报、漏报
     各自最多 ``max_per_bucket`` 张，按 dataloader 顺序取前面的。概率 CSV
@@ -704,6 +704,7 @@ class SaveAttributeClassifierTestVisualizationCallback(_AttributeDiskCallback):
         {root}/test_metric_summary.csv
         {root}/test_detection_rank.csv
         {root}/test_detection_rank.png
+        {root}/test_attribute_review.csv
     """
 
     def __init__(self, save_dir: str | None = None, max_per_bucket: int = 8) -> None:
@@ -785,6 +786,7 @@ class SaveAttributeClassifierTestVisualizationCallback(_AttributeDiskCallback):
         chart_path = root / "per_attribute_metrics.png"
         cv2.imwrite(str(chart_path), cv2.cvtColor(chart, cv2.COLOR_RGB2BGR))
         _write_operating_tables(root, names, rates)
+        _write_attribute_review(root, trainer, names, rates)
 
     def _reset_run_state(self) -> None:
         self._rows = []
@@ -1093,6 +1095,28 @@ def metric_summary_frame(rates: dict[str, np.ndarray]) -> pd.DataFrame:
     return pd.DataFrame([row])[columns]
 
 
+def attribute_review_frame(names, rates: dict[str, np.ndarray], train_positive, train_count: int) -> pd.DataFrame:
+    """按 AP 从高到低排列。训练阳性数和阳性率来自训练集标签，其余来自测试集。"""
+    rows = []
+    total = int(train_count)
+    for index, name in enumerate(names):
+        positive = int(train_positive[index])
+        row: dict[str, Any] = {
+            "attribute": attribute_display_name(name),
+            "train_positive": positive,
+            "train_rate": None if total <= 0 else round(positive / total, 4),
+        }
+        for key in ("ap", "precision", "recall"):
+            value = float(rates[key][index])
+            row[key] = None if np.isnan(value) else round(value, 4)
+        rows.append(row)
+    frame = pd.DataFrame(rows)
+    frame = frame.sort_values(["ap", "attribute"], ascending=[False, True], na_position="last", kind="mergesort")
+    frame.insert(0, "rank", range(1, len(frame) + 1))
+    columns = ["rank", "attribute", "ap", "precision", "recall", "train_positive", "train_rate"]
+    return frame[columns].reset_index(drop=True)
+
+
 def detection_rank_frame(names, rates: dict[str, np.ndarray]) -> pd.DataFrame:
     """按 AP 从高到低排列。阈值和 F1、精确率、召回率是验证集选出的工作点。"""
     rows = []
@@ -1177,6 +1201,23 @@ def _write_operating_tables(root: Path, names, rates) -> None:
     cv2.imwrite(str(root / "test_detection_rank.png"), cv2.cvtColor(chart, cv2.COLOR_RGB2BGR))
     print(f"逐属性指标已保存到: {detail_path}")
     print(f"按 AP 排序的检测效果已保存到: {rank_path}")
+
+
+def _write_attribute_review(root: Path, trainer, names, rates) -> None:
+    datamodule = getattr(trainer, "datamodule", None)
+    paths = list(getattr(datamodule, "train_csv_paths", None) or [])
+    if not paths:
+        print("Warning: 没有训练集 CSV，跳过属性对照表")
+        return
+    try:
+        counts = _split_positive_counts(paths, list(names))
+    except (OSError, ValueError) as exc:
+        print(f"Warning: 无法读取训练集阳性数，跳过属性对照表，{exc}")
+        return
+    frame = attribute_review_frame(names, rates, counts[:-1], counts[-1])
+    path = root / "test_attribute_review.csv"
+    frame.to_csv(path, index=False)
+    print(f"属性对照表已保存到: {path}")
 
 
 def _validation_thresholds(trainer, pl_module) -> np.ndarray | None:

@@ -12,7 +12,7 @@ from lovely_deep_learning.callback.attribute_classifier import (
     COLOR_FP,
     LogAttributeClassifierTrainValVisualizationCallback,
     SaveAttributeClassifierPredictVisualizationCallback,
-    SaveAttributeClassifierTestVisualizationCallback,
+    SaveAttributeClassifierTestEvaluationCallback,
     SaveAttributeDistributionCallback,
     _face_bgr,
     choose_f1_thresholds,
@@ -155,11 +155,17 @@ def test_later_batch_and_standalone_validate_do_not_log(tmp_path, monkeypatch):
 def test_test_end_caps_error_images_and_writes_metrics(tmp_path):
     trainer, _experiment = _trainer(tmp_path, "test_dataloaders")
     module = SimpleNamespace(global_step=2, logger=trainer.logger)
-    callback = SaveAttributeClassifierTestVisualizationCallback(
+    callback = SaveAttributeClassifierTestEvaluationCallback(
         save_dir=str(tmp_path),
         max_per_bucket=2,
     )
     callback._thresholds = np.array([0.5, 0.5])
+    train_csv = tmp_path / "train.csv"
+    train_csv.write_text(
+        "path_img,attr_Male,attr_Smiling\na.jpg,1,0\nb.jpg,1,1\nc.jpg,0,0\nd.jpg,0,0\n",
+        encoding="utf-8",
+    )
+    trainer.datamodule.train_csv_paths = [train_csv]
     samples = [
         ("/data/a.jpg", [1, 0], [1, 1], [0.9, 0.8]),
         ("/data/b.jpg", [1, 1], [0, 1], [0.2, 0.7]),
@@ -219,6 +225,19 @@ def test_test_end_caps_error_images_and_writes_metrics(tmp_path):
     ]
     assert (tmp_path / "test_detection_rank.png").is_file()
     assert cv2.imread(str(tmp_path / "per_attribute_metrics.png")) is not None
+    review = pd.read_csv(tmp_path / "test_attribute_review.csv")
+    assert list(review.columns) == [
+        "rank",
+        "attribute",
+        "ap",
+        "precision",
+        "recall",
+        "train_positive",
+        "train_rate",
+    ]
+    assert list(review["attribute"]) == ["Male", "Smiling"]
+    assert review.loc[0, "train_positive"] == 2
+    assert review.loc[0, "train_rate"] == 0.5
 
 
 def test_predict_draws_only_positive_predictions(tmp_path):

@@ -14,8 +14,9 @@ trainer:
     # fit：每个 epoch 把训练、验证第一批的前 4 张脸写入 TensorBoard。不落盘。
     # 脸上只标真值或预测为 1 的属性：绿=都为 1，红=误报，橙=漏报。
     - class_path: lovely_deep_learning.callback.attribute_classifier.LogAttributeClassifierTrainValVisualizationCallback
-    # 测试：每个属性最多 8 张误报、8 张漏报。阈值在验证集上按 F1 选取，分析表按 AP 排序。不进 TensorBoard。
-    - class_path: lovely_deep_learning.callback.attribute_classifier.SaveAttributeClassifierTestVisualizationCallback
+    # 测试：每个属性最多 8 张误报、8 张漏报。阈值在验证集上按 F1 选取。
+    # 分析表按 AP 排序，对照表带上训练集阳性人数和阳性率。不进 TensorBoard。
+    - class_path: lovely_deep_learning.callback.attribute_classifier.SaveAttributeClassifierTestEvaluationCallback
       init_args:
         max_per_bucket: 8
     # 预测：有标签时绿/红/橙对照；没有标签时只标预测为 1 的属性。不进 TensorBoard。
