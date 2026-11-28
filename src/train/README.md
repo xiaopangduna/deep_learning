@@ -132,6 +132,12 @@ python scripts/train.py predict \
   --ckpt_path logs/image_classifiter_IMAGE_NETTE/version_0/checkpoints/last.ckpt
 ```
 
+`fit` 里每个 epoch 的验证和单独的 `validate` 走同一套 `validation_step`。它们每个 epoch 都要跑，只为早停和选 checkpoint，所以只记核心指标。属性分类里是 `val_loss` 和 `val_acc`：`val_acc` 是各属性在阈值 0.5 上的准确率再平均。`EarlyStopping` 看 `val_loss`，`ModelCheckpoint` 看 `val_acc`。
+
+`test` 在训练结束后对选定权重跑一次，这里才算完整分析：逐属性 AP、在验证集上按 F1 选一次阈值，再在测试集上算精确率、召回率、F1，写出排序表，并保存误报和漏报图。这些数不参与早停，也不决定存哪个 checkpoint。
+
+属性实验的 `AttributeClassifierMetric` 已经是这条轻路径。`fit` 里 `LogAttributeClassifierTrainValVisualizationCallback` 每个 epoch 只把训练和验证第一批的前 4 张脸写入 TensorBoard，不落盘，也不算逐属性指标。验证集每个 epoch 打乱，样本集合不变，核心指标不随顺序变化。`SaveAttributeClassifierTestPredictVisualizationCallback` 只挂在 `test` 和 `predict`。
+
 Lightning CLI 参数可覆盖 YAML，例如 `--trainer.max_epochs 5`、`--trainer.fast_dev_run true`。
 
 ## 实验配置

@@ -30,9 +30,10 @@ def test_BaseDataModule_init():
     assert data_module.train_dataloader() is not None
     val_loader = data_module.val_dataloader()
     assert val_loader is not None
-    from torch.utils.data import SequentialSampler
+    from torch.utils.data import RandomSampler, SequentialSampler
 
-    assert isinstance(val_loader.sampler, SequentialSampler)
+    assert isinstance(val_loader.sampler, RandomSampler)
+    assert isinstance(data_module.test_dataloader().sampler, SequentialSampler)
     data_module.num_workers = 2
     kw = data_module._dataloader_kwargs(shuffle=True)
     assert kw["persistent_workers"] is True

@@ -91,11 +91,15 @@ class BaseDataModule(pl.LightningDataModule):
         )
 
     def val_dataloader(self):
-        """验证 DataLoader，不打乱顺序。"""
+        """验证 DataLoader。每个 epoch 打乱顺序。
+
+        验证增强是确定的，样本集合不变，``val_loss`` 和 ``val_acc`` 不随顺序变化。
+        打乱后每个 epoch 的第一批会换样本，训练时的脸可视化只取这一批。
+        """
         return DataLoader(
             self.val_dataset,
             collate_fn=self.val_dataset.get_collate_fn_for_dataloader(),
-            **self._dataloader_kwargs(shuffle=False),
+            **self._dataloader_kwargs(shuffle=True),
         )
 
     def test_dataloader(self):

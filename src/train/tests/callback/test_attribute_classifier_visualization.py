@@ -10,7 +10,7 @@ import torch
 
 from lovely_deep_learning.callback.attribute_classifier import (
     COLOR_FP,
-    LogAttributeClassifierValVisualizationCallback,
+    LogAttributeClassifierTrainValVisualizationCallback,
     SaveAttributeClassifierTestPredictVisualizationCallback,
     SaveAttributeDistributionCallback,
     _face_bgr,
@@ -43,7 +43,8 @@ def _trainer(tmp_path, loader_name=None):
         loggers=[logger],
         is_global_zero=True,
         sanity_checking=False,
-        datamodule=SimpleNamespace(val_dataset=_Dataset()),
+        datamodule=SimpleNamespace(train_dataset=_Dataset(), val_dataset=_Dataset()),
+        state=SimpleNamespace(fn=SimpleNamespace(value="fit")),
     )
     if loader_name is not None:
         setattr(trainer, loader_name, SimpleNamespace(dataset=_Dataset()))
@@ -88,7 +89,22 @@ def test_denormalize_uses_dataset_mean_and_std():
     assert 60 <= int(face.mean()) <= 70
 
 
-def test_val_logs_first_batch_and_metric_chart(tmp_path, monkeypatch):
+def _three_face_batch():
+    net_in = tuple(
+        {"img_path": f"/data/{index}.jpg", "img_tv_transformed": torch.zeros(3, 8, 8)}
+        for index in range(3)
+    )
+    net_out = {"attr": torch.tensor([[1, 0], [0, 1], [1, 1]], dtype=torch.float32)}
+    outputs = {
+        "metric_preds": {
+            "pred": torch.tensor([[1, 0], [0, 1], [1, 0]], dtype=torch.float32),
+            "probs": torch.tensor([[0.9, 0.1], [0.2, 0.8], [0.7, 0.4]], dtype=torch.float32),
+        }
+    }
+    return outputs, (net_in, net_out)
+
+
+def test_fit_logs_first_train_and_val_batch(tmp_path, monkeypatch):
     calls = []
 
     def fake_face(dataset, sample):
@@ -101,69 +117,39 @@ def test_val_logs_first_batch_and_metric_chart(tmp_path, monkeypatch):
     )
     trainer, experiment = _trainer(tmp_path)
     module = SimpleNamespace(global_step=4, logger=trainer.logger)
-    callback = LogAttributeClassifierValVisualizationCallback(max_images=2, nrow=2)
-    callback.on_validation_epoch_start(trainer, module)
-
-    batch0_in = tuple(
-        {"img_path": f"/data/{index}.jpg", "img_tv_transformed": torch.zeros(3, 8, 8)}
-        for index in range(3)
-    )
-    batch0_out = {"attr": torch.tensor([[1, 0], [0, 1], [1, 1]], dtype=torch.float32)}
-    callback.on_validation_batch_end(
-        trainer,
-        module,
-        {
-            "metric_preds": {
-                "pred": torch.tensor([[1, 0], [0, 1], [1, 0]], dtype=torch.float32),
-                "probs": torch.tensor([[0.9, 0.1], [0.2, 0.8], [0.7, 0.4]], dtype=torch.float32),
-            }
-        },
-        (batch0_in, batch0_out),
-        0,
-    )
+    callback = LogAttributeClassifierTrainValVisualizationCallback()
+    assert callback.max_images == 4
+    callback.max_images = 2
+    outputs, batch = _three_face_batch()
+    callback.on_train_batch_end(trainer, module, outputs, batch, 0)
     later_outputs, later_batch = _batch("/data/later.jpg", [1, 0], [1, 0], [0.6, 0.2])
+    callback.on_train_batch_end(trainer, module, later_outputs, later_batch, 1)
+    callback.on_validation_batch_end(trainer, module, outputs, batch, 0)
     callback.on_validation_batch_end(trainer, module, later_outputs, later_batch, 1)
-    callback.on_validation_epoch_end(trainer, module)
 
-    assert calls == ["/data/0.jpg", "/data/1.jpg"]
-    tags = [item[0] for item in experiment.images]
-    assert tags == ["val/sample_attributes", "val/attribute_rates", "val/detection_rank"]
-    assert experiment.images[0][2] == 4
-    table = pd.read_csv(tmp_path / "val_per_attribute_metrics.csv")
-    assert list(table.columns[:6]) == ["attribute", "ap", "threshold", "f1", "precision", "recall"]
-    assert (tmp_path / "val_metric_summary.csv").is_file()
-    rank = pd.read_csv(tmp_path / "val_detection_rank.csv")
-    assert list(rank.columns) == [
-        "rank",
-        "attribute",
-        "ap",
-        "positive_rate",
-        "ap_minus_positive_rate",
-        "threshold",
-        "f1",
-        "precision",
-        "recall",
+    assert calls == ["/data/0.jpg", "/data/1.jpg", "/data/0.jpg", "/data/1.jpg"]
+    assert [item[0] for item in experiment.images] == [
+        "train/sample_attributes",
+        "val/sample_attributes",
     ]
-    assert (tmp_path / "val_detection_rank.png").is_file()
+    assert experiment.images[0][2] == 4
+    assert not (tmp_path / "val_per_attribute_metrics.csv").exists()
+    assert not (tmp_path / "val_detection_rank.csv").exists()
 
 
-def test_val_second_batch_call_uses_outputs(tmp_path, monkeypatch):
-    """第二个 batch 只累计指标，不再画脸。"""
+def test_later_batch_and_standalone_validate_do_not_log(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "lovely_deep_learning.callback.attribute_classifier._face_bgr",
         lambda dataset, sample: np.zeros((8, 8, 3), dtype=np.uint8),
     )
     trainer, experiment = _trainer(tmp_path)
     module = SimpleNamespace(global_step=1, logger=trainer.logger)
-    callback = LogAttributeClassifierValVisualizationCallback(max_images=8)
+    callback = LogAttributeClassifierTrainValVisualizationCallback()
     outputs, batch = _batch("/data/a.jpg", [1, 0], [0, 0], [0.2, 0.1])
     callback.on_validation_batch_end(trainer, module, outputs, batch, 1)
-    callback.on_validation_epoch_end(trainer, module)
-    assert [item[0] for item in experiment.images] == ["val/attribute_rates", "val/detection_rank"]
-    assert callback._counts.count == 1
-    accuracy, recall = callback._counts.accuracy_recall()
-    assert accuracy[0] == 0
-    assert recall[0] == 0
+    trainer.state = SimpleNamespace(fn=SimpleNamespace(value="validate"))
+    callback.on_validation_batch_end(trainer, module, outputs, batch, 0)
+    assert experiment.images == []
 
 
 def test_test_end_caps_error_images_and_writes_metrics(tmp_path):
@@ -339,12 +325,13 @@ def test_attribute_distribution_compares_three_splits(tmp_path):
     assert (tmp_path / "run" / "attribute_distribution.png").is_file()
     assert cv2.imread(str(tmp_path / "run" / "attribute_distribution.png")) is not None
 
-    trainer.training = True
+    trainer.training = False
+    trainer.state = SimpleNamespace(fn=SimpleNamespace(value="fit"))
     (tmp_path / "run" / "attribute_distribution.csv").unlink()
     callback.on_validation_start(trainer, module)
     assert not (tmp_path / "run" / "attribute_distribution.csv").exists()
 
-    trainer.training = False
+    trainer.state = SimpleNamespace(fn=SimpleNamespace(value="validate"))
     callback.on_validation_start(trainer, module)
     callback.on_test_start(trainer, module)
     assert (tmp_path / "run" / "attribute_distribution.csv").is_file()

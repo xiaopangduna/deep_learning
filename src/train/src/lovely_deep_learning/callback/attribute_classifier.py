@@ -3,12 +3,12 @@
 单类分类只在脸上写一行类名。这里每个属性都是独立的 0/1，40 行字盖住脸，
 所以只列出真值或预测为 1 的属性，其余真负例不画。
 
-- ``LogAttributeClassifierValVisualizationCallback``：验证集前几张脸，以及
-  全部验证样本的逐属性准确率 / 召回率，写入 TensorBoard。
+- ``LogAttributeClassifierTrainValVisualizationCallback``：``fit`` 里每个 epoch
+  把训练和验证第一批的前几张脸写入 TensorBoard，不落盘。
 - ``SaveAttributeClassifierTestPredictVisualizationCallback``：测试时按属性
   保存误报和漏报，并写每张图的概率。预测有标签时同样对照真值；没有标签时只标出预测为 1 的属性。
 
-训练图不保存。准确率对稀有属性很高（全预测 0 也能到 90% 以上），看召回率和
+准确率对稀有属性很高（全预测 0 也能到 90% 以上），看召回率和
 误报 / 漏报图才能判断属性头是否正常。
 """
 
@@ -500,11 +500,21 @@ def _split_positive_counts(csv_paths, columns: list[str]) -> tuple[int, ...]:
     return tuple(positives)
 
 
+def _command_is_fit(trainer) -> bool:
+    """这次入口是 ``fit``。验证 epoch 里 ``trainer.training`` 已经是 False，入口留在 ``state.fn``。"""
+    state = getattr(trainer, "state", None)
+    fn = getattr(state, "fn", None)
+    if fn is None:
+        return False
+    return getattr(fn, "value", fn) == "fit"
+
+
 class SaveAttributeDistributionCallback(pl.Callback):
     """把三个划分的属性分布写到本次日志目录。
 
-    ``fit``、单独的 ``validate`` 和 ``test`` 各写一次。训练过程中每个 epoch 的验证
-    不再重写，因为标签表不变，``on_fit_start`` 已经写过。
+    ``fit``、单独的 ``validate`` 和 ``test`` 各写一次。``fit`` 里每个 epoch 的验证
+    也会进 ``on_validation_start``，用 ``state.fn == "fit"`` 跳过。标签表不变，
+    ``on_fit_start`` 已经写过。
     文件是 ``attribute_distribution.csv`` 和 ``attribute_distribution.png``。
     ``save_dir`` 为空时用 ``trainer.log_dir``。
     """
@@ -517,7 +527,7 @@ class SaveAttributeDistributionCallback(pl.Callback):
         self._write(trainer, pl_module, "fit/attribute_distribution")
 
     def on_validation_start(self, trainer, pl_module) -> None:
-        if getattr(trainer, "training", False) or getattr(trainer, "sanity_checking", False):
+        if _command_is_fit(trainer):
             return
         self._write(trainer, pl_module, "val/attribute_distribution")
 
@@ -555,17 +565,14 @@ class SaveAttributeDistributionCallback(pl.Callback):
         print(f"属性分布已保存到: {csv_path}")
 
 
-class LogAttributeClassifierValVisualizationCallback(pl.Callback):
-    """每个验证 epoch 把前几张脸写入 TensorBoard，并把逐属性分析指标追加到日志目录。
+class LogAttributeClassifierTrainValVisualizationCallback(pl.Callback):
+    """``fit`` 里每个 epoch 把训练和验证第一批的前几张脸写入 TensorBoard。
 
-    脸来自该 epoch 第一个 batch 的前 ``max_images`` 张。验证集不打乱时，
-    这就是 CSV 里的前几行，方便逐 epoch 看同一批脸。条形图和指标表用本进程
-    看到的全部验证 batch。单卡时这是完整验证集。指标追加到
-    ``val_per_attribute_metrics.csv``，宏平均追加到 ``val_metric_summary.csv``。
-    训练日志里的 ``val_acc`` 仍是各属性准确率的平均。
+    默认各 4 张。脸上只标真值或预测为 1 的属性。不落盘，也不算逐属性分析指标。
+    单独的 ``validate`` 和 ``test`` 不写。
     """
 
-    def __init__(self, max_images: int = 8, nrow: int = 2) -> None:
+    def __init__(self, max_images: int = 4, nrow: int = 2) -> None:
         super().__init__()
         if max_images <= 0:
             raise ValueError(f"max_images 须为正数，收到 {max_images}")
@@ -573,10 +580,26 @@ class LogAttributeClassifierValVisualizationCallback(pl.Callback):
             raise ValueError(f"nrow 须为正数，收到 {nrow}")
         self.max_images = int(max_images)
         self.nrow = int(nrow)
-        self._counts = AttributeCount()
 
-    def on_validation_epoch_start(self, trainer, pl_module) -> None:
-        self._counts = AttributeCount()
+    def on_train_batch_end(
+        self,
+        trainer,
+        pl_module,
+        outputs,
+        batch,
+        batch_idx,
+        dataloader_idx: int = 0,
+    ) -> None:
+        self._log_first_batch(
+            trainer,
+            pl_module,
+            outputs,
+            batch,
+            batch_idx,
+            "train_dataset",
+            "train/sample_attributes",
+            "train",
+        )
 
     def on_validation_batch_end(
         self,
@@ -587,11 +610,34 @@ class LogAttributeClassifierValVisualizationCallback(pl.Callback):
         batch_idx,
         dataloader_idx: int = 0,
     ) -> None:
-        if dataloader_idx != 0 or _skip_rank_or_sanity(trainer):
+        if dataloader_idx != 0 or not _command_is_fit(trainer):
             return
-        if not isinstance(outputs, dict):
+        self._log_first_batch(
+            trainer,
+            pl_module,
+            outputs,
+            batch,
+            batch_idx,
+            "val_dataset",
+            "val/sample_attributes",
+            "val",
+        )
+
+    def _log_first_batch(
+        self,
+        trainer,
+        pl_module,
+        outputs,
+        batch,
+        batch_idx,
+        dataset_name: str,
+        tag: str,
+        phase: str,
+    ) -> None:
+        if batch_idx != 0 or _skip_rank_or_sanity(trainer) or not isinstance(outputs, dict):
             return
-        dataset = _val_dataset(trainer)
+        datamodule = getattr(trainer, "datamodule", None)
+        dataset = getattr(datamodule, dataset_name, None) if datamodule is not None else None
         parsed = _parse_batch(dataset, batch, outputs)
         if parsed is None:
             return
@@ -599,9 +645,6 @@ class LogAttributeClassifierValVisualizationCallback(pl.Callback):
         if target is None:
             return
         try:
-            self._counts.update(pred, target, probs)
-            if batch_idx != 0:
-                return
             display = [attribute_display_name(name) for name in names]
             panels = []
             for index in range(min(self.max_images, pred.shape[0])):
@@ -610,38 +653,10 @@ class LogAttributeClassifierValVisualizationCallback(pl.Callback):
                 panels.append(render_attribute_panel(face, rows, with_target=True))
             if not panels:
                 return
-            _add_image(trainer, pl_module, "val/sample_attributes", _panel_grid(panels, self.nrow))
+            _add_image(trainer, pl_module, tag, _panel_grid(panels, self.nrow))
         except Exception as exc:
             print(
-                "Warning: failed to log val attribute visualization at step "
-                f"{getattr(pl_module, 'global_step', 0)}, {exc}"
-            )
-
-    def on_validation_epoch_end(self, trainer, pl_module) -> None:
-        if _skip_rank_or_sanity(trainer) or self._counts.count == 0 or self._counts.correct is None:
-            return
-        dataset = _val_dataset(trainer)
-        names = _column_names(dataset, int(self._counts.correct.shape[0]))
-        if names is None:
-            return
-        try:
-            packed = self._counts.score_matrix()
-            if packed is None:
-                return
-            thresholds = choose_f1_thresholds(*packed)
-            rates = metrics_from_scores(*packed, thresholds)
-            chart = render_attribute_rate_chart(
-                names, rates["positive_rate"], rates["precision"], rates["recall"]
-            )
-            _add_image(trainer, pl_module, "val/attribute_rates", chart)
-            _add_metric_means(trainer, pl_module, "val/metric_mean", rates)
-            root = _log_dir(trainer)
-            if root is None:
-                return
-            _write_operating_tables(root, "val", names, rates, trainer, pl_module)
-        except Exception as exc:
-            print(
-                "Warning: failed to log val attribute metrics at step "
+                f"Warning: failed to log {phase} attribute visualization at step "
                 f"{getattr(pl_module, 'global_step', 0)}, {exc}"
             )
 
@@ -761,7 +776,7 @@ class SaveAttributeClassifierTestPredictVisualizationCallback(pl.Callback):
         chart_path = root / "per_attribute_metrics.png"
         cv2.imwrite(str(chart_path), cv2.cvtColor(chart, cv2.COLOR_RGB2BGR))
         _add_image(trainer, pl_module, "test/attribute_rates", chart)
-        _write_operating_tables(root, "test", names, rates, trainer, pl_module)
+        _write_operating_tables(root, names, rates, trainer, pl_module)
 
     def on_predict_batch_end(
         self,
@@ -1129,20 +1144,13 @@ def _rank_cell(value, digits: int = 4) -> str:
     return f"{float(value):.{digits}f}"
 
 
-def _write_operating_tables(root: Path, stage: str, names, rates, trainer, pl_module) -> None:
+def _write_operating_tables(root: Path, names, rates, trainer, pl_module) -> None:
     root.mkdir(parents=True, exist_ok=True)
-    if stage == "val":
-        detail_name = "val_per_attribute_metrics.csv"
-        summary_name = "val_metric_summary.csv"
-        rank_name = "val_detection_rank.csv"
-        rank_png = "val_detection_rank.png"
-        tag = "val/detection_rank"
-    else:
-        detail_name = "per_attribute_metrics.csv"
-        summary_name = "test_metric_summary.csv"
-        rank_name = "test_detection_rank.csv"
-        rank_png = "test_detection_rank.png"
-        tag = "test/detection_rank"
+    detail_name = "per_attribute_metrics.csv"
+    summary_name = "test_metric_summary.csv"
+    rank_name = "test_detection_rank.csv"
+    rank_png = "test_detection_rank.png"
+    tag = "test/detection_rank"
     detail_path = root / detail_name
     metrics_frame(names, rates).to_csv(detail_path, index=False)
     metric_summary_frame(rates).to_csv(root / summary_name, index=False)
@@ -1152,9 +1160,8 @@ def _write_operating_tables(root: Path, stage: str, names, rates, trainer, pl_mo
     chart = render_detection_rank_chart(rank)
     cv2.imwrite(str(root / rank_png), cv2.cvtColor(chart, cv2.COLOR_RGB2BGR))
     _add_image(trainer, pl_module, tag, chart)
-    if stage == "test":
-        print(f"逐属性指标已保存到: {detail_path}")
-        print(f"按 AP 排序的检测效果已保存到: {rank_path}")
+    print(f"逐属性指标已保存到: {detail_path}")
+    print(f"按 AP 排序的检测效果已保存到: {rank_path}")
 
 
 def _validation_thresholds(trainer, pl_module) -> np.ndarray | None:
@@ -1233,22 +1240,6 @@ def _append_csv(path: Path, frame: pd.DataFrame) -> None:
     frame.to_csv(path, mode="a", header=not path.exists(), index=False)
 
 
-def _log_dir(trainer) -> Path | None:
-    log_dir = getattr(trainer, "log_dir", None)
-    return Path(log_dir) if log_dir else None
-
-
-def _add_metric_means(trainer, pl_module, tag: str, rates: dict[str, np.ndarray]) -> None:
-    step = int(getattr(pl_module, "global_step", 0))
-    for experiment in _experiments(trainer, pl_module, "add_scalar"):
-        for key in _RATE_COLUMNS:
-            values = np.asarray(rates[key], dtype=np.float64)
-            finite = values[np.isfinite(values)]
-            if finite.size == 0:
-                continue
-            experiment.add_scalar(f"{tag}/{key}", float(finite.mean()), global_step=step)
-
-
 def _panel_grid(panels: list[np.ndarray], nrow: int) -> np.ndarray:
     height = max(panel.shape[0] for panel in panels)
     width = max(panel.shape[1] for panel in panels)
@@ -1278,11 +1269,6 @@ def _experiments(trainer, pl_module, method: str = "add_image"):
         experiment = getattr(logger, "experiment", None)
         if experiment is not None and hasattr(experiment, method):
             yield experiment
-
-
-def _val_dataset(trainer):
-    datamodule = getattr(trainer, "datamodule", None)
-    return getattr(datamodule, "val_dataset", None) if datamodule is not None else None
 
 
 def _loader_dataset(loader):
