@@ -136,7 +136,7 @@ python scripts/train.py predict \
 
 `test` 在训练结束后对选定权重跑一次，这里才算完整分析：逐属性 AP、在验证集上按 F1 选一次阈值，再在测试集上算精确率、召回率、F1，写出排序表，并保存误报和漏报图。这些数不参与早停，也不决定存哪个 checkpoint。
 
-属性实验的 `AttributeClassifierMetric` 已经是这条轻路径。`fit` 里 `LogAttributeClassifierTrainValVisualizationCallback` 每个 epoch 只把训练和验证第一批的前 4 张脸写入 TensorBoard，不落盘，也不算逐属性指标。验证集每个 epoch 打乱，样本集合不变，核心指标不随顺序变化。`SaveAttributeClassifierTestPredictVisualizationCallback` 只挂在 `test` 和 `predict`。
+属性实验的 `AttributeClassifierMetric` 已经是这条轻路径。`fit` 里 `LogAttributeClassifierTrainValVisualizationCallback` 每个 epoch 只把训练和验证第一批的前 4 张脸写入 TensorBoard，不落盘，也不算逐属性指标。验证集每个 epoch 打乱，样本集合不变，核心指标不随顺序变化。`SaveAttributeClassifierTestVisualizationCallback` 在 `test` 时把错例图和分析表写到日志目录，不进 TensorBoard。`SaveAttributeClassifierPredictVisualizationCallback` 在 `predict` 时写图片和概率表。
 
 Lightning CLI 参数可覆盖 YAML，例如 `--trainer.max_epochs 5`、`--trainer.fast_dev_run true`。
 

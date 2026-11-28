@@ -5,8 +5,10 @@
 
 - ``LogAttributeClassifierTrainValVisualizationCallback``：``fit`` 里每个 epoch
   把训练和验证第一批的前几张脸写入 TensorBoard，不落盘。
-- ``SaveAttributeClassifierTestPredictVisualizationCallback``：测试时按属性
-  保存误报和漏报，并写每张图的概率。预测有标签时同样对照真值；没有标签时只标出预测为 1 的属性。
+- ``SaveAttributeClassifierTestVisualizationCallback``：测试时按属性保存误报和漏报、
+  每张图的概率，以及逐属性分析表。只落盘。
+- ``SaveAttributeClassifierPredictVisualizationCallback``：预测时保存图片和概率表。
+  有标签时对照真值；没有标签时只标出预测为 1 的属性。只落盘。
 
 准确率对稀有属性很高（全预测 0 也能到 90% 以上），看召回率和
 误报 / 漏报图才能判断属性头是否正常。
@@ -660,15 +662,37 @@ class LogAttributeClassifierTrainValVisualizationCallback(pl.Callback):
             )
 
 
-class SaveAttributeClassifierTestPredictVisualizationCallback(pl.Callback):
-    """测试写误报 / 漏报图和概率表。
+class _AttributeDiskCallback(pl.Callback):
+    """把图和表写到 ``save_dir``，省略时用 ``trainer.log_dir``。不进 TensorBoard。"""
 
-    预测有标签时和测试一样用绿 / 红 / 橙对照，但保存的是图片而不是只存错例。
-    没有标签时只画预测为 1 的属性。
+    def __init__(self, save_dir: str | None = None) -> None:
+        super().__init__()
+        self._configured_save_dir = Path(save_dir) if save_dir else None
+        self._root_ready = False
+        self._root_path: Path | None = None
+
+    def _root(self, trainer) -> Path | None:
+        if self._root_ready:
+            return self._root_path
+        root = self._configured_save_dir
+        if root is None:
+            root = getattr(trainer, "log_dir", None)
+            if not root:
+                logger = getattr(trainer, "logger", None)
+                root = getattr(logger, "log_dir", None) if logger is not None else None
+        self._root_path = Path(root) if root else None
+        self._root_ready = True
+        if self._root_path is not None:
+            self._root_path.mkdir(parents=True, exist_ok=True)
+        return self._root_path
+
+
+class SaveAttributeClassifierTestVisualizationCallback(_AttributeDiskCallback):
+    """测试写误报 / 漏报图、概率表和逐属性分析表。
 
     ``save_dir`` 为空时用本次 ``trainer.log_dir``。每个属性的误报、漏报
     各自最多 ``max_per_bucket`` 张，按 dataloader 顺序取前面的。概率 CSV
-    覆盖全部测试图。``max_predict_images`` 为空时预测图全部保存。
+    覆盖全部测试图。阈值在验证集上按 F1 选取。不进 TensorBoard。
 
     目录::
 
@@ -680,24 +704,13 @@ class SaveAttributeClassifierTestPredictVisualizationCallback(pl.Callback):
         {root}/test_metric_summary.csv
         {root}/test_detection_rank.csv
         {root}/test_detection_rank.png
-        {root}/predict/*.jpg
-        {root}/prediction_attribute_probs.csv
     """
 
-    def __init__(
-        self,
-        save_dir: str | None = None,
-        max_per_bucket: int = 8,
-        max_predict_images: int | None = None,
-    ) -> None:
-        super().__init__()
+    def __init__(self, save_dir: str | None = None, max_per_bucket: int = 8) -> None:
+        super().__init__(save_dir)
         if max_per_bucket < 0:
             raise ValueError(f"max_per_bucket 不能为负，收到 {max_per_bucket}")
-        if max_predict_images is not None and max_predict_images < 0:
-            raise ValueError(f"max_predict_images 不能为负，收到 {max_predict_images}")
         self.max_per_bucket = int(max_per_bucket)
-        self.max_predict_images = None if max_predict_images is None else int(max_predict_images)
-        self._configured_save_dir = Path(save_dir) if save_dir else None
         self._thresholds: np.ndarray | None = None
         self._reset_run_state()
 
@@ -705,9 +718,6 @@ class SaveAttributeClassifierTestPredictVisualizationCallback(pl.Callback):
         self._thresholds = _validation_thresholds(trainer, pl_module)
 
     def on_test_epoch_start(self, trainer, pl_module) -> None:
-        self._reset_run_state()
-
-    def on_predict_epoch_start(self, trainer, pl_module) -> None:
         self._reset_run_state()
 
     def on_test_batch_end(self, trainer, pl_module, outputs, batch, batch_idx, dataloader_idx: int = 0):
@@ -774,8 +784,49 @@ class SaveAttributeClassifierTestPredictVisualizationCallback(pl.Callback):
         )
         chart_path = root / "per_attribute_metrics.png"
         cv2.imwrite(str(chart_path), cv2.cvtColor(chart, cv2.COLOR_RGB2BGR))
-        _add_image(trainer, pl_module, "test/attribute_rates", chart)
-        _write_operating_tables(root, names, rates, trainer, pl_module)
+        _write_operating_tables(root, names, rates)
+
+    def _reset_run_state(self) -> None:
+        self._rows = []
+        self._counts = AttributeCount()
+        self._saved: dict[tuple[int, str], int] = {}
+        self._root_ready = False
+        self._root_path = None
+
+    def _open_error_buckets(self, pred_row: torch.Tensor, target_row: torch.Tensor) -> list[tuple[int, str]]:
+        pred_b = _as_numpy_binary(pred_row)
+        target_b = _as_numpy_binary(target_row)
+        needed = []
+        for index, (turned_on, labeled) in enumerate(zip(pred_b, target_b)):
+            if bool(turned_on) == bool(labeled):
+                continue
+            kind = "fp" if turned_on else "fn"
+            if self._saved.get((index, kind), 0) < self.max_per_bucket:
+                needed.append((index, kind))
+        return needed
+
+
+class SaveAttributeClassifierPredictVisualizationCallback(_AttributeDiskCallback):
+    """预测写图片和概率表。
+
+    有标签时用绿 / 红 / 橙对照真值。没有标签时只画预测为 1 的属性。
+    ``max_predict_images`` 为空时预测图全部保存。不进 TensorBoard。
+
+    目录::
+
+        {root}/predict/*.jpg
+        {root}/prediction_attribute_probs.csv
+    """
+
+    def __init__(self, save_dir: str | None = None, max_predict_images: int | None = None) -> None:
+        super().__init__(save_dir)
+        if max_predict_images is not None and max_predict_images < 0:
+            raise ValueError(f"max_predict_images 不能为负，收到 {max_predict_images}")
+        self.max_predict_images = None if max_predict_images is None else int(max_predict_images)
+        self._reset_run_state()
+
+    def on_predict_epoch_start(self, trainer, pl_module) -> None:
+        self._reset_run_state()
 
     def on_predict_batch_end(
         self,
@@ -824,38 +875,9 @@ class SaveAttributeClassifierTestPredictVisualizationCallback(pl.Callback):
 
     def _reset_run_state(self) -> None:
         self._rows = []
-        self._counts = AttributeCount()
-        self._saved: dict[tuple[int, str], int] = {}
         self._predict_saved = 0
         self._root_ready = False
-        self._root_path: Path | None = None
-
-    def _root(self, trainer) -> Path | None:
-        if self._root_ready:
-            return self._root_path
-        root = self._configured_save_dir
-        if root is None:
-            root = getattr(trainer, "log_dir", None)
-            if not root:
-                logger = getattr(trainer, "logger", None)
-                root = getattr(logger, "log_dir", None) if logger is not None else None
-        self._root_path = Path(root) if root else None
-        self._root_ready = True
-        if self._root_path is not None:
-            self._root_path.mkdir(parents=True, exist_ok=True)
-        return self._root_path
-
-    def _open_error_buckets(self, pred_row: torch.Tensor, target_row: torch.Tensor) -> list[tuple[int, str]]:
-        pred_b = _as_numpy_binary(pred_row)
-        target_b = _as_numpy_binary(target_row)
-        needed = []
-        for index, (turned_on, labeled) in enumerate(zip(pred_b, target_b)):
-            if bool(turned_on) == bool(labeled):
-                continue
-            kind = "fp" if turned_on else "fn"
-            if self._saved.get((index, kind), 0) < self.max_per_bucket:
-                needed.append((index, kind))
-        return needed
+        self._root_path = None
 
 
 def _parse_batch(dataset, batch, outputs):
@@ -1143,22 +1165,16 @@ def _rank_cell(value, digits: int = 4) -> str:
     return f"{float(value):.{digits}f}"
 
 
-def _write_operating_tables(root: Path, names, rates, trainer, pl_module) -> None:
+def _write_operating_tables(root: Path, names, rates) -> None:
     root.mkdir(parents=True, exist_ok=True)
-    detail_name = "per_attribute_metrics.csv"
-    summary_name = "test_metric_summary.csv"
-    rank_name = "test_detection_rank.csv"
-    rank_png = "test_detection_rank.png"
-    tag = "test/detection_rank"
-    detail_path = root / detail_name
+    detail_path = root / "per_attribute_metrics.csv"
     metrics_frame(names, rates).to_csv(detail_path, index=False)
-    metric_summary_frame(rates).to_csv(root / summary_name, index=False)
+    metric_summary_frame(rates).to_csv(root / "test_metric_summary.csv", index=False)
     rank = detection_rank_frame(names, rates)
-    rank_path = root / rank_name
+    rank_path = root / "test_detection_rank.csv"
     rank.to_csv(rank_path, index=False)
     chart = render_detection_rank_chart(rank)
-    cv2.imwrite(str(root / rank_png), cv2.cvtColor(chart, cv2.COLOR_RGB2BGR))
-    _add_image(trainer, pl_module, tag, chart)
+    cv2.imwrite(str(root / "test_detection_rank.png"), cv2.cvtColor(chart, cv2.COLOR_RGB2BGR))
     print(f"逐属性指标已保存到: {detail_path}")
     print(f"按 AP 排序的检测效果已保存到: {rank_path}")
 

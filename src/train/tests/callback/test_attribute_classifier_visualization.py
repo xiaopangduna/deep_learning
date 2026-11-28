@@ -11,7 +11,8 @@ import torch
 from lovely_deep_learning.callback.attribute_classifier import (
     COLOR_FP,
     LogAttributeClassifierTrainValVisualizationCallback,
-    SaveAttributeClassifierTestPredictVisualizationCallback,
+    SaveAttributeClassifierPredictVisualizationCallback,
+    SaveAttributeClassifierTestVisualizationCallback,
     SaveAttributeDistributionCallback,
     _face_bgr,
     choose_f1_thresholds,
@@ -152,9 +153,9 @@ def test_later_batch_and_standalone_validate_do_not_log(tmp_path, monkeypatch):
 
 
 def test_test_end_caps_error_images_and_writes_metrics(tmp_path):
-    trainer, experiment = _trainer(tmp_path, "test_dataloaders")
+    trainer, _experiment = _trainer(tmp_path, "test_dataloaders")
     module = SimpleNamespace(global_step=2, logger=trainer.logger)
-    callback = SaveAttributeClassifierTestPredictVisualizationCallback(
+    callback = SaveAttributeClassifierTestVisualizationCallback(
         save_dir=str(tmp_path),
         max_per_bucket=2,
     )
@@ -217,15 +218,13 @@ def test_test_end_caps_error_images_and_writes_metrics(tmp_path):
         "recall",
     ]
     assert (tmp_path / "test_detection_rank.png").is_file()
-    assert (tmp_path / "per_attribute_metrics.png").is_file()
     assert cv2.imread(str(tmp_path / "per_attribute_metrics.png")) is not None
-    assert experiment.images[0][0] == "test/attribute_rates"
 
 
 def test_predict_draws_only_positive_predictions(tmp_path):
     trainer, _experiment = _trainer(tmp_path, "predict_dataloaders")
     module = SimpleNamespace(global_step=0, logger=trainer.logger)
-    callback = SaveAttributeClassifierTestPredictVisualizationCallback(
+    callback = SaveAttributeClassifierPredictVisualizationCallback(
         save_dir=str(tmp_path),
         max_predict_images=1,
     )
@@ -247,7 +246,7 @@ def test_predict_draws_only_positive_predictions(tmp_path):
 def test_predict_with_labels_writes_ground_truth(tmp_path):
     trainer, _experiment = _trainer(tmp_path, "predict_dataloaders")
     module = SimpleNamespace(global_step=0, logger=trainer.logger)
-    callback = SaveAttributeClassifierTestPredictVisualizationCallback(save_dir=str(tmp_path))
+    callback = SaveAttributeClassifierPredictVisualizationCallback(save_dir=str(tmp_path))
     outputs, batch = _batch("/data/one.jpg", [1, 0], [1, 1], [0.9, 0.8])
     callback.on_predict_batch_end(trainer, module, outputs, batch, 0)
     callback.on_predict_end(trainer, module)
